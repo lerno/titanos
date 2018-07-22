@@ -7,7 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		6218D389E92CAC710FF9A5F2 /* parser.c in Sources */ = {isa = PBXBuildFile; fileRef = 6218DA366051DEDE93908808 /* parser.c */; };
 		A90AA7A42103C85300287CFA /* main.c in Sources */ = {isa = PBXBuildFile; fileRef = A90AA7A32103C85300287CFA /* main.c */; };
+		A90AA7AD2103C88600287CFA /* lexer.c in Sources */ = {isa = PBXBuildFile; fileRef = A90AA7AC2103C88600287CFA /* lexer.c */; };
+		A90AA7B22103C9C700287CFA /* file.c in Sources */ = {isa = PBXBuildFile; fileRef = A90AA7B12103C9C700287CFA /* file.c */; };
+		A90AA7B52103D09400287CFA /* debug.c in Sources */ = {isa = PBXBuildFile; fileRef = A90AA7B42103D09400287CFA /* debug.c */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -23,8 +27,19 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		6218D2CF821F06C4FD40EB37 /* titanos.y */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.yacc; path = titanos.y; sourceTree = "<group>"; };
+		6218D55246C9BE00E8B9C494 /* parser.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = parser.h; sourceTree = "<group>"; };
+		6218DA366051DEDE93908808 /* parser.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = parser.c; sourceTree = "<group>"; };
 		A90AA7A02103C85300287CFA /* titanos */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = titanos; sourceTree = BUILT_PRODUCTS_DIR; };
 		A90AA7A32103C85300287CFA /* main.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>"; };
+		A90AA7AB2103C88600287CFA /* lexer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = lexer.h; sourceTree = "<group>"; };
+		A90AA7AC2103C88600287CFA /* lexer.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = lexer.c; sourceTree = "<group>"; };
+		A90AA7AE2103C8E200287CFA /* common.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = common.h; sourceTree = "<group>"; };
+		A90AA7AF2103C95900287CFA /* test.ti */ = {isa = PBXFileReference; lastKnownFileType = file.ti; path = test.ti; sourceTree = "<group>"; };
+		A90AA7B02103C9C700287CFA /* file.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = file.h; sourceTree = "<group>"; };
+		A90AA7B12103C9C700287CFA /* file.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = file.c; sourceTree = "<group>"; };
+		A90AA7B32103D09400287CFA /* debug.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = debug.h; sourceTree = "<group>"; };
+		A90AA7B42103D09400287CFA /* debug.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = debug.c; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -57,9 +72,28 @@
 		A90AA7A22103C85300287CFA /* titanos */ = {
 			isa = PBXGroup;
 			children = (
+				A90AA7AA2103C86300287CFA /* src */,
 				A90AA7A32103C85300287CFA /* main.c */,
+				A90AA7AF2103C95900287CFA /* test.ti */,
+				6218D2CF821F06C4FD40EB37 /* titanos.y */,
 			);
 			path = titanos;
+			sourceTree = "<group>";
+		};
+		A90AA7AA2103C86300287CFA /* src */ = {
+			isa = PBXGroup;
+			children = (
+				A90AA7AB2103C88600287CFA /* lexer.h */,
+				A90AA7AC2103C88600287CFA /* lexer.c */,
+				A90AA7AE2103C8E200287CFA /* common.h */,
+				A90AA7B02103C9C700287CFA /* file.h */,
+				A90AA7B12103C9C700287CFA /* file.c */,
+				A90AA7B32103D09400287CFA /* debug.h */,
+				A90AA7B42103D09400287CFA /* debug.c */,
+				6218DA366051DEDE93908808 /* parser.c */,
+				6218D55246C9BE00E8B9C494 /* parser.h */,
+			);
+			path = src;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -118,7 +152,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A90AA7AD2103C88600287CFA /* lexer.c in Sources */,
 				A90AA7A42103C85300287CFA /* main.c in Sources */,
+				A90AA7B22103C9C700287CFA /* file.c in Sources */,
+				A90AA7B52103D09400287CFA /* debug.c in Sources */,
+				6218D389E92CAC710FF9A5F2 /* parser.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -7,9 +7,16 @@
 //
 
 #include <stdio.h>
-
+#include "file.h"
+#include "lexer.h"
+#include "debug.h"
+#include "parser.h"
 int main(int argc, const char * argv[]) {
     // insert code here...
-    printf("Hello, World!\n");
+    
+    char *foo = read_file("/Users/lerno/Projects/titanos/titanos/test.ti");
+    parse(foo);
     return 0;
 }
+
+
