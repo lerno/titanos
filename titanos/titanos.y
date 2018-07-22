@@ -23,6 +23,7 @@ int base;
 %token VAR
 %token INC
 %token DEC
+%token RETURN
 %token SHIFT_L
 %token SHIFT_R
 %token GE_OP
@@ -128,14 +129,14 @@ statements:
 no_block_statement:
 	variable_declaration
   |
+  RETURN expression
+  |
   expression
   ;
-statement: no_block_statement EOS | block_statement;
 
-no_block_statements: no_block_statement | no_block_statements EOS no_block_statement;
-
-
-block_statement:
+statement:
+  no_block_statement EOS
+  |
 	if_statement
 	|
 	while_statement
@@ -146,6 +147,9 @@ block_statement:
 	|
 	switch_statement
 	;
+
+no_block_statements: no_block_statement | no_block_statements EOS no_block_statement;
+
 
 
 expressions:
@@ -179,7 +183,7 @@ for_head: '(' variable_declarations ':' expressions ':' expression ')';
 for_statement:
 	FOR for_head '{' statements '}'
 	|
-	FOR for_head ARROW block_statement EOS
+	FOR for_head ARROW no_block_statement EOS
   ;
 
 
@@ -190,7 +194,7 @@ in_block_expression:
 	;
 
 if_statement:
-  IF '(' in_block_expression ')' ARROW block_statement EOS
+  IF '(' in_block_expression ')' ARROW no_block_statement EOS
 	|
 	IF '(' in_block_expression ')' '{' statements '}'
 	|
@@ -198,13 +202,13 @@ if_statement:
 	;
 
 while_statement:
-	WHILE '(' in_block_expression ')' block_statement EOS
+	WHILE '(' in_block_expression ')' no_block_statement EOS
 	|
 	WHILE '(' in_block_expression ')' '{' statements '}'
 	;
 
 until_statement:
-	UNTIL '(' in_block_expression ')' block_statement EOS
+	UNTIL '(' in_block_expression ')' no_block_statement EOS
 	|
 	UNTIL '(' in_block_expression ')' '{' statements '}'
 	;
@@ -232,7 +236,7 @@ primary_expr:
 	|
 	'(' expression ')'
 	|
-	'{' no_block_statements '}'
+	'{' '%' no_block_statements '}'
 	;
 
 postfix_expr:

@@ -42,12 +42,6 @@ static inline bool is_alpha(char c)
     return is_alphabet(c) || is_digit_or_underscore(c);
 }
 
-void init_lexer(const char *source)
-{
-    lexer.start = source;
-    lexer.current = source;
-    lexer.line = 1;
-}
 
 
 static inline bool reached_end(void)
@@ -146,10 +140,9 @@ void skip_whitespace()
 
 static inline Token scan_char()
 {
-    char c;
     advance();
     advance();
-    return make_token(TOKEN_CHAR);
+    return make_token(TOKEN_INTEGER);
 }
 
 static inline Token scan_string()
@@ -173,93 +166,73 @@ static inline Token scan_string()
 
 
 
-static token_type check_keyword(int start, int length, const char *rest, token_type type)
+typedef struct
 {
-    if (lexer.current - lexer.start == start + length &&
-        memcmp(lexer.start + start, rest, (size_t)length) == 0)
+  const char* identifier;
+  size_t length;
+  token_type token;
+  int next;
+} Keyword;
+
+#define ALPHABET_LEN ('z' - 'a' + 1)
+static Keyword keywords[32];
+static int first_test[ALPHABET_LEN];
+static int keyword_counter = 0;
+
+void register_keyword(const char *identifier, token_type type)
+{
+    int previous_first = first_test[identifier[0] - 'a'];
+    int index = keyword_counter++;
+    Keyword *keyword = &keywords[index];
+    keyword->identifier = identifier;
+    keyword->length = strlen(identifier);
+    keyword->token = type;
+    keyword->next = previous_first;
+    first_test[identifier[0] - 'a'] = index;
+}
+
+static void keyword_init()
+{
+    if (keyword_counter > 0) return;
+    for (size_t i = 0; i < ALPHABET_LEN; i++)
     {
-        return type;
+        first_test[i] = -1;
     }
-    return TOKEN_IDENTIFIER;
-}
+    register_keyword("extend", TOKEN_EXTEND);
+    register_keyword("switch", TOKEN_SWITCH);
+    register_keyword("struct", TOKEN_STRUCT);
+    register_keyword("program", TOKEN_PROGRAM);
+    register_keyword("proc", TOKEN_PROC);
+    register_keyword("module", TOKEN_MODULE);
+    register_keyword("return", TOKEN_RETURN);
+    register_keyword("else", TOKEN_ELSE);
+    register_keyword("while", TOKEN_WHILE);
+    register_keyword("void", TOKEN_VOID);
+    register_keyword("true", TOKEN_TRUE);
+    register_keyword("nil", TOKEN_NIL);
+    register_keyword("import", TOKEN_IMPORT);
+    register_keyword("if", TOKEN_IF);
+    register_keyword("false", TOKEN_FALSE);
+    register_keyword("continue", TOKEN_CONTINUE);
+    register_keyword("class", TOKEN_CLASS);
+    register_keyword("until", TOKEN_UNTIL);
 
-static inline bool has_min_len(int len)
-{
-    return lexer.current - lexer.start >= len;
 }
-
-static inline bool has_len(int len)
-{
-    return lexer.current - lexer.start == len;
-}
-
 static inline token_type indentifier_type()
 {
-    switch (*lexer.start)
+    int index = lexer.start[0] - 'a';
+    if (index < 0) return TOKEN_IDENTIFIER;
+    
+    int keyword_index = first_test[index];
+    while (keyword_index >= 0)
     {
-        case 's':
-            return check_keyword(1, 5, "truct", TOKEN_STRUCT);
-        case 'p':
-            if (!has_min_len(4)
-                || lexer.start[1] != 'r'
-                || lexer.start[2] != 'o') break;
-            if (lexer.start[3] == 'c' && has_len(4)) return TOKEN_PROC;
-            return check_keyword(3, 4, "gram", TOKEN_PROGRAM);
-        case 'm':
-            return check_keyword(1, 5, "odule", TOKEN_MODULE);
-        case 'r':
-            return check_keyword(1, 5, "eturn", TOKEN_RETURN);
-        case 'e':
-            return check_keyword(1, 3, "lse", TOKEN_ELSE);
-        case 'w':
-            return check_keyword(1, 4, "hile", TOKEN_WHILE);
-        case 'v':
-            if (has_len(3)) return check_keyword(1, 2, "ar", TOKEN_VAR);
-            return check_keyword(1, 3, "oid", TOKEN_VOID);
-        case 't':
-            return check_keyword(1, 3, "ue", TOKEN_TRUE);
-        case 'n':
-            return check_keyword(1, 2, "il", TOKEN_NIL);
-        case 'i':
-            if (!has_min_len(2)) break;
-            switch (lexer.start[1])
+        Keyword *keyword = &keywords[keyword_index];
+        if ((lexer.current - lexer.start == keyword->length)
+            && memcmp(lexer.start + 1, keyword->identifier + 1, keyword->length - 1) == 0)
         {
-            case 'f':
-                return TOKEN_IF;
-            case 'm':
-                return check_keyword(2, 4, "port", TOKEN_IMPORT);
-            default:
-                break;
+            return keyword->token;
         }
-            break;
-            
-        case 'f':
-            if (!has_min_len(2)) break;
-            switch (lexer.start[1])
-        {
-            case 'o':
-                return check_keyword(2, 1, "r", TOKEN_FOR);
-            case 'a':
-                return check_keyword(2, 3, "lse", TOKEN_FALSE);
-            default:
-                break;
-        }
-            break;
-        case 'c':
-            if (!has_min_len(2)) break;
-            switch (lexer.start[1])
-        {
-            case 'o':
-                return check_keyword(2, 6, "ntinue", TOKEN_CONTINUE);
-            case 'l':
-                return check_keyword(2, 3, "ass", TOKEN_CLASS);
-            default:
-                break;
-        }
-            break;
-            
-        default:
-            break;
+        keyword_index = keyword->next;
     }
     return TOKEN_IDENTIFIER;
 }
@@ -493,3 +466,10 @@ Token scan_token(void)
     
 }
 
+void init_lexer(const char *source)
+{
+    keyword_init();
+    lexer.start = source;
+    lexer.current = source;
+    lexer.line = 1;
+}

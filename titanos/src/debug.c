@@ -126,9 +126,10 @@ char *token_name(Token *token)
         case TOKEN_INTEGER:
         case TOKEN_FLOAT:
         case TOKEN_STRING:
-        case TOKEN_CHAR:
             strlcpy(buffer, token->start, token->length + 1);
             return buffer;
+        case TOKEN_EXTEND:
+            return "\nextend ";
         case TOKEN_CLASS:
             return "\nclass ";
         case TOKEN_ELSE:
@@ -175,6 +176,10 @@ char *token_name(Token *token)
             return " void ";
         case TOKEN_ARROW:
             return " -> ";
+        case TOKEN_SWITCH:
+            return " switch ";
+        case TOKEN_UNTIL:
+            return " until ";
         default:
             return "???";
     }

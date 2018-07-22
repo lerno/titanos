@@ -28,6 +28,7 @@
 
 /* Begin PBXFileReference section */
 		6218D2CF821F06C4FD40EB37 /* titanos.y */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.yacc; path = titanos.y; sourceTree = "<group>"; };
+		6218D532DDF7BF83A31B9985 /* string.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = string.h; sourceTree = "<group>"; };
 		6218D55246C9BE00E8B9C494 /* parser.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = parser.h; sourceTree = "<group>"; };
 		6218DA366051DEDE93908808 /* parser.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = parser.c; sourceTree = "<group>"; };
 		A90AA7A02103C85300287CFA /* titanos */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = titanos; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -92,6 +93,7 @@
 				A90AA7B42103D09400287CFA /* debug.c */,
 				6218DA366051DEDE93908808 /* parser.c */,
 				6218D55246C9BE00E8B9C494 /* parser.h */,
+				6218D532DDF7BF83A31B9985 /* string.h */,
 			);
 			path = src;
 			sourceTree = "<group>";
