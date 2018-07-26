@@ -17,8 +17,12 @@ struct test
 }
 
 proc test(c : feo, d: proc(char) -> foo*) -> void
-{}
+{
+   foo := 20;
+   return -(10 + 5 - 122)^^3;
+}
 
+/*
 proc is_alphabet(c : char) -> bool
 {
    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
@@ -448,3 +452,4 @@ return error_token("Unexpected character.");
 
 }
 
+*/

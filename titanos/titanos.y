@@ -127,15 +127,17 @@ statements:
 	;
 
 no_block_statement:
-	variable_declaration
+	variable_declaration EOS
   |
-  RETURN expression
+  RETURN expression EOS
   |
-  expression
+  expression EOS
+  |
+  EOS
   ;
 
 statement:
-  no_block_statement EOS
+  no_block_statement
   |
 	if_statement
 	|
@@ -148,7 +150,7 @@ statement:
 	switch_statement
 	;
 
-no_block_statements: no_block_statement | no_block_statements EOS no_block_statement;
+no_block_statements: no_block_statement | no_block_statements no_block_statement;
 
 
 

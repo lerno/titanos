@@ -4,10 +4,16 @@
 //
 
 #include <stdio.h>
+#include <assert.h>
 #include "parser.h"
 #include "lexer.h"
 #include "debug.h"
 #include "string.h"
+#include "fnv.h"
+#include "expression.h"
+#include <memory.h>
+
+#define QUALIFIED_NAME_MAX 256
 
 
 typedef struct
@@ -16,16 +22,26 @@ typedef struct
 	Token end;
 } QualifiedName;
 
+typedef struct _Scope
+{
+} Scope;
+
+#define MAX_SCOPES 128
+
 typedef struct
 {
-	QualifiedName module;
+	Scope scopes[MAX_SCOPES];
+	char *module;
 	Token current;
 	Token previous;
 	bool had_error;
 	bool panic_mode;
+	uint8_t active_scope;
+
 } Parser;
 
-typedef void (*ParseFn)(void);
+typedef Expression *(*InfixFn)(Expression *);
+typedef Expression *(*PrefixFn)(void);
 
 typedef enum
 {
@@ -46,8 +62,8 @@ typedef enum
 
 typedef struct
 {
-	ParseFn prefix;
-	ParseFn infix;
+	PrefixFn prefix;
+	InfixFn infix;
 	precedence precedence;
 } ParseRule;
 
@@ -59,7 +75,7 @@ Parser parser;
 void import(void);
 void proc(void);
 
-static void set_parse_rule(token_type type, ParseFn prefix, ParseFn infix, precedence rule_precedence)
+static void set_parse_rule(token_type type, PrefixFn prefix, InfixFn infix, precedence rule_precedence)
 {
 	rules[type].prefix = prefix;
 	rules[type].precedence = rule_precedence;
@@ -109,6 +125,22 @@ static void error(const char *message)
 	error_at(&parser.previous, message);
 }
 
+static void push_scope()
+{
+	if (parser.active_scope == MAX_SCOPES)
+	{
+		error_at_current("Cannot nest deeper");
+		return;
+	}
+	parser.active_scope++;
+}
+
+static void pop_scope()
+{
+	assert(parser.active_scope > 0 && "Tried to pop top scope");
+	parser.active_scope--;
+}
+
 static void advance(void)
 {
 	parser.previous = parser.current;
@@ -150,17 +182,33 @@ static QualifiedName qualified_name_with_wildcard()
 	return qualified_name;
 }
 
-static QualifiedName qualified_name()
+static inline void copy_token_to_buffer(Token *token, void *buffer, int *position, int buffer_size)
 {
-	Token start = parser.current;
+	if (buffer_size - *position < token->length)
+	{
+		error_at_current("Identifier too long");
+	}
+	memcpy(buffer + *position, token->start, token->length);
+	*position += token->length;
+}
+
+static char *qualified_name()
+{
 	consume(TOKEN_IDENTIFIER, "Expected name");
+	char buffer[QUALIFIED_NAME_MAX];
+	int position = 0;
+	copy_token_to_buffer(&parser.previous, buffer, &position, QUALIFIED_NAME_MAX);
 	while (parser.current.type == TOKEN_COLCOLON)
 	{
 		advance();
+		copy_token_to_buffer(&parser.previous, buffer, &position, QUALIFIED_NAME_MAX);
 		consume(TOKEN_IDENTIFIER, "Expected name");
+		copy_token_to_buffer(&parser.previous, buffer, &position, QUALIFIED_NAME_MAX);
 	}
-	QualifiedName qualified_name = { .start = start, .end = parser.previous };
-	return qualified_name;
+	char *result = malloc(position + 1);
+	memcpy(result, buffer, position);
+	result[position] = 0;
+	return result;
 }
 
 void recover_to(token_type type)
@@ -189,7 +237,6 @@ void import()
 void module()
 {
 	advance();
-	// TODO properly handle the module
 	parser.module = qualified_name();
 	consume(TOKEN_EOS, "Expected ;");
 	recover_to(TOKEN_EOS);
@@ -292,103 +339,126 @@ void named_var_list()
 }
 
 
-static void expression_after_advance(void);
+static Expression *expression_after_advance(void);
 
-static void expression()
+static Expression *expression()
 {
 	advance();
-	expression_after_advance();
+	return expression_after_advance();
 }
 
-void return_statement()
+static Expression *return_statement()
 {
 	advance();
-	advance();
-	expression_after_advance();
+    Expression *return_expr = expr_new_of_type(RETURN_EXPRESSION);
+    expr_add_param(return_expr, expression());
+    return return_expr;
 }
 
-bool no_block_statement()
+Expression *no_block_statement()
 {
 	switch (parser.current.type)
 	{
 		case TOKEN_RETURN:
-			return_statement();
-			return true;
+			return return_statement();
+		case TOKEN_IDENTIFIER:
+			return variable_declaration_or_expression;
 		default:
-			return false;
+			return NULL;
 	}
 }
 
-static void braced_statements(void);
+static Expression *braced_statements(void);
 
-void block_body()
+static Expression *block_body()
 {
 	if (parser.current.type == TOKEN_ARROW)
 	{
-		if (!no_block_statement())
+		Expression *statement = no_block_statement();
+		if (!statement)
 		{
 			error_at_current("Expected statement");
 		}
 		consume(TOKEN_EOS, "Expected ;");
-		return;
+		return statement;
 	}
-	braced_statements();
+	return braced_statements();
 }
 
-void while_statement()
+static Expression *while_statement()
 {
 	advance();
 	consume(TOKEN_PAREN_L, "Expected (");
-	expression();
+	Expression *cond = expression();
 	consume(TOKEN_PAREN_R, "Expected )");
-	block_body();
+	Expression *body = block_body();
+	Expression *while_expr = expr_new_of_type(LOOP_EXPRESSION);
+	expr_add_param(while_expr, cond);
+	expr_add_param(while_expr, body);
+	return while_expr;
 }
 
-void until_statement()
+Expression *until_statement()
 {
 	advance();
 	consume(TOKEN_PAREN_L, "Expected (");
-	expression();
+	Expression *cond = expression();
 	consume(TOKEN_PAREN_R, "Expected )");
-	block_body();
+	Expression *body = block_body();
+	Expression *until_expr = expr_new_of_type(ENDLOOP_EXPRESSION);
+	expr_add_param(until_expr, cond);
+	expr_add_param(until_expr, body);
+	return until_expr;
 }
 
-void if_statement()
+static Expression *if_statement()
 {
 	advance();
 	consume(TOKEN_PAREN_L, "Expected (");
-	expression();
+	Expression *cond = expression();
 	consume(TOKEN_PAREN_R, "Expected )");
+	Expression *body;
+	Expression *else_body = NULL;
 	if (parser.current.type == TOKEN_ARROW)
 	{
-		if (!no_block_statement())
+		body = no_block_statement();
+		if (!body)
 		{
 			error_at_current("Expected statement");
+			recover_to(TOKEN_EOS);
 		}
 		consume(TOKEN_EOS, "Expected ;");
-		return;
 	}
-	braced_statements();
-	if (parser.current.type == TOKEN_ELSE)
+	else
 	{
-		advance();
-		braced_statements();
+		body = braced_statements();
+		if (body && parser.current.type == TOKEN_ELSE)
+		{
+			advance();
+			else_body = braced_statements();
+			if (!else_body) return NULL; // Dealloc cond + body
+		}
 	}
+
+	if (!body) return NULL; // Dealloc cond
+	if (cond == NULL) return NULL; // Dealloc body/else_body
+
+	Expression *if_statement = expr_new_of_type(AND_EXPRESSION);
+	expr_add_param(if_statement, body);
+	if (else_body) expr_add_param(if_statement, else_body);
+	return if_statement;
 }
 
-bool statement()
+Expression *statement()
 {
 	switch (parser.current.type)
 	{
 		case TOKEN_IF:
-			if_statement();
-			break;
+			return if_statement();
 		case TOKEN_WHILE:
-			while_statement();
-			break;
+			return while_statement();
 		case TOKEN_UNTIL:
-			until_statement();
-			break;
+			return until_statement();
 			/*
 		case TOKEN_FOR:
 			for_statement();
@@ -397,21 +467,30 @@ bool statement()
 			switch_statement();
 			break;*/
 		default:
-			if (!no_block_statement()) return false;
-			consume(TOKEN_EOS, "Expected ;");
+			break;
 	}
-	return true;
+	Expression *expr = no_block_statement();
+    if (!expr) return NULL;
+    consume(TOKEN_EOS, "Expected ;");
+	return expr;
 }
-void statements()
+Expression *statements()
 {
-	while (statement()) {};
+	Expression *expression = expr_new_of_type(STMT_EXPRESSION);
+	Expression *stmt;
+	while ((stmt = statement()) != NULL)
+	{
+		expr_add_param(expression, stmt);
+	};
+	return expression;
 }
 
-void braced_statements()
+static Expression *braced_statements()
 {
 	consume(TOKEN_BRACE_L, "Expected {");
-	statements();
+	Expression *expression = statements();
 	consume(TOKEN_BRACE_R, "Expected }");
+	return expression;
 }
 void proc()
 {
@@ -422,7 +501,8 @@ void proc()
 	consume(TOKEN_PAREN_R, "Expected )");
 	consume(TOKEN_ARROW, "Expected ->");
 	type();
-	braced_statements();
+	Expression *proc = braced_statements();
+    print_ast(proc);
 }
 
 void program()
@@ -446,6 +526,7 @@ void extend_struct()
 // source: module? import* (proc | program)* ;
 void source()
 {
+	push_scope();
 	if (parser.current.type == TOKEN_MODULE)
 	{
 		module();
@@ -478,6 +559,7 @@ void source()
 				recover_to(TOKEN_BRACE_R);
 		}
 	}
+	pop_scope();
 }
 
 static inline ParseRule *get_rule(token_type type)
@@ -485,196 +567,167 @@ static inline ParseRule *get_rule(token_type type)
 	return &rules[type];
 }
 
-static void parse_precedence_after_advance(precedence precedence)
+static Expression *parse_precedence_after_advance(precedence precedence)
 {
 	// Get the rule for the previous token.
-	ParseFn prefix_rule = get_rule(parser.previous.type)->prefix;
+	PrefixFn prefix_rule = get_rule(parser.previous.type)->prefix;
 	if (prefix_rule == NULL)
 	{
 		error("Expected expression.");
-		return;
+		return NULL;
 	}
 
-	prefix_rule();
+	Expression *expression = prefix_rule();
 
 	while (precedence <= get_rule(parser.current.type)->precedence)
 	{
 		advance();
-		ParseFn infix_rule = get_rule(parser.previous.type)->infix;
-		infix_rule();
+		InfixFn infix_rule = get_rule(parser.previous.type)->infix;
+		expression = infix_rule(expression);
 	}
+	return expression;
 }
 
-static void parse_precedence(precedence precedence)
+static Expression *parse_precedence(precedence precedence)
 {
 	advance();
-	parse_precedence_after_advance(precedence);
+	return parse_precedence_after_advance(precedence);
 }
 
-static void expression_after_advance()
+static Expression *expression_after_advance()
 {
-	parse_precedence_after_advance(PREC_ASSIGNMENT);
+	return parse_precedence_after_advance(PREC_ASSIGNMENT);
 }
 
-static void binary()
+static Expression *binary(Expression *left_operand)
 {
 	// Remember the operator.
 	token_type operator_type = parser.previous.type;
 
 	// Compile the right operand.
 	ParseRule *rule = get_rule(operator_type);
-	parse_precedence((precedence)(rule->precedence + 1));
+	Expression *right_operand = parse_precedence((precedence)(rule->precedence + 1));
 	// Right hand side now loaded.
 
-	// Emit the operator instruction.
-	switch (operator_type)
-	{
-		case TOKEN_RIGHT_SHIFT:
-			break;
-		case TOKEN_LEFT_SHIFT:
-			break;
-		case TOKEN_RIGHT_SHIFT_LOGIC:
-			break;
-		case TOKEN_BIT_AND:
-			break;
-		case TOKEN_BIT_OR:
-			break;
-		case TOKEN_BIT_XOR:
-			break;
-		case TOKEN_PLUS:
-			break;
-		case TOKEN_MINUS:
-			break;
-		case TOKEN_MULT:
-			break;
-		case TOKEN_DIV:
-			break;
-		case TOKEN_POW:
-			break;
-		case TOKEN_GREATER_EQUAL:
-			break;
-		case TOKEN_GREATER:
-			break;
-		case TOKEN_LESS:
-			break;
-		case TOKEN_LESS_EQUAL:
-			break;
-		case TOKEN_EQUAL:
-			break;
-		case TOKEN_NOT_EQUAL:
-			break;
-		default:
-			printf("Invalid binary operator %d\n", operator_type);
-			return; // Unreachable.
-	}
+	Expression *expression = expr_new_of_type(BINARY_EXPRESSION);
+	expression->data.token_type = operator_type;
+	expr_add_param(expression, left_operand);
+	expr_add_param(expression, right_operand);
+	return expression;
 }
 
 
 // Right associative
-static void binary_right()
+static Expression *binary_right(Expression *left_operand)
 {
 	// Remember the operator.
 	token_type operator_type = parser.previous.type;
 
 	// Compile the right operand.
 	ParseRule *rule = get_rule(operator_type);
-	parse_precedence((precedence)(rule->precedence));
+	Expression *right_operand = parse_precedence((precedence)(rule->precedence));
 	// Right hand side now loaded.
 
-	// Emit the operator instruction.
-	switch (operator_type)
-	{
-		case TOKEN_POW:
-			break;
-		default:
-			printf("Invalid binary-right operator %d\n", operator_type);
-			return; // Unreachable.
-	}
+	Expression *expression = expr_new_of_type(BINARY_EXPRESSION);
+	expression->data.token_type = operator_type;
+	expr_add_param(expression, left_operand);
+	expr_add_param(expression, right_operand);
+	return expression;
 }
 
 
-static void unary()
+static Expression *unary()
 {
 	token_type operatorType = parser.previous.type;
 
 	// Compile the operand.
-	parse_precedence(PREC_UNARY);
+	Expression *right_operand = parse_precedence(PREC_UNARY);
 
-	// Emit the operator instruction.
-	switch (operatorType)
-	{
-		case TOKEN_MINUS:
-			break;
-		case TOKEN_NOT:
-			break;
-		case TOKEN_BIT_NOT:
-			break;
-		default:
-			return; // Unreachable.
-	}
+	Expression *expression = expr_new_of_type(UNARY_EXPRESSION);
+	expression->data.token_type = operatorType;
+	expr_add_param(expression, right_operand);
+	return expression;
 }
 
-static void identifier()
+static Expression *identifier()
 {
+	Expression *expr = expr_new_of_type(IDENT_EXPRESSION);
+	// DO_STUFF
+	return NULL;
 }
 
-static void grouping()
+static Expression *grouping()
 {
-	expression();
+	Expression *expr = expression();
 	consume(TOKEN_PAREN_R, "Expected ')' after expression.");
+	return expr;
 }
 
-static void call()
+static Expression *call(Expression *expr)
 {
+	Expression *call_expr = expr_new_of_type(CALL_EXPRESSION);
+	expr_add_param(call_expr, expr);
     if (parser.current.type != TOKEN_PAREN_R)
     {
         do
         {
-            expression();
+	        expr_add_param(call_expr, expression());
         } while (parser.current.type == TOKEN_COMMA);
     }
     consume(TOKEN_PAREN_R, "Expected )");
+	return call_expr;
 }
 
-static void access()
+static Expression *access(Expression *expression)
 {
+	// TODO BROOOKEN
     consume(TOKEN_IDENTIFIER, "Expected identifier");
     // Three possibilities: () [] .
     switch (parser.current.type)
     {
         case TOKEN_PAREN_L:
-            call();
-            break;
+	        return call(expression);
         case TOKEN_BRACKET_L: // TODO
-            break;
+	        return NULL;
         case TOKEN_DOT:
-            access();
-            break;
+	        return access(expression);
         default:
-	        parse_precedence_after_advance(PREC_CALL);
-            break;
+	        return parse_precedence_after_advance(PREC_CALL);
     }
 }
 
-static void or()
+static Expression *or(Expression *left_hand)
 {
-	parse_precedence(PREC_OR);
+	Expression *right_hand = parse_precedence(PREC_OR);
+	Expression *or_expr = expr_new_of_type(OR_EXPRESSION);
+	expr_add_param(or_expr, left_hand);
+	expr_add_param(or_expr, right_hand);
+	return or_expr;
 }
 
-static void and()
+static Expression *and(Expression *left_hand)
 {
-	parse_precedence(PREC_AND);
+	Expression *right_hand = parse_precedence(PREC_AND);
+	Expression *and_expr = expr_new_of_type(AND_EXPRESSION);
+	expr_add_param(and_expr, left_hand);
+	expr_add_param(and_expr, right_hand);
+	return and_expr;
 }
 
 
-static void integer_number(void)
+static Expression *integer_number(void)
 {
+	Expression *expr = expr_new_of_type(INTEGER_EXPRESSION);
 	uint64_t number = parse_uint64(parser.previous.start, parser.previous.length);
+	expr->data.numvalue = number;
+	return expr;
 }
 
 
-static void double_number(void)
+static Expression *double_number(void)
 {
+	// TODO
+	return NULL;
 	// Rewrite to be faster and take the underscores!
 	//double value = strtod(parser.previous.start, NULL);
 }
@@ -720,6 +773,8 @@ bool parse(const char *source_text)
 {
 	setup_parse_rules();
 	init_lexer(source_text);
+	parser.module = NULL;
+	parser.active_scope = 0;
 	parser.had_error = false;
 	parser.panic_mode = false;
 	advance();
