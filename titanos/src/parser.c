@@ -10,7 +10,6 @@
 #include "debug.h"
 #include "string.h"
 #include "fnv.h"
-#include "expression.h"
 #include <memory.h>
 
 #define QUALIFIED_NAME_MAX 256
@@ -40,8 +39,7 @@ typedef struct
 
 } Parser;
 
-typedef Expression *(*InfixFn)(Expression *);
-typedef Expression *(*PrefixFn)(void);
+typedef void (*ParseFn)(void);
 
 typedef enum
 {
@@ -62,8 +60,8 @@ typedef enum
 
 typedef struct
 {
-	PrefixFn prefix;
-	InfixFn infix;
+	ParseFn prefix;
+	ParseFn infix;
 	precedence precedence;
 } ParseRule;
 
@@ -75,7 +73,7 @@ Parser parser;
 void import(void);
 void proc(void);
 
-static void set_parse_rule(token_type type, PrefixFn prefix, InfixFn infix, precedence rule_precedence)
+static void set_parse_rule(token_type type, ParseFn prefix, ParseFn infix, precedence rule_precedence)
 {
 	rules[type].prefix = prefix;
 	rules[type].precedence = rule_precedence;
@@ -88,6 +86,15 @@ static void set_parse_rule(token_type type, PrefixFn prefix, InfixFn infix, prec
 // IDENTIFIER | proc_type -> type | void | type *
 void type(void);
 
+static void emit(const char *string)
+{
+	printf("%s", string);
+}
+
+static void emit_string(const char *string, int length)
+{
+	printf("%.*s", length, string);
+}
 
 static void error_at(Token *token, const char *message)
 {
@@ -305,7 +312,6 @@ void type()
 		advance();
 		return;
 	}
-
 	complex_type();
 }
 void def_struct()
@@ -339,126 +345,115 @@ void named_var_list()
 }
 
 
-static Expression *expression_after_advance(void);
+static void expression_after_advance(void);
 
-static Expression *expression()
+static void expression()
 {
 	advance();
-	return expression_after_advance();
+	expression_after_advance();
 }
 
-static Expression *return_statement()
+static void return_statement()
 {
 	advance();
-    Expression *return_expr = expr_new_of_type(RETURN_EXPRESSION);
-    expr_add_param(return_expr, expression());
-    return return_expr;
+	emit("return ");
+	expression();
+	emit(";");
 }
 
-Expression *no_block_statement()
+bool no_block_statement()
 {
 	switch (parser.current.type)
 	{
 		case TOKEN_RETURN:
-			return return_statement();
+			return_statement();
+			return true;
 		case TOKEN_IDENTIFIER:
-			return variable_declaration_or_expression;
+			variable_declaration_or_expression();
+			return true;
+		case TOKEN_EOS:
+			return true;
 		default:
-			return NULL;
+			return false;
 	}
 }
 
-static Expression *braced_statements(void);
+static void braced_statements(void);
 
-static Expression *block_body()
+static void block_body()
 {
 	if (parser.current.type == TOKEN_ARROW)
 	{
-		Expression *statement = no_block_statement();
-		if (!statement)
-		{
-			error_at_current("Expected statement");
-		}
-		consume(TOKEN_EOS, "Expected ;");
-		return statement;
+		emit("\n{\n");
+		no_block_statement();
+		emit("\n}\n");
+		return;
 	}
-	return braced_statements();
+	braced_statements();
 }
 
-static Expression *while_statement()
+static void while_statement()
+{
+	advance();
+	emit("while(");
+	consume(TOKEN_PAREN_L, "Expected (");
+	expression();
+	emit(")");
+	consume(TOKEN_PAREN_R, "Expected )");
+	block_body();
+}
+
+static void until_statement()
 {
 	advance();
 	consume(TOKEN_PAREN_L, "Expected (");
-	Expression *cond = expression();
+	emit("do {");
+	expression();
 	consume(TOKEN_PAREN_R, "Expected )");
-	Expression *body = block_body();
-	Expression *while_expr = expr_new_of_type(LOOP_EXPRESSION);
-	expr_add_param(while_expr, cond);
-	expr_add_param(while_expr, body);
-	return while_expr;
+	block_body();
+	emit("} while (");
+	emit(")");
 }
 
-Expression *until_statement()
+static void if_statement()
 {
 	advance();
 	consume(TOKEN_PAREN_L, "Expected (");
-	Expression *cond = expression();
+	emit("if (");
+	expression();
 	consume(TOKEN_PAREN_R, "Expected )");
-	Expression *body = block_body();
-	Expression *until_expr = expr_new_of_type(ENDLOOP_EXPRESSION);
-	expr_add_param(until_expr, cond);
-	expr_add_param(until_expr, body);
-	return until_expr;
-}
-
-static Expression *if_statement()
-{
-	advance();
-	consume(TOKEN_PAREN_L, "Expected (");
-	Expression *cond = expression();
-	consume(TOKEN_PAREN_R, "Expected )");
-	Expression *body;
-	Expression *else_body = NULL;
+	emit(")");
 	if (parser.current.type == TOKEN_ARROW)
 	{
-		body = no_block_statement();
-		if (!body)
-		{
-			error_at_current("Expected statement");
-			recover_to(TOKEN_EOS);
-		}
-		consume(TOKEN_EOS, "Expected ;");
+		emit("{");
+		no_block_statement();
+		emit("}");
 	}
 	else
 	{
-		body = braced_statements();
-		if (body && parser.current.type == TOKEN_ELSE)
+		braced_statements();
+		if (parser.current.type == TOKEN_ELSE)
 		{
+			emit(" else ");
 			advance();
-			else_body = braced_statements();
-			if (!else_body) return NULL; // Dealloc cond + body
+			braced_statements();
 		}
 	}
-
-	if (!body) return NULL; // Dealloc cond
-	if (cond == NULL) return NULL; // Dealloc body/else_body
-
-	Expression *if_statement = expr_new_of_type(AND_EXPRESSION);
-	expr_add_param(if_statement, body);
-	if (else_body) expr_add_param(if_statement, else_body);
-	return if_statement;
 }
 
-Expression *statement()
+bool statement()
 {
 	switch (parser.current.type)
 	{
 		case TOKEN_IF:
-			return if_statement();
+			if_statement();
+			break;
 		case TOKEN_WHILE:
-			return while_statement();
+			while_statement();
+			break;
 		case TOKEN_UNTIL:
-			return until_statement();
+			until_statement();
+			break;
 			/*
 		case TOKEN_FOR:
 			for_statement();
@@ -467,42 +462,38 @@ Expression *statement()
 			switch_statement();
 			break;*/
 		default:
-			break;
+			return no_block_statement();
 	}
-	Expression *expr = no_block_statement();
-    if (!expr) return NULL;
-    consume(TOKEN_EOS, "Expected ;");
-	return expr;
+	return true;
 }
-Expression *statements()
+void statements()
 {
-	Expression *expression = expr_new_of_type(STMT_EXPRESSION);
-	Expression *stmt;
-	while ((stmt = statement()) != NULL)
-	{
-		expr_add_param(expression, stmt);
-	};
-	return expression;
+	while (statement()) {}
 }
 
-static Expression *braced_statements()
+static void braced_statements()
 {
 	consume(TOKEN_BRACE_L, "Expected {");
-	Expression *expression = statements();
+	emit("\n{\n");
+	statements();
+	emit("\n}\n");
 	consume(TOKEN_BRACE_R, "Expected }");
-	return expression;
 }
+
 void proc()
 {
 	advance();
 	consume(TOKEN_IDENTIFIER, "Expected name");
+	Token identifier = parser.previous;
 	consume(TOKEN_PAREN_L, "Expected (");
 	named_var_list();
 	consume(TOKEN_PAREN_R, "Expected )");
 	consume(TOKEN_ARROW, "Expected ->");
 	type();
-	Expression *proc = braced_statements();
-    print_ast(proc);
+	emit(" ");
+	emit_string(identifier.start, identifier.length);
+	emit("(TODO)");
+	braced_statements();
 }
 
 void program()
@@ -567,118 +558,118 @@ static inline ParseRule *get_rule(token_type type)
 	return &rules[type];
 }
 
-static Expression *parse_precedence_after_advance(precedence precedence)
+static void parse_precedence_after_advance(precedence precedence)
 {
 	// Get the rule for the previous token.
-	PrefixFn prefix_rule = get_rule(parser.previous.type)->prefix;
+	ParseFn prefix_rule = get_rule(parser.previous.type)->prefix;
 	if (prefix_rule == NULL)
 	{
 		error("Expected expression.");
-		return NULL;
+		return;
 	}
 
-	Expression *expression = prefix_rule();
-
+	emit("(");
+	prefix_rule();
+	emit(")");
 	while (precedence <= get_rule(parser.current.type)->precedence)
 	{
 		advance();
-		InfixFn infix_rule = get_rule(parser.previous.type)->infix;
-		expression = infix_rule(expression);
+		ParseFn infix_rule = get_rule(parser.previous.type)->infix;
+		emit("(");
+		infix_rule();
+		emit(")");
 	}
-	return expression;
 }
 
-static Expression *parse_precedence(precedence precedence)
+static void parse_precedence(precedence precedence)
 {
 	advance();
 	return parse_precedence_after_advance(precedence);
 }
 
-static Expression *expression_after_advance()
+static void expression_after_advance()
 {
-	return parse_precedence_after_advance(PREC_ASSIGNMENT);
+	parse_precedence_after_advance(PREC_ASSIGNMENT);
 }
 
-static Expression *binary(Expression *left_operand)
+static void binary(void)
 {
 	// Remember the operator.
 	token_type operator_type = parser.previous.type;
 
 	// Compile the right operand.
+
+	switch (operator_type)
+	{
+		case TOKEN_MULT:
+			emit(" * ");
+			break;
+		default:
+			error_at_current("Unknown operator");
+	}
+
 	ParseRule *rule = get_rule(operator_type);
-	Expression *right_operand = parse_precedence((precedence)(rule->precedence + 1));
+	parse_precedence((precedence)(rule->precedence + 1));
 	// Right hand side now loaded.
 
-	Expression *expression = expr_new_of_type(BINARY_EXPRESSION);
-	expression->data.token_type = operator_type;
-	expr_add_param(expression, left_operand);
-	expr_add_param(expression, right_operand);
-	return expression;
 }
 
 
 // Right associative
-static Expression *binary_right(Expression *left_operand)
+static void binary_right()
 {
 	// Remember the operator.
 	token_type operator_type = parser.previous.type;
 
+
 	// Compile the right operand.
 	ParseRule *rule = get_rule(operator_type);
-	Expression *right_operand = parse_precedence((precedence)(rule->precedence));
+	parse_precedence((precedence)(rule->precedence));
 	// Right hand side now loaded.
 
-	Expression *expression = expr_new_of_type(BINARY_EXPRESSION);
-	expression->data.token_type = operator_type;
-	expr_add_param(expression, left_operand);
-	expr_add_param(expression, right_operand);
-	return expression;
+	error_at_current("Unsupported");
 }
 
 
-static Expression *unary()
+static void unary()
 {
 	token_type operatorType = parser.previous.type;
 
+
 	// Compile the operand.
-	Expression *right_operand = parse_precedence(PREC_UNARY);
-
-	Expression *expression = expr_new_of_type(UNARY_EXPRESSION);
-	expression->data.token_type = operatorType;
-	expr_add_param(expression, right_operand);
-	return expression;
+	emit_string(parser.previous.start, parser.previous.length);
+	parse_precedence(PREC_UNARY);
 }
 
-static Expression *identifier()
+static void identifier()
 {
-	Expression *expr = expr_new_of_type(IDENT_EXPRESSION);
-	// DO_STUFF
-	return NULL;
+	emit_string(parser.previous.start, parser.previous.length);
 }
 
-static Expression *grouping()
+static void grouping()
 {
-	Expression *expr = expression();
+	emit("(");
+	expression();
 	consume(TOKEN_PAREN_R, "Expected ')' after expression.");
-	return expr;
+	emit(")");
 }
 
-static Expression *call(Expression *expr)
+static void call()
 {
-	Expression *call_expr = expr_new_of_type(CALL_EXPRESSION);
-	expr_add_param(call_expr, expr);
-    if (parser.current.type != TOKEN_PAREN_R)
+	emit("(");
+	if (parser.current.type != TOKEN_PAREN_R)
     {
         do
         {
-	        expr_add_param(call_expr, expression());
+        	expression();
+	        emit(",");
         } while (parser.current.type == TOKEN_COMMA);
     }
     consume(TOKEN_PAREN_R, "Expected )");
-	return call_expr;
+	emit(")");
 }
 
-static Expression *access(Expression *expression)
+static void access()
 {
 	// TODO BROOOKEN
     consume(TOKEN_IDENTIFIER, "Expected identifier");
@@ -696,38 +687,30 @@ static Expression *access(Expression *expression)
     }
 }
 
-static Expression *or(Expression *left_hand)
+static void or()
 {
-	Expression *right_hand = parse_precedence(PREC_OR);
-	Expression *or_expr = expr_new_of_type(OR_EXPRESSION);
-	expr_add_param(or_expr, left_hand);
-	expr_add_param(or_expr, right_hand);
-	return or_expr;
+	emit(" || ");
+	parse_precedence(PREC_OR);
 }
 
-static Expression *and(Expression *left_hand)
+static void and(Expression *left_hand)
 {
-	Expression *right_hand = parse_precedence(PREC_AND);
-	Expression *and_expr = expr_new_of_type(AND_EXPRESSION);
-	expr_add_param(and_expr, left_hand);
-	expr_add_param(and_expr, right_hand);
-	return and_expr;
+	emit(" && ");
+	parse_precedence(PREC_AND);
 }
 
 
-static Expression *integer_number(void)
+static void integer_number(void)
 {
-	Expression *expr = expr_new_of_type(INTEGER_EXPRESSION);
 	uint64_t number = parse_uint64(parser.previous.start, parser.previous.length);
-	expr->data.numvalue = number;
-	return expr;
+	emit("NUMBER");
 }
 
 
-static Expression *double_number(void)
+static void double_number(void)
 {
+	emit("DOUBLE");
 	// TODO
-	return NULL;
 	// Rewrite to be faster and take the underscores!
 	//double value = strtod(parser.previous.start, NULL);
 }

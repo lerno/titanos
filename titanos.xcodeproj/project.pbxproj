@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		6218D389E92CAC710FF9A5F2 /* parser.c in Sources */ = {isa = PBXBuildFile; fileRef = 6218DA366051DEDE93908808 /* parser.c */; };
-		6218D7FFCB41F84FC51D0476 /* expression.c in Sources */ = {isa = PBXBuildFile; fileRef = 6218D0CE69D720885E258D60 /* expression.c */; };
 		6218DC21F37A434BBC640862 /* memory.c in Sources */ = {isa = PBXBuildFile; fileRef = 6218D84E62A39D391E0D1C48 /* memory.c */; };
 		6218DCB2C64D0D786EB3DA1E /* fnv.c in Sources */ = {isa = PBXBuildFile; fileRef = 6218D57BF84999E61D3FDBC2 /* fnv.c */; };
 		A90AA7A42103C85300287CFA /* main.c in Sources */ = {isa = PBXBuildFile; fileRef = A90AA7A32103C85300287CFA /* main.c */; };
@@ -30,10 +29,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		6218D0CE69D720885E258D60 /* expression.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = expression.c; sourceTree = "<group>"; };
 		6218D0F5D3677A365618D166 /* fnv.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = fnv.h; sourceTree = "<group>"; };
 		6218D2CF821F06C4FD40EB37 /* titanos.y */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.yacc; path = titanos.y; sourceTree = "<group>"; };
-		6218D4953456E1B0C9109626 /* expression.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = expression.h; sourceTree = "<group>"; };
 		6218D532DDF7BF83A31B9985 /* string.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = string.h; sourceTree = "<group>"; };
 		6218D55246C9BE00E8B9C494 /* parser.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = parser.h; sourceTree = "<group>"; };
 		6218D57BF84999E61D3FDBC2 /* fnv.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = fnv.c; sourceTree = "<group>"; };
@@ -103,8 +100,6 @@
 				6218DA366051DEDE93908808 /* parser.c */,
 				6218D55246C9BE00E8B9C494 /* parser.h */,
 				6218D532DDF7BF83A31B9985 /* string.h */,
-				6218D0CE69D720885E258D60 /* expression.c */,
-				6218D4953456E1B0C9109626 /* expression.h */,
 				6218D84E62A39D391E0D1C48 /* memory.c */,
 				6218D7CEB918C29AFCDD1C33 /* memory.h */,
 				6218D57BF84999E61D3FDBC2 /* fnv.c */,
@@ -174,7 +169,6 @@
 				A90AA7B22103C9C700287CFA /* file.c in Sources */,
 				A90AA7B52103D09400287CFA /* debug.c in Sources */,
 				6218D389E92CAC710FF9A5F2 /* parser.c in Sources */,
-				6218D7FFCB41F84FC51D0476 /* expression.c in Sources */,
 				6218DC21F37A434BBC640862 /* memory.c in Sources */,
 				6218DCB2C64D0D786EB3DA1E /* fnv.c in Sources */,
 			);
