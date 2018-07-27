@@ -8,7 +8,4 @@
 //
 
 #include "lexer.h"
-#include "expression.h"
 char *token_name(Token *token);
-char *expression_name(ExpressionType expressionType);
-void print_ast(Expression *expression);

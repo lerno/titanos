@@ -16,31 +16,86 @@ struct test
     foo2 : (proc (proc (foo) -> bar**) -> foo*)****;
 }
 
+
+class Foo
+{
+    baz : tard;
+    booz : tork;
+
+    id getNext();
+    id goodBar(i : int);
+}
+
+macro @context() -> id
+{
+    c = Context.new();
+    c~>import(@scope);
+    return c;
+}
+
+macro @eval(str : string) -> id
+{
+    context := @context;
+    context~>eval(string);
+    return context;
+}
+
+proc baz(bar : Foo) -> void
+{
+   id baz = bar~>getNext();
+   bar~>("getNext");
+   bar~>("getNext", 10);
+   bar~>("setFoo", baz);
+   bar~>each()~>collect("");
+
+   @eval("baz := bar~>getNext();") // Compile time evaluation
+
+   foo := "baz := 100";
+   foo = foo, "100;"
+   context := @eval(foo);
+   id number = context.valueOf("baz");
+   assert(number == 10000);
+   context.eval("baz = 10");
+   assert(100 == context~>valueOf("baz"));
+
+   context~>foo();
+}
+
 proc test(c : feo, d: proc(char) -> foo*) -> void
 {
+   return 23 + 5 * 2 + 10;
+   return 23 - 5;
+   i := 1;
+   return 21 + i;
    foo := 20;
    return -(10 + 5 - 122)^^3;
 }
 
 /*
+
 proc is_alphabet(c : char) -> bool
 {
-   return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+   return c in 'A'..'Z' || c in 'a'..'z';
 }
 
 proc is_digit(c : char) -> bool
 {
-   return c >= '0' && c <= '9';
+   return c in '0'..'9';
 }
 
 proc is_digit_or_underscore(c : char) -> bool
 {
-   return c == '_' || (c >= '0' && c <= '9');
+   return c == '_' || c in '0'..'9';
 }
 
 proc is_alpha(c : char) -> bool
 {
    return is_alphabet(c) || is_digit_or_underscore(c);
+}
+
+proc is_alpha(c : char) -> bool
+{
+   return c.is_alphabet() || c.is_digit_or_underscore();
 }
 
 proc init_lexer(source : char*) -> void
@@ -54,7 +109,7 @@ extend Lexer
 {
     proc reached_end(self: lexer*) -> bool
     {
-        return self.current == '\0';
+        return self.current == 0;
     }
 
     proc peek_next(self : lexer*) -> char
@@ -83,23 +138,19 @@ proc advance() -> char @inline
 
 proc make_token(type: token_type) -> Token
 {
-  Token token;
-  token.type = type;
-  token.start = lexer.start;
-  token.length = (int)(lexer.current - lexer.start);
-  token.line = lexer.line;
-  return token;
+  return Token(type: type,
+               start: lexer.start,
+               length: @cast(lexer.current - lexer.start, int),
+               line: lexer.line);
 }
 
 
 proc error_token(message : char*) -> Token
 {
-  Token token;
-  token.line = lexer.line;
-  token.start = lexer.start;
-  token.length = (int)strlen(message);
-  token.type = TOKEN_ERROR;
-  return token;
+  return Token(type: TokenType.ERROR,
+               start: lexer.start,
+               length: @cast(strlen(message), int),
+               line: lexer.line);
 }
 
 proc is_eol(char c) -> bool @inline
@@ -108,23 +159,23 @@ proc is_eol(char c) -> bool @inline
 }
 
 
-proc Lexer.skip_whitespace(self: Lexer*)
+method Lexer skip_whitespace()
 {
-   while (1)
+   loop
    {
-      c := self.peek();
-      switch (c)
+
+      switch (c: char = self.peek(); c)
       {
          case '\n':
-            self.line++;
-            self.advance();
+            line++;
+            advance();
          case in ' ', '\t', '\r', '\f':
-            self.advance();
+            advance();
          case '/':
-            next := self.peek_next();
+            next := peek_next();
             if (next == '/')
             {
-               while (self.peek() != '\n') -> self.advance();
+               while (peek() != '\n') -> advance();
                continue;
             }
             if (next == '*')
@@ -367,6 +418,36 @@ proc scan_digit() -> Token @inline
 }
 
 
+proc fnv_32a_buf(u8 *buf, u64 len, i32 hval) -> i32
+{
+    bp := buf;
+    be := bp + len;
+
+    while (bp < be)
+    {
+       hval ^= @cast(i32, *bp++);
+       @if(no_gcc)
+       hval += hval<<1 + hval<<4 + hval<<7 + hval<<8 + hval<<24;
+       @else
+       hval *= FNV_32_PRIME;
+       @end
+    }
+    return hval;
+}
+
+enum ExpressionType
+{
+	INTEGER,
+	UINTEGER,
+	FLOAT,
+	BOOL,
+	IDENTIFIER,
+	UNARY,
+	BINARY,
+	ERROR,
+}
+
+
 Token scan_token(void)
 {
 skip_whitespace();
@@ -386,13 +467,13 @@ return make_token(TOKEN_COMMA);
 case ';':
 return make_token(TOKEN_EOS);
 case '{':
-return make_token(TOKEN_BRACE_L);
+return make_token(TOKEN_LBRACE);
 case '}':
-return make_token(TOKEN_BRACE_R);
+return make_token(TOKEN_RBRACE);
 case '(':
-return make_token(TOKEN_PAREN_L);
+return make_token(TOKEN_LPAREN);
 case ')':
-return make_token(TOKEN_PAREN_R);
+return make_token(TOKEN_RPAREN);
 case '.':
 return make_token(TOKEN_DOT);
 case '~':
@@ -405,14 +486,14 @@ case '/':
 return make_token(match('=') ? TOKEN_DIV_ASSIGN : TOKEN_DIV);
 case '*':
 if (match('*')) return make_token(TOKEN_POW);
-return make_token(match('=') ? TOKEN_MULT_ASSIGN : TOKEN_MULT);
+return make_token(match('=') ? TOKEN_MULT_ASSIGN : TOKEN_STAR);
 case '=':
-return make_token(match('=') ? TOKEN_EQUAL : TOKEN_ASSIGN);
+return make_token(match('=') ? TOKEN_EQEQ : TOKEN_EQ);
 case '^':
 return make_token(match('=') ? TOKEN_BIT_XOR_ASSIGN : TOKEN_BIT_XOR);
 case '<':
 if (match('<')) return make_token(match('=') ? TOKEN_LEFT_SHIFT_ASSIGN : TOKEN_LEFT_SHIFT);
-return make_token(match('=') ? TOKEN_LESS_EQUAL : TOKEN_LESS);
+return make_token(match('=') ? TOKEN_LESS_EQ : TOKEN_LESS);
 case '>':
 if (match('>'))
 {
@@ -422,7 +503,7 @@ return make_token(match('=') ? TOKEN_RIGHT_SHIFT_LOGIC_ASSIGN : TOKEN_RIGHT_SHIF
 }
 return make_token(match('=') ? TOKEN_RIGHT_SHIFT_ASSIGN : TOKEN_RIGHT_SHIFT);
 }
-return make_token(match('=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER);
+return make_token(match('=') ? TOKEN_GREATER_EQ : TOKEN_GREATER);
 case '&':
 if (match('&'))
 {

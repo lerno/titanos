@@ -25,17 +25,17 @@ char *token_name(Token *token)
             return "?:";
         case TOKEN_QUESTION:
             return "?";
-        case TOKEN_PAREN_L:
+        case TOKEN_LPAREN:
             return "( \0";
-        case TOKEN_PAREN_R:
+        case TOKEN_RPAREN:
             return " )";
-        case TOKEN_BRACE_L:
+        case TOKEN_LBRACE:
             return "{ ";
-        case TOKEN_BRACE_R:
+        case TOKEN_RBRACE:
             return " }";
-        case TOKEN_BRACKET_L:
+        case TOKEN_LBRACKET:
             return "[ ";
-        case TOKEN_BRACKET_R:
+        case TOKEN_RBRACKET:
             return " ]";
         case TOKEN_COMMA:
             return ", ";
@@ -59,7 +59,7 @@ char *token_name(Token *token)
             return "--";
         case TOKEN_MINUS_ASSIGN:
             return "-=";
-        case TOKEN_MULT:
+        case TOKEN_STAR:
             return "*";
         case TOKEN_MULT_ASSIGN:
             return "*=";
@@ -71,9 +71,9 @@ char *token_name(Token *token)
             return "/=";
         case TOKEN_NOT_EQUAL:
             return "!=";
-        case TOKEN_ASSIGN:
+        case TOKEN_EQ:
             return "=";
-        case TOKEN_EQUAL:
+        case TOKEN_EQEQ:
             return "==";
         case TOKEN_COLON:
             return ":";
@@ -81,7 +81,7 @@ char *token_name(Token *token)
             return ":=";
         case TOKEN_GREATER:
             return ">";
-        case TOKEN_GREATER_EQUAL:
+        case TOKEN_GREATER_EQ:
             return ">=";
         case TOKEN_RIGHT_SHIFT:
             return ">>";
@@ -93,7 +93,7 @@ char *token_name(Token *token)
             return ">>>=";
         case TOKEN_LESS:
             return "<";
-        case TOKEN_LESS_EQUAL:
+        case TOKEN_LESS_EQ:
             return "<=";
         case TOKEN_LEFT_SHIFT:
             return "<<";
@@ -123,16 +123,16 @@ char *token_name(Token *token)
             return "---";
         case TOKEN_STRUCT:
             return "\nstruct ";
+        case TOKEN_ELIPSIS:
+            return " ... ";
+        case TOKEN_DOTDOT:
+            return " .. ";
         case TOKEN_IDENTIFIER:
         case TOKEN_INTEGER:
         case TOKEN_FLOAT:
         case TOKEN_STRING:
             strlcpy(buffer, token->start, token->length + 1);
             return buffer;
-        case TOKEN_EXTEND:
-            return "\nextend ";
-        case TOKEN_CLASS:
-            return "\nclass ";
         case TOKEN_ELSE:
             return " else ";
         case TOKEN_FALSE:
@@ -141,32 +141,22 @@ char *token_name(Token *token)
             return " continue ";
         case TOKEN_AT:
             return " @";
-        case TOKEN_PROC:
-            return "\nproc ";
+        case TOKEN_FUNC:
+            return "\nfunc ";
         case TOKEN_FOR:
             return "\nfor ";
         case TOKEN_IMPORT:
             return "\nimport \0";
         case TOKEN_MODULE:
             return "\nmodule ";
-        case TOKEN_PROGRAM:
-            return "\nprogram ";
         case TOKEN_IF:
             return " if ";
         case TOKEN_NIL:
             return " nil ";
-        case TOKEN_PRINT:
-            return " print ";
         case TOKEN_RETURN:
             return " return ";
-        case TOKEN_SUPER:
-            return " super ";
-        case TOKEN_THIS:
-            return " this ";
         case TOKEN_TRUE:
             return " true ";
-        case TOKEN_VAR:
-            return " var ";
         case TOKEN_WHILE:
             return "\nwhile ";
         case TOKEN_ERROR:
@@ -185,60 +175,3 @@ char *token_name(Token *token)
             return "???";
     }
 }
-
-void print_ast(Expression *expression)
-{
-    if (expression == NULL)
-    {
-        printf("()");
-        return;
-    }
-    printf("(%s ", expression_name(expression->type));
-    for (int i = 0; i < expression->params; i++)
-    {
-        print_ast(from_id(expression->expression_params[i]));
-    }
-    printf(")");
-}
-
-char *expression_name(ExpressionType type)
-{
-    switch (type)
-    {
-       case NOP:
-            return "NOP";
-        case INTEGER_EXPRESSION:
-            return "INT";
-        case STRING_EXPRESSION:
-            return "STRING";
-        case DECIMAL_EXPRESSION:
-            return "FLOAT";
-        case IDENT_EXPRESSION:
-            return "IDENT";
-        case BINARY_EXPRESSION:
-            return "BINEXP";
-        case UNARY_EXPRESSION:
-            return "UNEXP";
-        case AND_EXPRESSION:
-            return "AND";
-        case OR_EXPRESSION:
-            return "OR";
-        case RETURN_EXPRESSION:
-            return "RETURN";
-        case DEREF_EXPRESSION:
-            return "DEREF";
-        case ADDROF_EXPRESSION:
-            return "ADDOF";
-        case CALL_EXPRESSION:
-            return "CALL";
-        case COPY_EXPRESSION:
-            return "COPY";
-        case LOOP_EXPRESSION:
-            return "LOOP";
-        case ENDLOOP_EXPRESSION:
-            return "ENDLOOP";
-        case STMT_EXPRESSION:
-            return "STMTS";
-    }
-}
-
