@@ -7,8 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		6218D3866BBE794E70905F13 /* scratch_buffer.c in Sources */ = {isa = PBXBuildFile; fileRef = 6218D1526C40EFC0018B7C38 /* scratch_buffer.c */; };
 		6218D389E92CAC710FF9A5F2 /* parser.c in Sources */ = {isa = PBXBuildFile; fileRef = 6218DA366051DEDE93908808 /* parser.c */; };
-		6218DC21F37A434BBC640862 /* memory.c in Sources */ = {isa = PBXBuildFile; fileRef = 6218D84E62A39D391E0D1C48 /* memory.c */; };
+		6218DC21F37A434BBC640862 /* array.c in Sources */ = {isa = PBXBuildFile; fileRef = 6218D84E62A39D391E0D1C48 /* array.c */; };
 		6218DCB2C64D0D786EB3DA1E /* fnv.c in Sources */ = {isa = PBXBuildFile; fileRef = 6218D57BF84999E61D3FDBC2 /* fnv.c */; };
 		A90AA7A42103C85300287CFA /* main.c in Sources */ = {isa = PBXBuildFile; fileRef = A90AA7A32103C85300287CFA /* main.c */; };
 		A90AA7AD2103C88600287CFA /* lexer.c in Sources */ = {isa = PBXBuildFile; fileRef = A90AA7AC2103C88600287CFA /* lexer.c */; };
@@ -30,13 +31,15 @@
 
 /* Begin PBXFileReference section */
 		6218D0F5D3677A365618D166 /* fnv.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = fnv.h; sourceTree = "<group>"; };
+		6218D1526C40EFC0018B7C38 /* scratch_buffer.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = scratch_buffer.c; sourceTree = "<group>"; };
 		6218D2CF821F06C4FD40EB37 /* titanos.y */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.yacc; path = titanos.y; sourceTree = "<group>"; };
-		6218D532DDF7BF83A31B9985 /* string.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = string.h; sourceTree = "<group>"; };
+		6218D532DDF7BF83A31B9985 /* string_utils.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = string_utils.h; sourceTree = "<group>"; };
 		6218D55246C9BE00E8B9C494 /* parser.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = parser.h; sourceTree = "<group>"; };
 		6218D57BF84999E61D3FDBC2 /* fnv.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = fnv.c; sourceTree = "<group>"; };
-		6218D7CEB918C29AFCDD1C33 /* memory.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = memory.h; sourceTree = "<group>"; };
-		6218D84E62A39D391E0D1C48 /* memory.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = memory.c; sourceTree = "<group>"; };
+		6218D7CEB918C29AFCDD1C33 /* array.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = array.h; sourceTree = "<group>"; };
+		6218D84E62A39D391E0D1C48 /* array.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = array.c; sourceTree = "<group>"; };
 		6218DA366051DEDE93908808 /* parser.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = parser.c; sourceTree = "<group>"; };
+		6218DED0B8B4C10130ED335E /* scratch_buffer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = scratch_buffer.h; sourceTree = "<group>"; };
 		A90AA7A02103C85300287CFA /* titanos */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = titanos; sourceTree = BUILT_PRODUCTS_DIR; };
 		A90AA7A32103C85300287CFA /* main.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>"; };
 		A90AA7AB2103C88600287CFA /* lexer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = lexer.h; sourceTree = "<group>"; };
@@ -99,11 +102,13 @@
 				A90AA7B42103D09400287CFA /* debug.c */,
 				6218DA366051DEDE93908808 /* parser.c */,
 				6218D55246C9BE00E8B9C494 /* parser.h */,
-				6218D532DDF7BF83A31B9985 /* string.h */,
-				6218D84E62A39D391E0D1C48 /* memory.c */,
-				6218D7CEB918C29AFCDD1C33 /* memory.h */,
+				6218D532DDF7BF83A31B9985 /* string_utils.h */,
+				6218D84E62A39D391E0D1C48 /* array.c */,
+				6218D7CEB918C29AFCDD1C33 /* array.h */,
 				6218D57BF84999E61D3FDBC2 /* fnv.c */,
 				6218D0F5D3677A365618D166 /* fnv.h */,
+				6218D1526C40EFC0018B7C38 /* scratch_buffer.c */,
+				6218DED0B8B4C10130ED335E /* scratch_buffer.h */,
 			);
 			path = src;
 			sourceTree = "<group>";
@@ -169,8 +174,9 @@
 				A90AA7B22103C9C700287CFA /* file.c in Sources */,
 				A90AA7B52103D09400287CFA /* debug.c in Sources */,
 				6218D389E92CAC710FF9A5F2 /* parser.c in Sources */,
-				6218DC21F37A434BBC640862 /* memory.c in Sources */,
+				6218DC21F37A434BBC640862 /* array.c in Sources */,
 				6218DCB2C64D0D786EB3DA1E /* fnv.c in Sources */,
+				6218D3866BBE794E70905F13 /* scratch_buffer.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -3,7 +3,7 @@
 // Copyright (c) 2018 Christoffer Lerno. All rights reserved.
 //
 
-#include "memory.h"
+#include "array.h"
 
 void *reallocate(void *previous, size_t old_size, size_t new_size)
 {

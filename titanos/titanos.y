@@ -100,7 +100,7 @@ pointer_type:
 complex_type:
   PROC '(' type_list ')' ARROW type
   |
-  '(' type ')' '*'
+  '(' type ')'
   |
   pointer_type
   ;

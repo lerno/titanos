@@ -8,9 +8,13 @@
 #include "parser.h"
 #include "lexer.h"
 #include "debug.h"
-#include "string.h"
+#include "string_utils.h"
 #include "fnv.h"
 #include <memory.h>
+#include "common.h"
+#include "scratch_buffer.h"
+#include <stdlib.h>
+#include <string.h>
 
 #define QUALIFIED_NAME_MAX 256
 
@@ -21,8 +25,28 @@ typedef struct
 	Token end;
 } QualifiedName;
 
+typedef struct {
+	char *name;
+	uint8_t length;
+} Symbol;
+
+typedef struct _SymbolLink {
+	Symbol symbol;
+	struct SymbolLink *next;
+} SymbolLink;
+
+#define MAX_SYMBOLS 128
+
+typedef struct
+{
+	uint8_t next_symbol;
+	Symbol symbols[MAX_SYMBOLS];
+	SymbolLink *symbol_link;
+} SymList;
+
 typedef struct _Scope
 {
+	SymList variable_symbols;
 } Scope;
 
 #define MAX_SCOPES 128
@@ -36,8 +60,65 @@ typedef struct
 	bool had_error;
 	bool panic_mode;
 	uint8_t active_scope;
-
 } Parser;
+
+Parser parser;
+
+static inline bool matches_symbol(Symbol *symbol, const char *name, int length)
+{
+	return symbol->length == length &&
+	       (memcmp(symbol->name, name, (size_t)length) == 0);
+}
+
+static inline Symbol *find_symbol_in_symlist(SymList *sym_list, const char *name, int length)
+{
+	for (int i = sym_list->next_symbol - 1; i >= 0; i--)
+	{
+		Symbol *symbol = &sym_list->symbols[i];
+		if (matches_symbol(symbol, name, length)) return symbol;
+	}
+	SymbolLink *symbol_link = sym_list->symbol_link;
+	while (symbol_link != NULL)
+	{
+		if (matches_symbol(&symbol_link->symbol, name, length)) return &symbol_link->symbol;
+	}
+	return NULL;
+}
+
+static inline Symbol *push_symbol_in_symlist(SymList *sym_list, const char *name, int length)
+{
+	if (sym_list->next_symbol < MAX_SYMBOLS - 1)
+	{
+		return &sym_list->symbols[sym_list->next_symbol++];
+	}
+	SymbolLink *symbol_link = malloc(sizeof(SymbolLink));
+	SymbolLink **pointer = &sym_list->symbol_link;
+	while (pointer != NULL)
+	{
+		pointer = &((*pointer)->next);
+	}
+	*pointer = symbol_link;
+	symbol_link->next = NULL;
+	return &symbol_link->symbol;
+}
+
+
+static Symbol *find_variable_symbol(const char *name, int length)
+{
+	for (int i = parser.active_scope; i >= 0; i--)
+	{
+		Scope *scope = &parser.scopes[i];
+		Symbol *symbol = find_symbol_in_symlist(&scope->variable_symbols, name, length);
+		if (symbol) return symbol;
+	}
+	return NULL;
+}
+
+// Assumes we already checked for the symbol.
+static Symbol *push_variable_symbol(const char *name, int length)
+{
+	return push_symbol_in_symlist(&parser.scopes[parser.active_scope].variable_symbols, name, length);
+}
 
 typedef void (*ParseFn)(void);
 
@@ -68,7 +149,6 @@ typedef struct
 
 static ParseRule rules[TOKEN_EOF + 1];
 
-Parser parser;
 
 void import(void);
 void proc(void);
@@ -155,7 +235,6 @@ static void advance(void)
 	while (1)
 	{
 		parser.current = scan_token();
-		printf("%s",  token_name(&parser.current));
 		if (parser.current.type != TOKEN_ERROR) break;
 		error_at_current(parser.current.start);
 	}
@@ -212,7 +291,7 @@ static char *qualified_name()
 		consume(TOKEN_IDENTIFIER, "Expected name");
 		copy_token_to_buffer(&parser.previous, buffer, &position, QUALIFIED_NAME_MAX);
 	}
-	char *result = malloc(position + 1);
+	char *result = malloc((size_t)(position + 1));
 	memcpy(result, buffer, position);
 	result[position] = 0;
 	return result;
@@ -357,8 +436,70 @@ static void return_statement()
 {
 	advance();
 	emit("return ");
-	expression();
+	expression_after_advance();
 	emit(";");
+}
+
+static void assign_auto_stmt()
+{
+	if (find_variable_symbol(parser.previous.start, parser.previous.length))
+	{
+		error_at_current("Symbol redeclared");
+		expression();
+		return;
+	}
+	Symbol *symbol = push_variable_symbol(parser.previous.start, parser.previous.length);
+
+	// Advance past ':'
+
+	// Type handling
+	expression();
+
+	emit(";");
+}
+
+static void assign_stmt()
+{
+	if (find_variable_symbol(parser.previous.start, parser.previous.length))
+	{
+		error_at_current("Symbol redeclared");
+		expression();
+		return;
+	}
+	Symbol *symbol = push_variable_symbol(parser.previous.start, parser.previous.length);
+	// Advance past ':'
+	advance();
+	// Parse type
+
+	// symbol->type = type();
+
+	// emit: int foo;
+
+	if (parser.current.type == TOKEN_EOS) return;
+
+	// emit foo =
+	// type = expression();
+	expression_after_advance();
+
+	emit(";");
+}
+
+static void variable_declaration_or_expression()
+{
+	advance();
+	switch (parser.current.type)
+	{
+		case TOKEN_COLON_ASSIGN:
+			assign_auto_stmt();
+			break;
+		case TOKEN_COLON:
+			assign_stmt();
+			break;
+		default:
+			expression_after_advance();
+			emit(";");
+			break;
+	}
 }
 
 bool no_block_statement()
@@ -589,6 +730,7 @@ static void parse_precedence(precedence precedence)
 
 static void expression_after_advance()
 {
+	scratch_buffer_clear();
 	parse_precedence_after_advance(PREC_ASSIGNMENT);
 }
 
@@ -679,7 +821,7 @@ static void access()
         case TOKEN_PAREN_L:
 	        return call(expression);
         case TOKEN_BRACKET_L: // TODO
-	        return NULL;
+	        return;
         case TOKEN_DOT:
 	        return access(expression);
         default:
@@ -693,7 +835,7 @@ static void or()
 	parse_precedence(PREC_OR);
 }
 
-static void and(Expression *left_hand)
+static void and(void)
 {
 	emit(" && ");
 	parse_precedence(PREC_AND);

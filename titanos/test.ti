@@ -18,6 +18,7 @@ struct test
 
 proc test(c : feo, d: proc(char) -> foo*) -> void
 {
+   return 1;
    foo := 20;
    return -(10 + 5 - 122)^^3;
 }
