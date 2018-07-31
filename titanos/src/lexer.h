@@ -90,7 +90,7 @@ typedef enum
     
 } token_type;
 
-typedef struct
+typedef struct _Token
 {
     token_type type;
     const char* start;

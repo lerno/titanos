@@ -15,6 +15,11 @@
 #include "scratch_buffer.h"
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <inttypes.h>
+#include "expression.c"
+#include "type.c"
+#include "symbol.c"
 
 #define QUALIFIED_NAME_MAX 256
 
@@ -25,25 +30,6 @@ typedef struct
 	Token end;
 } QualifiedName;
 
-typedef struct {
-	char *name;
-	uint8_t length;
-} Symbol;
-
-typedef struct _SymbolLink {
-	Symbol symbol;
-	struct SymbolLink *next;
-} SymbolLink;
-
-#define MAX_SYMBOLS 128
-
-typedef struct
-{
-	uint8_t next_symbol;
-	Symbol symbols[MAX_SYMBOLS];
-	SymbolLink *symbol_link;
-} SymList;
-
 typedef struct _Scope
 {
 	SymList variable_symbols;
@@ -51,73 +37,51 @@ typedef struct _Scope
 
 #define MAX_SCOPES 128
 
+
+#define EMIT_BUFFER 0xFFFF
+#define EXPRESSION_STACK_DEPTH 1024
+
 typedef struct
 {
 	Scope scopes[MAX_SCOPES];
 	char *module;
+	char *module_prefix;
 	Token current;
 	Token previous;
 	bool had_error;
 	bool panic_mode;
 	uint8_t active_scope;
+	Expression expression_stack[EXPRESSION_STACK_DEPTH];
+	uint32_t expression_stack_pointer;
 } Parser;
 
 Parser parser;
 
-static inline bool matches_symbol(Symbol *symbol, const char *name, int length)
-{
-	return symbol->length == length &&
-	       (memcmp(symbol->name, name, (size_t)length) == 0);
-}
+Type TYPE_BOOL;
+Type TYPE_F64;
+Type TYPE_U64;
+Type TYPE_I64;
 
-static inline Symbol *find_symbol_in_symlist(SymList *sym_list, const char *name, int length)
+static Type *find_type(Token *token)
 {
-	for (int i = sym_list->next_symbol - 1; i >= 0; i--)
-	{
-		Symbol *symbol = &sym_list->symbols[i];
-		if (matches_symbol(symbol, name, length)) return symbol;
-	}
-	SymbolLink *symbol_link = sym_list->symbol_link;
-	while (symbol_link != NULL)
-	{
-		if (matches_symbol(&symbol_link->symbol, name, length)) return &symbol_link->symbol;
-	}
 	return NULL;
 }
 
-static inline Symbol *push_symbol_in_symlist(SymList *sym_list, const char *name, int length)
-{
-	if (sym_list->next_symbol < MAX_SYMBOLS - 1)
-	{
-		return &sym_list->symbols[sym_list->next_symbol++];
-	}
-	SymbolLink *symbol_link = malloc(sizeof(SymbolLink));
-	SymbolLink **pointer = &sym_list->symbol_link;
-	while (pointer != NULL)
-	{
-		pointer = &((*pointer)->next);
-	}
-	*pointer = symbol_link;
-	symbol_link->next = NULL;
-	return &symbol_link->symbol;
-}
-
-
-static Symbol *find_variable_symbol(const char *name, int length)
+static Symbol *find_variable_symbol(Token *token)
 {
 	for (int i = parser.active_scope; i >= 0; i--)
 	{
 		Scope *scope = &parser.scopes[i];
-		Symbol *symbol = find_symbol_in_symlist(&scope->variable_symbols, name, length);
+		Symbol *symbol = find_symbol_in_symlist(&scope->variable_symbols, token->start, token->length);
 		if (symbol) return symbol;
 	}
 	return NULL;
 }
 
 // Assumes we already checked for the symbol.
-static Symbol *push_variable_symbol(const char *name, int length)
+static Symbol *push_variable_symbol(Token *token)
 {
-	return push_symbol_in_symlist(&parser.scopes[parser.active_scope].variable_symbols, name, length);
+	return push_symbol_in_symlist(&parser.scopes[parser.active_scope].variable_symbols, token->start, token->length);
 }
 
 typedef void (*ParseFn)(void);
@@ -151,7 +115,7 @@ static ParseRule rules[TOKEN_EOF + 1];
 
 
 void import(void);
-void proc(void);
+void proc_stmt(void);
 
 static void set_parse_rule(token_type type, ParseFn prefix, ParseFn infix, precedence rule_precedence)
 {
@@ -164,7 +128,6 @@ static void set_parse_rule(token_type type, ParseFn prefix, ParseFn infix, prece
 
 
 // IDENTIFIER | proc_type -> type | void | type *
-void type(void);
 
 static void emit(const char *string)
 {
@@ -174,6 +137,60 @@ static void emit(const char *string)
 static void emit_string(const char *string, int length)
 {
 	printf("%.*s", length, string);
+}
+
+static void emit_token(Token *token)
+{
+	printf("%.*s", token->length, token->start);
+}
+
+
+
+static inline Expression *new_expression()
+{
+	if (parser.expression_stack_pointer == EXPRESSION_STACK_DEPTH)
+	{
+		error_at_current("Max stack deptch reached!");
+		return malloc(sizeof(Expression));
+	}
+	return &parser.expression_stack[parser.expression_stack_pointer++];
+}
+
+static void expression_stack_push_binary(Token token)
+{
+	Expression *expression = new_expression();
+	expression->type = EXPRESSION_BINARY;
+	expression->is_constant = false;
+	expression->value.operator = token;
+}
+
+static void expression_stack_push_unary(Token token)
+{
+	Expression *expression = new_expression();
+	expression->type = EXPRESSION_UNARY;
+	expression->is_constant = false;
+	expression->value.operator = token;
+}
+
+static void expression_stack_pop_to(Expression *expression)
+{
+	parser.expression_stack_pointer = (uint32_t)(expression - &parser.expression_stack[0] + 1);
+}
+
+static void expression_stack_clear()
+{
+	parser.expression_stack_pointer = 0;
+}
+
+static Expression *expression_stack_top()
+{
+	return &parser.expression_stack[parser.expression_stack_pointer - 1];
+}
+
+static Expression *expression_stack_pop()
+{
+	assert(parser.expression_stack_pointer > 0 && "Tried to pop empty stack");
+	return &parser.expression_stack[--parser.expression_stack_pointer];
 }
 
 static void error_at(Token *token, const char *message)
@@ -201,7 +218,7 @@ static void error_at(Token *token, const char *message)
 }
 
 
-static void error_at_current(const char *message)
+void error_at_current(const char *message)
 {
 	error_at(&parser.current, message);
 }
@@ -324,11 +341,14 @@ void module()
 {
 	advance();
 	parser.module = qualified_name();
+	parser.module_prefix = path_to_underscore_prefix(parser.module);
 	consume(TOKEN_EOS, "Expected ;");
 	recover_to(TOKEN_EOS);
 }
 
-void var_list()
+static Type *type(void);
+
+static void var_list(void)
 {
 	type();
 	while (parser.current.type == TOKEN_COMMA)
@@ -337,8 +357,8 @@ void var_list()
 	}
 }
 
-// PROC ( type_list )
-void proc_type()
+// PROC ( type_list ) -> type
+Type *proc_type()
 {
 	// Skip "proc"
 	advance();
@@ -347,52 +367,54 @@ void proc_type()
 	consume(TOKEN_PAREN_R, "Expected )");
 	consume(TOKEN_ARROW, "Expected ->");
 	type();
+	return NULL;
 }
 
-void primitive_type(void)
+Type *primitive_type(void)
 {
+	Type *type = find_type(&parser.current);
 	advance();
-	// Consume all pointers
-	while (parser.current.type == TOKEN_MULT) advance();
+	return type;
 }
 
-void pointer_type(void)
+Type *complex_type(void)
 {
-	// (
-	advance();
-	type();
-	consume(TOKEN_PAREN_R, "Expected )");
-	while (parser.current.type == TOKEN_MULT) advance();
-}
-void complex_type(void)
-{
+	Type *type;
 	switch (parser.current.type)
 	{
 		case TOKEN_PROC:
-			proc_type();
+			type = proc_type();
 			break;
 		case TOKEN_IDENTIFIER:
-			primitive_type();
+			type = primitive_type();
 			break;
 		case TOKEN_PAREN_L:
-			pointer_type();
+			advance();
+			type = complex_type();
+			consume(TOKEN_PAREN_R, "Expected )");
 			break;
 		default:
 			error_at_current("Expected a type");
-			break;
+			return &ERROR_TYPE;
 	}
-
+	while (parser.current.type == TOKEN_MULT)
+	{
+		type = type_get_pointer_to_type(type);
+		advance();
+	}
+	return type;
 }
 // IDENTIFIER | proc_type -> type | void | type *
-void type()
+static Type *type()
 {
 	if (parser.current.type == TOKEN_VOID)
 	{
 		advance();
-		return;
+		return &VOID_TYPE;
 	}
-	complex_type();
+	return complex_type();
 }
+
 void def_struct()
 {
 	advance();
@@ -424,49 +446,174 @@ void named_var_list()
 }
 
 
-static void expression_after_advance(void);
+static void expression_after_advance();
 
-static void expression()
+static void expression_stmt()
 {
 	advance();
 	expression_after_advance();
+}
+
+
+static void emit_expression(Expression *expression)
+{
+	Expression *left;
+	Expression *right;
+	switch (expression->type)
+	{
+		case EXPRESSION_BOOL:
+			emit(expression->value.b ? " true " : " false ");
+			break;
+		case EXPRESSION_INTEGER:
+			printf("%" PRId64, expression->value.si);
+			break;
+		case EXPRESSION_UINTEGER:
+			printf("%" PRIu64, expression->value.si);
+			break;
+		case EXPRESSION_FLOAT:
+			printf("%Lf", expression->value.f);
+			break;
+		case EXPRESSION_UNARY:
+			emit("(");
+			emit_token(&expression->value.operator);
+			emit_expression(expression_stack_top());
+			emit(")");
+			break;
+		case EXPRESSION_BINARY:
+			emit("(");
+			emit_expression(expression_stack_top());
+			emit_token(&expression->value.operator);
+			emit_expression(expression_stack_top());
+			emit(")");
+        case EXPRESSION_IDENTIFIER:
+            emit_string(expression->value.variable->name, expression->value.variable->length);
+            break;
+		default:
+			exit(1);
+	}
+}
+
+static void emit_expression_stack()
+{
+	while (parser.expression_stack_pointer > 0)
+	{
+		emit_expression(expression_stack_pop());
+	}
 }
 
 static void return_statement()
 {
 	advance();
 	emit("return ");
+	expression_stack_clear();
+	advance();
 	expression_after_advance();
+	if (parser.had_error) return;
+	emit_expression_stack();
 	emit(";");
+}
+
+
+
+static Type *expression_type(int *pointer)
+{
+	--(*pointer);
+	Expression *expression = &parser.expression_stack[*pointer];
+	Type *rhs;
+	Type *lhs;
+	switch (expression_stack_top()->type)
+	{
+		case EXPRESSION_FLOAT:
+			return &TYPE_F64;
+		case EXPRESSION_BOOL:
+			return &TYPE_BOOL;
+		case EXPRESSION_UINTEGER:
+			return &TYPE_U64;
+		case EXPRESSION_INTEGER:
+			return &TYPE_I64;
+		case EXPRESSION_UNARY:
+			rhs = expression_type(pointer);
+			switch (expression->value.operator.type)
+			{
+				case TOKEN_MINUS:
+					return rhs;
+				case TOKEN_NOT:
+					return &TYPE_BOOL;
+				case TOKEN_BIT_AND:
+					return rhs; // FIX TODO make pointer;
+				case TOKEN_MULT:
+					return rhs; // FIX TODO deref;
+				default:
+					assert(false && "Not possible");
+					return NULL;
+			}
+		case EXPRESSION_BINARY:
+			rhs = expression_type(pointer);
+			lhs = expression_type(pointer);
+			switch (expression->value.operator.type)
+			{
+				case TOKEN_MINUS:
+				case TOKEN_PLUS:
+				case TOKEN_BIT_AND:
+				case TOKEN_MULT:
+					return lhs;
+				default:
+					assert(false && "Not possible");
+					return NULL;
+			}
+		case EXPRESSION_IDENTIFIER:
+			return expression->value.variable->type;
+		case EXPRESSION_ERROR:
+			return &VOID_TYPE;
+	}
+
+}
+static Type *expression_stack_type()
+{
+	if (!parser.expression_stack_pointer) return &VOID_TYPE;
+	int pointer = parser.expression_stack_pointer;
+	return expression_type(&pointer);
 }
 
 static void assign_auto_stmt()
 {
-	if (find_variable_symbol(parser.previous.start, parser.previous.length))
+	if (find_variable_symbol(&parser.previous))
 	{
 		error_at_current("Symbol redeclared");
-		expression();
+		expression_stmt();
 		return;
 	}
-	Symbol *symbol = push_variable_symbol(parser.previous.start, parser.previous.length);
+	Symbol *symbol = push_variable_symbol(&parser.previous);
 
-	// Advance past ':'
+	// Advance past ':='
+	advance();
 
 	// Type handling
-	expression();
-
+	expression_stack_clear();
+	expression_stmt();
+	symbol->type = expression_stack_type();
+	//emit_type(symbol->type);
+	emit(" ");
+	emit_string(symbol->name, symbol->length);
+	emit(";\n");
+	emit_string(symbol->name, symbol->length);
+	emit("=");
+	emit_expression_stack();
 	emit(";");
 }
 
 static void assign_stmt()
 {
-	if (find_variable_symbol(parser.previous.start, parser.previous.length))
+	expression_stack_pop();
+
+	if (find_variable_symbol(&parser.previous))
 	{
 		error_at_current("Symbol redeclared");
-		expression();
+		expression_stmt();
 		return;
 	}
-	Symbol *symbol = push_variable_symbol(parser.previous.start, parser.previous.length);
+	Symbol *symbol = push_variable_symbol(&parser.previous);
+
 	// Advance past ':'
 	advance();
 	// Parse type
@@ -491,15 +638,17 @@ static void variable_declaration_or_expression()
 	{
 		case TOKEN_COLON_ASSIGN:
 			assign_auto_stmt();
-			break;
+			return;
 		case TOKEN_COLON:
 			assign_stmt();
-			break;
+			return;
 		default:
-			expression_after_advance();
-			emit(";");
 			break;
 	}
+	Expression expr;
+	expression_after_advance(&expr);
+	emit_expression(&expr);
+	emit(";");
 }
 
 bool no_block_statement()
@@ -508,6 +657,7 @@ bool no_block_statement()
 	{
 		case TOKEN_RETURN:
 			return_statement();
+			consume(TOKEN_EOS, "Expected ';'");
 			return true;
 		case TOKEN_IDENTIFIER:
 			variable_declaration_or_expression();
@@ -520,6 +670,7 @@ bool no_block_statement()
 }
 
 static void braced_statements(void);
+
 
 static void block_body()
 {
@@ -536,11 +687,13 @@ static void block_body()
 static void while_statement()
 {
 	advance();
-	emit("while(");
 	consume(TOKEN_PAREN_L, "Expected (");
-	expression();
-	emit(")");
+	Expression expr;
+	expression_stmt(&expr);
 	consume(TOKEN_PAREN_R, "Expected )");
+	emit("while(");
+	emit_expression(&expr);
+	emit(")");
 	block_body();
 }
 
@@ -548,11 +701,13 @@ static void until_statement()
 {
 	advance();
 	consume(TOKEN_PAREN_L, "Expected (");
-	emit("do {");
-	expression();
+	Expression expr;
+	expression_stmt(&expr);
 	consume(TOKEN_PAREN_R, "Expected )");
+	emit("do {");
 	block_body();
 	emit("} while (");
+	emit_expression(&expr);
 	emit(")");
 }
 
@@ -560,8 +715,11 @@ static void if_statement()
 {
 	advance();
 	consume(TOKEN_PAREN_L, "Expected (");
+	Expression expr;
+	expression_stmt(&expr);
+	consume(TOKEN_PAREN_R, "Expected )");
 	emit("if (");
-	expression();
+	emit_expression(&expr);
 	consume(TOKEN_PAREN_R, "Expected )");
 	emit(")");
 	if (parser.current.type == TOKEN_ARROW)
@@ -621,19 +779,20 @@ static void braced_statements()
 	consume(TOKEN_BRACE_R, "Expected }");
 }
 
-void proc()
+void proc_stmt()
 {
 	advance();
 	consume(TOKEN_IDENTIFIER, "Expected name");
 	Token identifier = parser.previous;
+	if (parser.module)
+	{
+		emit(parser.module_prefix);
+	}
 	consume(TOKEN_PAREN_L, "Expected (");
 	named_var_list();
 	consume(TOKEN_PAREN_R, "Expected )");
 	consume(TOKEN_ARROW, "Expected ->");
 	type();
-	emit(" ");
-	emit_string(identifier.start, identifier.length);
-	emit("(TODO)");
 	braced_statements();
 }
 
@@ -650,7 +809,7 @@ void extend_struct()
 	consume(TOKEN_BRACE_L, "Expected {");
 	while (parser.current.type != TOKEN_BRACE_R)
 	{
-		proc();
+		proc_stmt();
 	}
 	consume(TOKEN_BRACE_R, "Expected end");
 }
@@ -681,7 +840,7 @@ void source()
 				import();
 				break;
 			case TOKEN_PROC:
-				proc();
+				proc_stmt();
 				break;
 			case TOKEN_PROGRAM:
 				program();
@@ -709,16 +868,12 @@ static void parse_precedence_after_advance(precedence precedence)
 		return;
 	}
 
-	emit("(");
 	prefix_rule();
-	emit(")");
 	while (precedence <= get_rule(parser.current.type)->precedence)
 	{
 		advance();
 		ParseFn infix_rule = get_rule(parser.previous.type)->infix;
-		emit("(");
 		infix_rule();
-		emit(")");
 	}
 }
 
@@ -730,70 +885,153 @@ static void parse_precedence(precedence precedence)
 
 static void expression_after_advance()
 {
-	scratch_buffer_clear();
 	parse_precedence_after_advance(PREC_ASSIGNMENT);
 }
 
-static void binary(void)
+static void binary()
 {
 	// Remember the operator.
+	Token token = parser.previous;
 	token_type operator_type = parser.previous.type;
 
-	// Compile the right operand.
-
-	switch (operator_type)
-	{
-		case TOKEN_MULT:
-			emit(" * ");
-			break;
-		default:
-			error_at_current("Unknown operator");
-	}
+	Expression *left_hand = expression_stack_top();
 
 	ParseRule *rule = get_rule(operator_type);
 	parse_precedence((precedence)(rule->precedence + 1));
-	// Right hand side now loaded.
 
+	Expression *right_side = expression_stack_top();
+	// Compile the right operand.
+
+	if (right_side->is_constant && left_hand->is_constant)
+	{
+		expression_stack_pop_to(left_hand);
+		switch (operator_type)
+		{
+			case TOKEN_MULT:
+				constant_fold_mult(left_hand, right_side);
+				return;
+			case TOKEN_MINUS:
+				constant_minus(right_side);
+				constant_fold_plus(left_hand, right_side);
+				return;
+			case TOKEN_PLUS:
+				expression_stack_pop_to(left_hand);
+				constant_fold_plus(left_hand, right_side);
+				return;
+			default:
+				error_at_current("Unknown operator");
+				return;
+		}
+	}
+	expression_stack_push_binary(token);
 }
+
+
 
 
 // Right associative
 static void binary_right()
 {
+	Token token = parser.previous;
 	// Remember the operator.
 	token_type operator_type = parser.previous.type;
 
+	Expression *left_hand = expression_stack_top();
 
 	// Compile the right operand.
 	ParseRule *rule = get_rule(operator_type);
 	parse_precedence((precedence)(rule->precedence));
+
+	Expression *right_hand = expression_stack_top();
+
 	// Right hand side now loaded.
 
-	error_at_current("Unsupported");
+	bool constant_fold = right_hand->is_constant && left_hand->is_constant;
+
+
+	switch (operator_type)
+	{
+		case TOKEN_POW:
+			if (constant_fold)
+			{
+				expression_stack_pop_to(left_hand);
+				if (!constant_pow(left_hand, right_hand))
+				{
+					error_at_current("Illegal type for exponentiation");
+				}
+				return;
+			}
+			expression_stack_push_binary(token);
+			break;
+		default:
+			error_at_current("Unknown operator");
+	}
 }
+
+
 
 
 static void unary()
 {
-	token_type operatorType = parser.previous.type;
-
+	Token token = parser.previous;
+	token_type operator_type = parser.previous.type;
 
 	// Compile the operand.
 	emit_string(parser.previous.start, parser.previous.length);
 	parse_precedence(PREC_UNARY);
+
+	Expression *expression = expression_stack_top();
+
+	if (expression->is_constant)
+	{
+		switch (operator_type)
+		{
+			case TOKEN_MINUS:
+				constant_minus(expression);
+				break;
+			case TOKEN_NOT:
+				constant_not(expression);
+				break;
+			case TOKEN_MULT:
+				// DOTHIS;
+				break;
+			case TOKEN_BIT_AND:
+				// Addrof;
+				break;
+			case TOKEN_BIT_NOT:
+				if (!constant_bit_not(expression))
+				{
+					error_at_current("Illegal type for bit-wise not");
+				}
+				break;
+			default:
+				assert(false && "Unkown unary token");
+				break;
+		}
+		return;
+	}
+
+	expression_stack_push_unary(token);
 }
 
 static void identifier()
 {
-	emit_string(parser.previous.start, parser.previous.length);
+	Expression *expr = new_expression();
+	expr->type = EXPRESSION_IDENTIFIER;
+	expr->is_constant = false;
+	Symbol *symbol = find_variable_symbol(&parser.previous);
+	if (symbol == NULL)
+	{
+		error_at_current("No such variable found");
+		expr->type = EXPRESSION_ERROR;
+	}
+	expr->value.variable = symbol;
 }
 
 static void grouping()
 {
-	emit("(");
-	expression();
+	expression_stmt();
 	consume(TOKEN_PAREN_R, "Expected ')' after expression.");
-	emit(")");
 }
 
 static void call()
@@ -803,7 +1041,7 @@ static void call()
     {
         do
         {
-        	expression();
+	        expression_stmt();
 	        emit(",");
         } while (parser.current.type == TOKEN_COMMA);
     }
@@ -819,11 +1057,11 @@ static void access()
     switch (parser.current.type)
     {
         case TOKEN_PAREN_L:
-	        return call(expression);
+	        return call();
         case TOKEN_BRACKET_L: // TODO
 	        return;
         case TOKEN_DOT:
-	        return access(expression);
+	        return access();
         default:
 	        return parse_precedence_after_advance(PREC_CALL);
     }
@@ -831,30 +1069,56 @@ static void access()
 
 static void or()
 {
-	emit(" || ");
+	Expression *left_hand = expression_stack_top();
+	Token token = parser.previous;
 	parse_precedence(PREC_OR);
+	if (left_hand->is_constant)
+	{
+		constant_bool_cast(left_hand);
+		if (left_hand->value.b)
+		{
+			expression_stack_pop_to(left_hand);
+			return;
+		}
+	}
+	expression_stack_push_binary(token);
 }
 
-static void and(void)
+static void and(Expression *expression)
 {
-	emit(" && ");
+	Expression *left_hand = expression_stack_top();
+	Token token = parser.previous;
+	if (left_hand->is_constant)
+	{
+		constant_bool_cast(left_hand);
+		if (!left_hand->value.b)
+		{
+			expression_stack_pop_to(left_hand);
+			expression_stack_pop();
+			parse_precedence(PREC_AND);
+			return;
+		}
+	}
 	parse_precedence(PREC_AND);
+	expression_stack_push_binary(token);
 }
 
 
-static void integer_number(void)
+static void integer_number()
 {
-	uint64_t number = parse_uint64(parser.previous.start, parser.previous.length);
-	emit("NUMBER");
+	Expression *expr = new_expression();
+	expr->value.ui = parse_uint64(parser.previous.start, parser.previous.length);
+	expr->is_constant = true;
+	expr->type = EXPRESSION_UINTEGER;
 }
 
 
-static void double_number(void)
+static void double_number()
 {
-	emit("DOUBLE");
-	// TODO
-	// Rewrite to be faster and take the underscores!
-	//double value = strtod(parser.previous.start, NULL);
+	Expression *expr = new_expression();
+	expr->value.f = strtod(parser.previous.start, NULL);
+	expr->is_constant = true;
+	expr->type = EXPRESSION_FLOAT;
 }
 
 static void setup_parse_rules()

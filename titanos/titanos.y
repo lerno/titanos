@@ -91,18 +91,22 @@ var_list:
 	;
 
 
-pointer_type:
+primitive_type:
   IDENTIFIER
-  |
-  pointer_type '*'
   ;
 
 complex_type:
   PROC '(' type_list ')' ARROW type
   |
-  '(' type ')'
+  '(' pointer_type ')'
   |
-  pointer_type
+  primitive_type
+  ;
+
+pointer_type:
+  complex_type
+  |
+  pointer_type '*'
   ;
 
 type:

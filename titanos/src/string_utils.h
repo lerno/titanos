@@ -1,6 +1,8 @@
 #pragma once
 
+#include <memory.h>
 #include "common.h"
+#include "stdlib.h"
 
 // Assume well-formed hex!
 static inline uint64_t parse_uint64_hex(const char *string, int len)
@@ -51,6 +53,26 @@ static inline uint64_t parse_uint64_bin(const char *string, int len)
 		value = (value << 1) + (c - '0');
 	}
 	return value;
+}
+
+static inline char *path_to_underscore_prefix(char *namespace_name)
+{
+	char *result = malloc(strlen(namespace_name) + 2);
+	char *result_iterator = result;
+	// Create name with underscore;
+	do
+	{
+		if (*namespace_name == ':')
+		{
+			namespace_name += 2;
+			*(result_iterator++) = '_';
+			continue;
+		}
+		*(result_iterator++) = *(namespace_name++);
+	} while (*namespace_name);
+	*(result_iterator++) = '_';
+	*(result_iterator++) = 0;
+	return result;
 }
 
 // Parse normal integers, parse 0xBEEF, parse 0o1337, parse 0b1010101 – positive numbers only
