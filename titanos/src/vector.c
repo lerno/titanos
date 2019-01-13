@@ -33,6 +33,7 @@ void vector_add(Vector *vector, void *element)
         memcpy(new_data, vector->entries, old * sizeof(void *));
         vector->entries = new_data;
     }
+
     vector->entries[vector->size++] = element;
 }
 

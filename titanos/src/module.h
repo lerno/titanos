@@ -1,6 +1,8 @@
 #pragma once
 #include "lexer.h"
 #include "vector.h"
+#include "table.h"
+
 typedef struct _Module
 {
     Token name;
@@ -9,30 +11,20 @@ typedef struct _Module
     bool is_c_library;
     bool is_exported;
 
-    Vector *symbols;
-    Vector *struct_functions;
-    Vector *asts;
-    /*Symbols symbols;*
+    Vector *files; // Asts
+    Table struct_functions;
+    Table symbols;
+    /**
     AttrMap declAttrs;
-
-    Symbols structFuncs;
-    AstList files;*/
+*/
 
 } Module;
 
-typedef enum
-{
-    IMPORT_TYPE_FULL,
-    IMPORT_TYPE_ALIAS,
-    IMPORT_TYPE_LOCAL,
-} ImportType;
-typedef struct _Import
-{
-    ImportType type;
-    Token span;
-    Token module;
-    Token alias;
-} Import;
 
+typedef struct _Ast Ast;
 
-
+Ast *module_add_symbol(Module *module, Token *symbol, Ast *value);
+Ast *module_add_struct_function(Module *module, Token *symbol, Ast *value);
+Ast *module_find_symbol(Module *module, Token *symbol);
+void module_print_files(Module *module);
+void module_init(Module *module, Token *name, bool is_external, bool is_c_lib);

@@ -1,0 +1,10 @@
+module layer2;
+
+import layer1;
+
+public type Layer2 struct {
+    layer1.Number l1;
+}
+
+public layer1.Number count = 0;
+

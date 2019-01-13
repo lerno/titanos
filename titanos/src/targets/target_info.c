@@ -194,7 +194,7 @@ bool target_info_from_string(TargetInfo *info, const char *triple)
     size_t len = strlen(triple);
     ASSERT(len < 255, "Triple too long!");
     char buf[256];
-    strcpy(buf, triple);
+    strncpy(buf, 256, triple);
     const char s[2] = "-";
     char *arch = strtok(buf, s);
     char *vendor = arch ? strtok(NULL, s) : NULL;

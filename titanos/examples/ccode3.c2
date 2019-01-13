@@ -1,0 +1,9 @@
+module ccode3;
+
+public const i32 MAX_COUNT = 3;
+const i32 PRIV_COUNT = 4;
+
+public func i32 myfunction() {
+    return sizeof(i32);
+}
+

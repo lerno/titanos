@@ -9,6 +9,7 @@
 #include "vector.h"
 #include "component.h"
 
+typedef struct _Ast Ast;
 typedef enum _AstType
 {
     AST_STRUCT_MEMBER,
@@ -37,6 +38,7 @@ typedef enum _AstType
     AST_FLOAT_EXPR,
     AST_BOOL_EXPR,
     AST_INT_EXPR,
+    AST_UINT_EXPR,
     AST_NIL_EXPR,
     AST_STRING_EXPR,
     AST_BINARY_EXPR,
@@ -52,14 +54,91 @@ typedef enum _AstType
     AST_STRUCT_INIT_VALUES_EXPR,
     AST_DESIGNATED_INITIALIZED_EXPR,
     AST_VAR_DEFINITION,
-    AST_BUILTIN_TYPE,
-    AST_STRUCT_TYPE,
-    AST_ALIAS_TYPE,
-    AST_ENUM_TYPE,
-    AST_FUNC_TYPE,
+    AST_TYPE_DEFINITION,
     AST_ENUM_ENTRY,
     AST_INCREMENTAL_ARRAY,
+    AST_IMPORT
 } AstType;
+
+
+typedef struct _AstSizeofExpr
+{
+    Ast *expr;
+} AstSizeofExpr;
+
+typedef struct _AstCastExpr
+{
+    Ast *expr;
+    Ast *type;
+} AstCastExpr;
+
+typedef struct _AstVarDefinition
+{
+    bool is_public : 1;
+    bool is_exported : 1;
+    Token name;
+    Ast *type;
+    Ast *attributes;
+    Ast *value; // May be NULL
+} AstVarDefinition;
+
+typedef struct _AstIncrementalArray
+{
+    Token name;
+    Ast *value;
+} AstIncrementalArray;
+
+typedef struct _AstTernaryExpr
+{
+    Ast *expr;
+    Ast *true_expr; // May be null for elvis!
+    Ast *false_expr;
+} AstTernaryExpr;
+
+typedef struct _AstEnumEntry
+{
+    Token name;
+    Ast *value; // MAY BE NULL
+} AstEnumEntry;
+
+typedef struct _AstIdentifierExpr
+{
+    Token identifier;
+    Ast *resolved;
+} AstIdentifierExpr;
+
+
+typedef struct _AstCallExpr
+{
+    Ast *function;
+    Vector *parameters;
+} AstCallExpr;
+
+typedef struct _AstSubscriptExpr
+{
+    Ast *expr;
+    Ast *index;
+} AstSubscriptExpr;
+
+typedef struct _AstAccessExpr
+{
+    Ast *parent;
+    Ast *sub_element;
+} AstAccessExpr;
+
+typedef struct _AstFloatExpr
+{
+    double f;
+} AstFloatExpr;
+
+typedef enum _DefinitionType
+{
+    BUILTIN_TYPE,
+    STRUCT_TYPE,
+    ALIAS_TYPE,
+    ENUM_TYPE,
+    FUNC_TYPE,
+} DefinitionType;
 
 typedef enum _BuiltinFamily
 {
@@ -69,113 +148,73 @@ typedef enum _BuiltinFamily
     BUILTIN_INT,
 } BuiltinFamily;
 
-typedef struct _AstBuiltinType
+typedef struct _DefBuiltin
 {
     BuiltinFamily type : 3;
     unsigned bits : 13;
-} AstBuiltinType;
+} DefBuiltin;
 
-typedef struct _AstSizeofExpr
+typedef struct _DefAlias
 {
-    struct _Ast *expr;
-} AstSizeofExpr;
+    Ast *type_definition;
+} DefAlias;
 
-typedef struct _AstCastExpr
+typedef struct _DefEnum
 {
-    struct _Ast *expr;
-    struct _Ast *type;
-} AstCastExpr;
-
-typedef struct _AstVarDefinition
-{
-    bool is_public : 1;
-    Token name;
-    struct _Ast *type;
-    struct _Ast *attributes;
-    struct _Ast *value; // May be NULL
-} AstVarDefinition;
-
-typedef struct _AstIncrementalArray
-{
-    Token name;
-    struct _Ast *value;
-} AstIncrementalArray;
-
-typedef struct _AstTernaryExpr
-{
-    struct _Ast *expr;
-    struct _Ast *true_expr; // May be null for elvis!
-    struct _Ast *false_expr;
-} AstTernaryExpr;
-
-typedef struct _AstEnumEntry
-{
-    Token name;
-    struct _Ast *value; // MAY BE NULL
-} AstEnumEntry;
-
-typedef struct _AstIdentifierExpr
-{
-    Token identifier;
-} AstIdentifierExpr;
-
-
-typedef struct _AstCallExpr
-{
-    struct _Ast *function;
-    Vector *parameters;
-} AstCallExpr;
-
-typedef struct _AstSubscriptExpr
-{
-    struct _Ast *expr;
-    struct _Ast *index;
-} AstSubscriptExpr;
-
-typedef struct _AstAccessExpr
-{
-    struct _Ast *parent;
-    struct _Ast *sub_element;
-} AstAccessExpr;
-
-typedef struct _AstFloatExpr
-{
-    double f;
-} AstFloatExpr;
-
-typedef struct _AstAliasType
-{
-    bool is_public : 1;
-    Token alias;
-    struct _Ast *type_definition;
-} AstAliasType;
-
-typedef struct _AstEnumType
-{
-    bool is_public : 1;
-    bool is_incremental : 1;
-    Token name;
-    struct _Ast *type; // Will be an identifier!
+    Ast *type; // Will be an identifier!
     Vector *entries; // AstEnumEntry
-    struct _Ast *attributes; // May be NULL
-} AstEnumType;
+} DefEnum;
 
-typedef struct _AstFuncType
+
+typedef struct _DefFunc
 {
+    Ast *declaration; // AstFuncDeclaration
+} DefFunc;
+
+
+typedef struct _DefStruct
+{
+    Vector *members;
+} DefStruct;
+
+typedef enum _StructMemberType
+{
+    STRUCT_MEMBER_TYPE_NORMAL,
+    STRUCT_MEMBER_TYPE_STRUCT,
+    STRUCT_MEMBER_TYPE_UNION
+} StructMemberType;
+
+typedef struct _AstDefinition
+{
+    DefinitionType definition_type : 3;
     bool is_public : 1;
+    bool is_exported : 1;
+    bool is_incremental : 1;
+    bool is_struct : 1;
+    bool is_used_public : 1;
     Token name;
-    struct _Ast *declaration; // AstFuncDeclaration
-} AstFuncType;
+    Module *module;
+    Ast *attributes; // May be NULL
+    union
+    {
+        DefAlias def_alias;
+        DefFunc def_func;
+        DefEnum def_enum;
+        DefBuiltin def_builtin;
+        DefStruct def_struct;
+    };
+} AstDefinition;
+
 
 typedef struct _AstIntExpr
 {
-    union
-    {
-        int64_t i;
-        uint64_t u;
-    };
-    char sign;
+    int64_t i;
 } AstIntExpr;
+
+typedef struct _AstUIntExpr
+{
+    uint64_t u;
+} AstUIntExpr;
 
 typedef struct _AstBoolExpr
 {
@@ -196,15 +235,15 @@ typedef struct _AstCompoundStmt
 typedef struct _AstDeclaration
 {
     Token identifier;
-    struct _Ast *initExpr; // May be NULL!
-    struct _Ast *declType;
+    Ast *initExpr; // May be NULL!
+    Ast *declType;
 } AstDeclaration;
 
 typedef struct _AstIfStmt
 {
-    struct _Ast *expr;
-    struct _Ast *if_body;
-    struct _Ast *else_body;
+    Ast *expr;
+    Ast *if_body;
+    Ast *else_body;
 } AstIfStmt;
 
 typedef struct _AstDefaultStmt
@@ -214,22 +253,22 @@ typedef struct _AstDefaultStmt
 
 typedef struct _AstCaseStmt
 {
-    struct _Ast *expr;
+    Ast *expr;
     Vector *stmts;
 } AstCaseStmt;
 
 typedef struct _AstForStmt
 {
-    struct _Ast *init;
-    struct _Ast *cond;
-    struct _Ast *incr;
-    struct _Ast *body;
+    Ast *init;
+    Ast *cond;
+    Ast *incr;
+    Ast *body;
 } AstForStmt;
 
 struct _AstDoWhileStmt
 {
-    struct _Ast *expr;
-    struct _Ast *body;
+    Ast *expr;
+    Ast *body;
 };
 
 typedef struct _AstDoWhileStmt AstDoStmt;
@@ -237,31 +276,39 @@ typedef struct _AstDoWhileStmt AstWhileStmt;
 
 typedef struct _AstSwitchStmt
 {
-    struct _Ast *expr;
+    Ast *expr;
     Vector *case_list;
-    struct _Ast *default_stmt;
+    Ast *default_stmt;
 } AstSwitchStmt;
+
+typedef struct _FunctionName
+{
+    Token struct_name;
+    Token function_name;
+    Token full_name;
+} FunctionName;
 
 typedef struct _AstFuncDecl
 {
-    struct _Ast *r_type;
-    struct _Ast *params;
-    struct _Ast *name; // AstTypeExpr
-    struct _Ast *attributes;
+    Ast *r_type;
+    Ast *params;
+    FunctionName *name; // AstTypeExpr
+    Ast *attributes;
 } AstFuncDecl;
 
 typedef struct _AstParamDecl
 {
-    struct _Ast *type;
+    Ast *type;
     Token name; //
-    struct _Ast *defaultValue; // May be NULL!
+    Ast *defaultValue; // May be NULL!
 } AstParamDecl;
 
 typedef struct _AstFuncDefinition
 {
     bool is_public : 1;
-    struct _Ast *func_decl; // AstFuncDecl
-    struct _Ast *body; // AstCompoundStmt
+    bool is_exported : 1;
+    Ast *func_decl; // AstFuncDecl
+    Ast *body; // AstCompoundStmt will be NULL in interfaces.
 } AstFuncDefinition;
 
 typedef struct _AstStructInitValuesExpr
@@ -271,12 +318,12 @@ typedef struct _AstStructInitValuesExpr
 
 typedef struct _AstGotoStmt
 {
-    struct _Ast *label;
+    Ast *label;
 } AstGotoStmt;
 
 typedef struct _AstReturnStmt
 {
-    struct _Ast *expr; // May be NULL
+    Ast *expr; // May be NULL
 } AstReturnStmt;
 
 typedef struct _AstDeferStmt
@@ -327,33 +374,33 @@ typedef struct _TypeExprFlags
     bool volatile_ref : 1;
     bool const_ref : 1;
     bool alias_ref : 1;
-    bool in_evaluation : 1;
     bool resolved : 1;
 } TypeExprFlags;
 
 typedef struct _QualifierType QualifierType;
 
 
-typedef struct _UnresolvedIdentifier
+typedef struct _IdentifierType
 {
     Token module_name;
     Token name;
-} UnresolvedIdentifier;
+    Ast *resolved_type;
+} IdentifierTypeExpr;
 
 typedef struct _ArrayTypeExpr
 {
-    struct _Ast *type; // Note that this may either be a type or expression
-    struct _Ast *size;
+    Ast *type; // Note that this may either be a type or expression
+    Ast *size;
 } ArrayTypeExpr;
 
 typedef struct _PointerTypeExpr
 {
-    struct _Ast *type;
+    Ast *type;
 } PointerTypeExpr;
 
 typedef enum _TypeExprType
 {
-    TYPE_EXPR_UNRESOLVED_IDENTIFIER,
+    TYPE_EXPR_IDENTIFIER,
     TYPE_EXPR_ARRAY,
     TYPE_EXPR_POINTER,
     TYPE_EXPR_VOID,
@@ -370,7 +417,7 @@ typedef struct _AstTypeExpr
     TypeExprFlags flags;
     union
     {
-        UnresolvedIdentifier unresolved_identifier;
+        IdentifierTypeExpr identifier_type_expr;
         ArrayTypeExpr array_type_expr;
         PointerTypeExpr pointer_type_expr;
     };
@@ -379,24 +426,9 @@ typedef struct _AstTypeExpr
 typedef struct _AstAttribute
 {
     Token name;
-    struct _Ast *value;
+    Ast *value;
 } AstAttribute;
 
-typedef struct _AstStructType
-{
-    bool is_struct : 1;
-    bool is_public : 1;
-    Token name;
-    Vector *members;
-    struct _Ast *attribute_list; // may be NULL
-} AstStructType;
-
-typedef enum _StructMemberType
-{
-    STRUCT_MEMBER_TYPE_NORMAL,
-    STRUCT_MEMBER_TYPE_STRUCT,
-    STRUCT_MEMBER_TYPE_UNION
-} StructMemberType;
 
 typedef struct _AstStructMember
 {
@@ -405,15 +437,39 @@ typedef struct _AstStructMember
     union
     {
         Vector *members;
-        struct _Ast *value_type;
+        Ast *value_type;
     };
 } AstStructMember;
 
 
+typedef enum
+{
+    IMPORT_TYPE_FULL,
+    IMPORT_TYPE_ALIAS,
+    IMPORT_TYPE_LOCAL,
+} ImportType;
+
+typedef struct _AstImport
+{
+    ImportType type : 3;
+    bool used : 1;
+    bool used_public : 1;
+    Token module_name;
+    Token alias;
+    Module *module;
+} AstImport;
+
+typedef enum
+{
+    CONST_UNKNOWN,
+    CONST_FULL,
+    CONST_NONE
+} AstConstState;
 
 typedef struct _Ast
 {
-    AstType type;
+    AstType type : 8;
+    AstConstState const_state : 2;
     Token span;
     union {
 
@@ -424,16 +480,12 @@ typedef struct _Ast
         AstAttribute attribute;
         AstParamDecl param_decl;
 
-        AstStructType struct_type;
         AstTypeExpr type_expr;
         AstStructMember struct_member;
-        AstAliasType alias_type;
-        AstEnumType enum_type;
+        AstDefinition definition;
         AstEnumEntry enum_entry;
-        AstFuncType func_type;
         AstIncrementalArray incremental_array;
         AstVarDefinition var_definition;
-        AstBuiltinType builtin_type;
 
         AstCompoundStmt compound_stmt;
         AstIfStmt if_stmt;
@@ -451,6 +503,7 @@ typedef struct _Ast
 
         AstFloatExpr float_expr;
         AstIntExpr int_expr;
+        AstUIntExpr uint_expr;
         AstBoolExpr bool_expr;
         AstStringExpr string_expr;
         AstBinaryExpr binary_expr;
@@ -466,6 +519,7 @@ typedef struct _Ast
         AstSizeofExpr sizeof_expr;
         AstCastExpr cast_expr;
 
+        AstImport import;
     };
 } Ast;
 
@@ -474,3 +528,5 @@ void print_ast(Ast *ast, int current_indent);
 Ast *new_ast(AstType type);
 Ast *new_ast_with_span(AstType type, Token *span);
 Ast *end_ast(Ast *ast, Token *end);
+Ast *new_type_expr(TypeExprType type_expr, Token *span);
+Ast *new_type_definition(DefinitionType type, Token *name, bool public, Token *initial_token);

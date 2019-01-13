@@ -10,14 +10,16 @@
 
 typedef struct _Parser
 {
+	bool is_interface : 1;
+	unsigned remainder : 31;
     Token current_module;
-    Vector *imports_to_resolve;
+    Vector *imports;
 	Vector *types;
 	Vector *variables;
 	Vector *functions;
+	const char *filename;
 } Parser;
 
 
-extern Parser parser;
 
-void init_parser(void);
+void init_parser(Parser *parser, const char *filename, bool is_interface);

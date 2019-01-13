@@ -39,7 +39,7 @@ static Entry *entry_find(Entry *entries, uint32_t capacity, const char *key, uin
     while (true)
     {
         Entry *entry = &entries[index];
-        if (entry->key == key && entry->key_len == key_len) return entry;
+        if (entry->key_len == key_len && (entry->key == key || memcmp(key, entry->key, key_len) == 0)) return entry;
         if (entry->key == NULL)
         {
             if (entry->value != TOMBSTONE)

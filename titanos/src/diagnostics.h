@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include <stdarg.h>
 
 struct _Token;
 
@@ -47,7 +48,10 @@ void diagnostics_reset(void);
 void diagnostics_update_severity(DiagnosticsSeverity severity, DiagnosticsType type);
 bool diagnostics_silence_warnings(Array *warnings);
 void diagnostics_use_color(bool use_color);
-void error_at(struct _Token *token, const char *message);
+void error_at(struct _Token *token, const char *message, ...);
+void verror_at(struct _Token *token, const char *message, va_list args);
+void sema_error_at(struct _Token *token, const char *message, ...);
+void vprint_error(struct _Token *token, const char *message, va_list args);
 bool in_panic_mode(void);
 void reset_panic_mode(void);
 bool error_found(void);

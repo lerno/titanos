@@ -1,0 +1,5 @@
+#include "macros.c2h"
+
+MODULE inctest;
+
+public func i32 main() { return 0; }

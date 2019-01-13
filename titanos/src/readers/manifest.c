@@ -23,8 +23,10 @@ static bool str_eq(TomlString *toml_str, const char *str)
 
 static char *copy_string(TomlString *toml_str)
 {
+    if (toml_str->len == 0) return "";
     char *string = malloc_arena(toml_str->len + 1);
     strncpy(string, toml_str->str, toml_str->len);
+    string[toml_str->len] = '\0';
     return string;
 }
 
@@ -86,7 +88,7 @@ static bool parse_library(TomlValue *value, const char *filename, Manifest *mani
     for (unsigned i = 0; i < array->len; i++)
     {
         TomlValue *entry = array->elements[i];
-        if (value->type != TOML_STRING)
+        if (entry->type != TOML_STRING)
         {
             PRINT_ERROR("%s illegal library.type entry", filename);
             return false;
@@ -221,11 +223,33 @@ bool manifest_parse(const char *filename, Manifest *manifest)
         }
         else if (str_eq(keyval->key, "deps"))
         {
-            if (!parse_deps(keyval->value, filename, manifest)) goto cleanup;
+            if (keyval->value->type == TOML_ARRAY)
+            {
+                TomlArray *array = keyval->value->value.array;
+                for (unsigned i = 0; i < array->len; i++)
+                {
+                    if (!parse_deps(array->elements[i], filename, manifest)) goto cleanup;
+                }
+            }
+            else
+            {
+                if (!parse_deps(keyval->value, filename, manifest)) goto cleanup;
+            }
         }
         else if (str_eq(keyval->key, "module"))
         {
-            if (!parse_module(keyval->value, filename, manifest)) goto cleanup;
+            if (keyval->value->type == TOML_ARRAY)
+            {
+                TomlArray *array = keyval->value->value.array;
+                for (unsigned i = 0; i < array->len; i++)
+                {
+                    if (!parse_module(array->elements[i], filename, manifest)) goto cleanup;
+                }
+            }
+            else
+            {
+                if (!parse_module(keyval->value, filename, manifest)) goto cleanup;
+            }
         }
         else
         {

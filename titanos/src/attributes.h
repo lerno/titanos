@@ -2,12 +2,23 @@
 
 #include "lexer.h"
 
+
 typedef enum _AttributeTarget
 {
     ATTR_TARGET_FUNC = 0x01,
     ATTR_TARGET_TYPE = 0x02,
     ATTR_TARGET_VAR = 0x04,
 } AttributeTarget;
+
+typedef enum _AttributeArgument
+{
+    ATTR_ARG_NONE,
+    ATTR_ARG_STRING,
+    ATTR_ARG_BOOL,
+    ATTR_ARG_UINT,
+    ATTR_ARG_INT,
+    ATTR_ARG_NUMBER,
+} AttributeArgument;
 
 // Do not reorder this list
 typedef enum _AttributeType
@@ -31,7 +42,7 @@ typedef struct _AttributeInfo
 {
     AttributeType type;
     const char *name;
-    bool requires_argument;
+    AttributeArgument argument;
     unsigned targets;
 } AttributeInfo;
 

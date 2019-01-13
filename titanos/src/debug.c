@@ -103,7 +103,7 @@ char *token_name(Token *token)
             return "&&";
         case TOKEN_AND_ASSIGN:
             return "&&=";
-        case TOKEN_BIT_AND:
+        case TOKEN_AMP:
             return "&";
         case TOKEN_BIT_AND_ASSIGN:
             return "&=";

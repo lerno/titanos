@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include "ansi_color.h"
+#include "error.h"
 
 
 static inline void indent(int indent)
@@ -17,7 +18,7 @@ static inline  void print_indent(const char *string, int current_indent)
 
 static inline void print_color(const char *str)
 {
-    printf(str);
+    if (use_colors()) printf("%s", str);
 }
 static inline void print_token(Token *token)
 {

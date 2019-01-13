@@ -1,0 +1,7 @@
+module issue;
+
+import type2 local;
+
+type Range Long;
+
+

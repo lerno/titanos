@@ -1,0 +1,4 @@
+module type1;
+
+public type Long u8;
+

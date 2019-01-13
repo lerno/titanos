@@ -5,16 +5,18 @@
 
 #include "parser.h"
 #include "parsing.h"
+#include "component.h"
+#include "module.h"
 
-Parser parser;
-
-void init_parser(void)
+void init_parser(Parser *parser, const char *filename, bool is_interface)
 {
 	setup_parse_rules();
-	parser.current_module.length = 0;
-	parser.imports_to_resolve = new_vector(16);
-	parser.types = new_vector(32);
-	parser.variables = new_vector(8);
-	parser.functions = new_vector(8);
+	parser->is_interface = is_interface;
+	parser->current_module.length = 0;
+	parser->imports = new_vector(16);
+	parser->types = new_vector(32);
+	parser->variables = new_vector(8);
+	parser->functions = new_vector(8);
+	parser->filename = filename;
 }
 

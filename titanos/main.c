@@ -10,7 +10,6 @@
 #include "file.h"
 #include "lexer.h"
 #include "tests.h"
-#include "compiler.h"
 #include "builder.h"
 #include <string.h>
 #include <unistd.h>
@@ -54,8 +53,6 @@ static void run_tests()
 {
     // insert code here...
     test_all();
-    char *foo = read_file("/Users/lerno/Projects/titanos/titanos/maintest.ti");
-    compile(foo);
 }
 
 static void parse_arguments(int argc, const char *argv[])
@@ -236,7 +233,7 @@ char *path_prefix;
 
 void find_top_dir()
 {
-    char *path = getcwd(base_path, PATH_MAX);
+    char *path;
     char buffer[PATH_MAX];
     while (1)
     {

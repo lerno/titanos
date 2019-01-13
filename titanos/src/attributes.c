@@ -3,19 +3,20 @@
 
 // Please note that this list must match the order of the attribute enum.
 static const AttributeInfo attribute_info[] = {
-        { ATTRIBUTE_EXPORT, "export", false, ATTR_TARGET_TYPE | ATTR_TARGET_FUNC | ATTR_TARGET_VAR },
-        { ATTRIBUTE_PACKED, "packed", false, ATTR_TARGET_TYPE },
-        { ATTRIBUTE_UNUSED, "unused", false, ATTR_TARGET_TYPE | ATTR_TARGET_FUNC | ATTR_TARGET_VAR },
-        { ATTRIBUTE_UNUSED_PARAMS, "unused_params", false, ATTR_TARGET_FUNC },
-        { ATTRIBUTE_SECTION, "section", true, ATTR_TARGET_FUNC | ATTR_TARGET_VAR },
-        { ATTRIBUTE_NORETURN, "noreturn", false, ATTR_TARGET_FUNC },
-        { ATTRIBUTE_INLINE, "inline", false, ATTR_TARGET_FUNC },
-        { ATTRIBUTE_ALIGNED, "aligned", true, ATTR_TARGET_TYPE | ATTR_TARGET_FUNC | ATTR_TARGET_VAR },
-        { ATTRIBUTE_WEAK, "weak", false, ATTR_TARGET_FUNC | ATTR_TARGET_VAR },
-        { ATTRIBUTE_OPAQUE, "opaque", false, ATTR_TARGET_TYPE },
-        { ATTRIBUTE_CNAME, "cname", true, ATTR_TARGET_TYPE | ATTR_TARGET_FUNC | ATTR_TARGET_VAR },
-        { ATTRIBUTE_NO_TYPEDEF, "no_typedef", false, ATTR_TARGET_TYPE },
+        { ATTRIBUTE_EXPORT, "export", ATTR_ARG_NONE, ATTR_TARGET_TYPE | ATTR_TARGET_FUNC | ATTR_TARGET_VAR },
+        { ATTRIBUTE_PACKED, "packed", ATTR_ARG_NONE, ATTR_TARGET_TYPE },
+        { ATTRIBUTE_UNUSED, "unused", ATTR_ARG_NONE, ATTR_TARGET_TYPE | ATTR_TARGET_FUNC | ATTR_TARGET_VAR },
+        { ATTRIBUTE_UNUSED_PARAMS, "unused_params", ATTR_ARG_NONE, ATTR_TARGET_FUNC },
+        { ATTRIBUTE_SECTION, "section", ATTR_ARG_STRING, ATTR_TARGET_FUNC | ATTR_TARGET_VAR },
+        { ATTRIBUTE_NORETURN, "noreturn", ATTR_ARG_NONE, ATTR_TARGET_FUNC },
+        { ATTRIBUTE_INLINE, "inline", ATTR_ARG_NONE, ATTR_TARGET_FUNC },
+        { ATTRIBUTE_ALIGNED, "aligned", ATTR_ARG_UINT, ATTR_TARGET_TYPE | ATTR_TARGET_FUNC | ATTR_TARGET_VAR },
+        { ATTRIBUTE_WEAK, "weak", ATTR_ARG_NONE, ATTR_TARGET_FUNC | ATTR_TARGET_VAR },
+        { ATTRIBUTE_OPAQUE, "opaque", ATTR_ARG_NONE, ATTR_TARGET_TYPE },
+        { ATTRIBUTE_CNAME, "cname", ATTR_ARG_STRING, ATTR_TARGET_TYPE | ATTR_TARGET_FUNC | ATTR_TARGET_VAR },
+        { ATTRIBUTE_NO_TYPEDEF, "no_typedef", ATTR_ARG_NONE, ATTR_TARGET_TYPE },
 };
+
 
 AttributeType attribute_type_from_token(Token *token)
 {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "parser.h"
 
-bool parse(void);
-void setup_parse_rules();
+Parser *parse(const char *filename, bool is_interface);
+void setup_parse_rules(void);

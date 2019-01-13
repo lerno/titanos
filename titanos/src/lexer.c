@@ -7,16 +7,26 @@
 //
 
 #include "lexer.h"
+#include "array.h"
+#include "error.h"
+#include "diagnostics.h"
 
 #include <string.h>
 
+#define MAX_FILES (0xFFFF - 1)
+#define MAX_LINE (0xFFFFFF - 1)
+#define MIN(a, b) ((a) > (b) ? (a) : (b))
+
+Array files;
+File pseudo_file;
 
 typedef struct
 {
     const char *begin;
     const char *start;
     const char *current;
-    int line;
+    unsigned line;
+    uint16_t source_file;
 } Lexer;
 
 Lexer lexer;
@@ -119,7 +129,7 @@ const char *token_type_to_string(token_type type)
             return "&&";
         case TOKEN_AND_ASSIGN:
             return "&&=";
-        case TOKEN_BIT_AND:
+        case TOKEN_AMP:
             return "&";
         case TOKEN_BIT_AND_ASSIGN:
             return "&=";
@@ -227,6 +237,11 @@ const char *token_type_to_string(token_type type)
     return "***TODO***";
 }
 
+static inline bool is_lower_case(char c)
+{
+	return c >= 'a' && c <= 'z';
+}
+
 static inline bool is_alphabet(char c)
 {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
@@ -279,8 +294,9 @@ static inline token_type check_two_keywords(const char *keyword_1, const char *k
 static inline token_type indentifier_type()
 {
     int len = (int) (lexer.current - lexer.start);
-    if (len > 8) return TOKEN_IDENTIFIER;
-    switch (HASH(lexer.start[0], len))
+	char current_value = lexer.start[0];
+    if (len > 8 || !is_lower_case(current_value)) return TOKEN_IDENTIFIER;
+    switch (HASH(current_value, len))
     {
         case HASH('a', 2):
             return check_keyword("as", TOKEN_AS);
@@ -381,24 +397,31 @@ static char advance()
 }
 
 
-static Token make_token(token_type type)
-{
-    Token token;
-    token.type = type;
-    token.start = lexer.start;
-    token.length = (int)(lexer.current - lexer.start);
-    token.line = lexer.line;
-    return token;
-}
+
 
 
 Token error_token(const char *message)
 {
     Token token;
-    token.line = lexer.line;
-    token.start = lexer.start;
-    token.length = (int)strlen(message);
     token.type = TOKEN_ERROR;
+    token.start = lexer.start;
+    token.length = 1;
+    token.line = lexer.line;
+    token.source_file = lexer.source_file;
+    error_at(&token, message);
+    return token;
+}
+
+static Token make_token(token_type type)
+{
+    size_t token_size = lexer.current - lexer.start;
+    if (token_size > TOKEN_MAX_LENGTH) return error_token("Token exceeding max length");
+    Token token;
+    token.type = type;
+    token.start = lexer.start;
+    token.length = (uint16_t)token_size;
+    token.line = lexer.line;
+    token.source_file = lexer.source_file;
     return token;
 }
 
@@ -434,6 +457,7 @@ bool skip_whitespace()
                     while (1)
                     {
                         advance();
+                        if (peek() == '\n') lexer.line++;
                         if (reached_end()) return false;
                         if (peek() == '*' && peek_next() == '/')
                         {
@@ -449,6 +473,7 @@ bool skip_whitespace()
                     while (1)
                     {
                         advance();
+                        if (peek() == '\n') lexer.line++;
                         if (reached_end()) return false;
                         if (peek() == '/' && peek_next() == '+')
                         {
@@ -498,34 +523,6 @@ static inline Token scan_string()
     return make_token(TOKEN_STRING);
 }
 
-
-
-typedef struct
-{
-  const char* identifier;
-  size_t length;
-  token_type token;
-  int next;
-} Keyword;
-
-#define ALPHABET_LEN ('z' - 'a' + 1)
-static Keyword keywords[32];
-static int first_test[ALPHABET_LEN];
-static int keyword_counter = 0;
-
-void register_keyword(const char *identifier, token_type type)
-{
-    int previous_first = first_test[identifier[0] - 'a'];
-    int index = keyword_counter++;
-    Keyword *keyword = &keywords[index];
-    keyword->identifier = identifier;
-    keyword->length = strlen(identifier);
-    keyword->token = type;
-    keyword->next = previous_first;
-    first_test[identifier[0] - 'a'] = index;
-}
-
-
 static inline Token scan_ident()
 {
     while (is_alpha(peek()))
@@ -541,11 +538,6 @@ static inline bool match(char expected)
     if (*lexer.current != expected) return false;
     lexer.current++;
     return true;
-}
-
-static void backtrack()
-{
-    lexer.current--;
 }
 
 static inline bool is_hex(char c)
@@ -649,21 +641,38 @@ static inline Token scan_digit()
     PARSE_SPECIAL_NUMBER(is_digit, is_digit_or_underscore, 'e', 'E');
 }
 
-const char *line_start(Token *token)
+const char *skip_to_end_of_previous_line(const char *file_start, const char *start)
 {
-    const char *start = token->start;
-    while (start > lexer.begin && start[0] != '\n')
+    start--;
+    if (start < file_start) return file_start;
+    while (start > file_start)
+    {
+        switch (start[0])
+        {
+            case '\n':
+            case '\r':
+            case '\f':
+                start--;
+                continue;
+            default:
+                return start;
+        }
+    }
+    return start;
+}
+
+const char *find_line_start(const char *file_start, const char *start)
+{
+    if (start < file_start) return file_start;
+    while (start > file_start && start[0] != '\n')
     {
         start--;
     }
-    if (start == lexer.begin) return lexer.begin;
     while (1)
     {
         switch (start[0])
         {
             case '\n':
-            case ' ':
-            case '\t':
             case '\r':
             case '\f':
                 start++;
@@ -674,14 +683,20 @@ const char *line_start(Token *token)
     }
 }
 
-const char *line_end(Token *token)
+const char *line_start(Token *token)
 {
-    const char *start = token->start;
+    File *file = token_get_file(token);
+    return find_line_start(file->contents, token->start);
+}
+
+const char *find_line_end(const char *begin)
+{
+    const char *start = begin;
     while (start[0] != '\0' && start[0] != '\n')
     {
         start++;
     }
-    while (start > lexer.begin)
+    while (start > begin)
     {
         switch (start[0])
         {
@@ -707,8 +722,8 @@ Token lookahead(int steps)
     assert(steps > 0 && "Lookahead cannot be 0 or less");
     const char *current = lexer.current;
     const char *begin = lexer.begin;
-    int line = lexer.line;
-    for (int i = 0; i < steps - 1; i++)
+    unsigned line = lexer.line;
+    for (unsigned i = 0; i < steps - 1; i++)
     {
         scan_token();
     }
@@ -798,7 +813,7 @@ Token scan_token(void)
             {
                 return make_token(match('=') ? TOKEN_AND_ASSIGN : TOKEN_AND);
             }
-            return make_token(match('=') ? TOKEN_BIT_AND_ASSIGN : TOKEN_BIT_AND);
+            return make_token(match('=') ? TOKEN_BIT_AND_ASSIGN : TOKEN_AMP);
         case '|':
             if (match('|'))
             {
@@ -820,29 +835,73 @@ Token scan_token(void)
             
         default:
             if (is_digit(c)) return scan_digit();
-            if (is_alphabet(c)) return scan_ident();
+            if (c == '_' || is_alphabet(c)) return scan_ident();
             return error_token("Unexpected character.");
     }
     
 }
 
-void init_lexer(const char *source)
+void init_lexer(const char *filename, const char *source)
 {
+    static bool files_initialized = false;
+    if (!files_initialized)
+    {
+        array_init(&files);
+        files_initialized = true;
+    }
+    if (files.count > MAX_FILES)
+    {
+        PRINT_ERROR("Exceeded max number of files %d", MAX_FILES);
+    }
+    File *file = malloc(sizeof(File));
+    file->contents = source;
+    file->name = filename;
+    array_add(&files, file);
+    lexer.source_file = (uint16_t)files.count;
     lexer.begin = source;
     lexer.start = source;
     lexer.current = source;
     lexer.line = 1;
 }
 
-bool token_compare(Token *token1, Token *token2)
+File *token_get_file(Token *token)
+{
+    if (token->source_file == 0)
+    {
+        pseudo_file.contents = token->start;
+        return &pseudo_file;
+    }
+    assert(token->source_file <= files.count && "Invalid source file in token");
+    return files.entries[token->source_file - 1];
+}
+
+bool token_compare(const Token *token1, const Token *token2)
 {
     if (token1->length != token2->length) return false;
     return memcmp(token1->start, token2->start, (size_t)token1->length) == 0;
 }
 
-bool token_compare_str(Token *token1, const char *string)
+bool token_compare_str(const Token *token1, const char *string)
 {
     size_t len = strlen(string);
     if (token1->length != len) return false;
     return memcmp(token1->start, string, len) == 0;
+}
+
+void token_expand(Token *to_expand, Token *end)
+{
+    if (to_expand->length == 0)
+    {
+        *to_expand = *end;
+    }
+    else
+    {
+        to_expand->length = (uint16_t)(end->start + end->length - to_expand->start);
+    }
+
+}
+
+Token token_wrap(const char *string)
+{
+    return (Token) { .start = string, .length = (uint16_t)strlen(string), .type = TOKEN_IDENTIFIER, .line = 1, .source_file = 0 };
 }

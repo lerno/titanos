@@ -10,6 +10,8 @@
 
 #include "common.h"
 
+#define TOKEN_MAX_LENGTH 0xFFFF
+
 typedef enum
 {
     // Single-character tokens.
@@ -64,7 +66,7 @@ typedef enum
 	TOKEN_ARROW,
     TOKEN_AND,
     TOKEN_AND_ASSIGN,
-    TOKEN_BIT_AND,
+    TOKEN_AMP,
     TOKEN_BIT_AND_ASSIGN,
     TOKEN_OR,
     TOKEN_OR_ASSIGN,
@@ -103,21 +105,39 @@ typedef enum
 
 const char *token_type_to_string(token_type type);
 
+static_assert(TOKEN_EOF < 128, "Too many different token types");
+
 typedef struct _Token
 {
-    token_type type;
     const char* start;
-    uint32_t length;
-    int line;
+	uint16_t length;
+	uint16_t source_file;
+	token_type type : 8;
+    unsigned line : 24;
 } Token;
 
-void init_lexer(const char *source);
+typedef struct _File
+{
+	const char *contents;
+	const char *name;
+} File;
+
+static_assert(sizeof(Token) == 16, "Invalid size of token");
+
+void init_lexer(const char *filename, const char *source);
+File *token_get_file(Token *token);
 Token scan_token(void);
 Token lookahead(int steps);
 const char *line_start(Token *token);
-const char *line_end(Token *token);
-bool token_compare(Token *token1, Token *token2);
-bool token_compare_str(Token *token1, const char *string);
+bool token_compare(const Token *token1, const Token *token2);
+bool token_compare_str(const Token *token1, const char *string);
+void token_expand(Token *to_expand, Token *end_token);
+
+const char *skip_to_end_of_previous_line(const char *file_start, const char *start);
+const char *find_line_start(const char *file_start, const char *start);
+const char *find_line_end(const char *line_start);
+
+Token token_wrap(const char *string);
 
 static inline bool is_lower(Token *token)
 {
@@ -127,4 +147,9 @@ static inline bool is_lower(Token *token)
 static inline bool is_upper(Token *token)
 {
     return token->start[0] >= 'A' && token->start[0] <= 'Z';
+}
+
+static inline bool exceeds_identifier_len(const Token *token)
+{
+	return token->length > 31;
 }

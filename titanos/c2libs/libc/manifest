@@ -1,0 +1,63 @@
+# C2 wrapper for the standard C library
+
+[library]
+language = "C"
+type = [ "static", "dynamic" ]
+
+[[module]]
+name = "stdio"
+
+[[module]]
+name = "c_errno"
+
+[[module]]
+name = "libc_poll"
+
+[[module]]
+name = "libc_fcntl"
+
+[[module]]
+name = "stdlib"
+
+[[module]]
+name = "string"
+
+[[module]]
+name = "strings"
+
+[[module]]
+name = "unistd"
+
+[[module]]
+name = "regex"
+
+[[module]]
+name = "ctype"
+
+[[module]]
+name = "libc_dirent"
+
+[[module]]
+name = "stdarg"
+
+[[module]]
+name = "sys_mman"
+
+[[module]]
+name = "sys_socket"
+
+[[module]]
+name = "sys_stat"
+
+[[module]]
+name = "sys_time"
+
+[[module]]
+name = "time"
+
+[[module]]
+name = "csetjmp"
+
+[[module]]
+name = "csignal"
+

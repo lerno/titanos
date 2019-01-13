@@ -2,7 +2,7 @@
 
 #include <unistd.h>
 
-int use_colors()
+int use_colors(void)
 {
     static int use = -1;
     if (use == -1)

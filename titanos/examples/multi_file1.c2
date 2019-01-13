@@ -1,0 +1,12 @@
+module multi;
+
+public func i32 main() {
+    i32 a = getNumber2();
+    return 10;
+}
+
+func void getNumber1() {
+    return;
+}
+
+

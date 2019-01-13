@@ -11,7 +11,7 @@
  do { long long __tempval1 = _value; long long __tempval2 = _expected; \
     ASSERT(__tempval1 == __tempval2, "Checking " _string ": expected %lld but was %lld.", __tempval2, __tempval1); } while(0);
 
-int use_colors();
+int use_colors(void);
 
 #define PRINT_ERROR(_string, ...) do { fprintf(stderr, "c@2c: " _string "\n", ##__VA_ARGS__); } while(0)
 

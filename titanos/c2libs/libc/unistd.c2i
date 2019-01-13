@@ -1,0 +1,29 @@
+module unistd;
+
+import c2 local;
+
+// ifdef USE_XOPEN_EXTENDED ..
+func i32 usleep(c_ulonglong __useconds);
+
+func c_uint sleep(c_uint __seconds);
+func c_char* getcwd(char* buf, c_size size);
+func c_int chdir(const c_char* path);
+
+func c_int close(c_int fd);
+
+func c_long read(c_int fd, void* buf, c_ulong count);
+
+const u8 R_OK = 4;
+const u8 W_OK = 2;
+const u8 X_OK = 1;
+const u8 F_OK = 0;
+
+func c_int isatty(c_int fd);
+
+func c_ssize write(c_int fd, const void* buf, c_size count);
+
+func c_int pipe(c_int[2] pipefd);
+
+//#ifdef_GNU_SOURCE             /* See feature_test_macros(7) */
+func c_int pipe2(c_int[2] pipefd, c_int flags);
+

@@ -5,22 +5,24 @@
 #include "error.h"
 
 #define KB 1024L
-// Use 1 MB at a time.
+// Use 1MB at a time.
 #define BUCKET_SIZE (1024 * KB)
 #define ARENA_BUCKET_START_SIZE 16
 
-static char **arena_buckets;
+static uint8_t **arena_buckets;
 static int arena_buckets_used;
 static size_t arena_buckets_array_size;
 static size_t current_use;
 static void *current_arena;
-
+static int allocations_done;
 void init_arena(void)
 {
+    printf("---- ARENA ALLOCATED ----\n");
     arena_buckets = malloc(ARENA_BUCKET_START_SIZE * sizeof(void *));
     arena_buckets_used = 1;
     arena_buckets_array_size = ARENA_BUCKET_START_SIZE;
     arena_buckets[0] = malloc(BUCKET_SIZE);
+    allocations_done = 0;
     current_use = 0;
     current_arena = arena_buckets[0];
 }
@@ -28,8 +30,10 @@ void init_arena(void)
 // Simple bump allocator with buckets.
 void *malloc_arena(size_t mem)
 {
-    // Round to multiple of 8
-    mem = (mem + 7) & ~7;
+    // Round to multiple of 16
+    size_t oldmem = mem;
+    mem = (mem + 15) & ~15;
+    assert(mem >= oldmem);
     if (current_use + mem > BUCKET_SIZE)
     {
         if (arena_buckets_used == arena_buckets_array_size)
@@ -43,14 +47,25 @@ void *malloc_arena(size_t mem)
         arena_buckets[arena_buckets_used++] = current_arena;
         current_use = 0;
     }
-    char *ptr = current_arena + current_use;
+    uint8_t *ptr = current_arena + current_use;
     current_use += mem;
+    allocations_done++;
+    if (mem > 1024)
+    {
+        printf("Allocated large chunk %llu\n", (unsigned long long)mem);
+    }
     return (void *)ptr;
+
 }
 
 
 void free_arena(void)
 {
+    printf("-- FREEING ARENA -- \n");
+    printf(" * Memory used:  %ld Kb\n", ((arena_buckets_used - 1) * BUCKET_SIZE + current_use) / 1024);
+    printf(" * Buckets used: %d\n", arena_buckets_used);
+    printf(" * Allocations: %d\n", allocations_done);
+
     for (int i = 0; i < arena_buckets_used; i++)
     {
         free(arena_buckets[i]);
@@ -60,6 +75,7 @@ void free_arena(void)
     arena_buckets = NULL;
     arena_buckets_array_size = 0;
     current_use = 0;
+    printf("-- FREE DONE -- \n");
 }
 
 
