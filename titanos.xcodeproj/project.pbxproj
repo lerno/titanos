@@ -50,7 +50,6 @@
 
 /* Begin PBXFileReference section */
 		6218D002BBF25F7DB85F1BF2 /* ast_utils.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ast_utils.h; sourceTree = "<group>"; };
-		6218D0D8501B9D7C0179EE2E /* test2.ti */ = {isa = PBXFileReference; lastKnownFileType = file.ti; path = test2.ti; sourceTree = "<group>"; };
 		6218D0F5D3677A365618D166 /* fnv.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = fnv.h; sourceTree = "<group>"; };
 		6218D142913280002D157126 /* parsing.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = parsing.h; sourceTree = "<group>"; };
 		6218D1509A9B1A14D3921B4F /* compiler.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = compiler.c; sourceTree = "<group>"; };
@@ -178,7 +177,6 @@
 				A90AA7A32103C85300287CFA /* main.c */,
 				A90AA7AF2103C95900287CFA /* test.ti */,
 				6218D2CF821F06C4FD40EB37 /* titanos.y */,
-				6218D0D8501B9D7C0179EE2E /* test2.ti */,
 				6218DA512BF2F2EFB84D83CE /* maintest.ti */,
 			);
 			path = titanos;
