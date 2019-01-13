@@ -356,7 +356,12 @@ void print_ast(Ast *ast, int current_indent)
             print_sub_ast("Attributes", current_indent, ast->enum_type.attributes);
             return;
         case AST_FUNC_TYPE:
-            break;
+            printf("FUNC_TYPE ");
+            print_token(&ast->func_type.name);
+            if (ast->func_type.is_public) printf(" public");
+            printf("\n");
+            print_sub_ast("Declaration", current_indent, ast->func_type.declaration);
+            return;;
         case AST_ENUM_ENTRY:
             printf("ENUM_ENTRY ");
             print_token(&ast->enum_entry.name);
@@ -364,7 +369,10 @@ void print_ast(Ast *ast, int current_indent)
             print_sub_ast("Value", current_indent, ast->enum_entry.value);
             return;
         case AST_INCREMENTAL_ARRAY:
-            break;
+            printf("INCREMENTAL_ARRAY ");
+            print_token(&ast->incremental_array.name);
+            print_sub_ast("Value", current_indent, ast->incremental_array.value);
+            return;
         case AST_SIZEOF_EXPR:
             printf("SIZEOF_EXPR\n");
             print_sub_ast("Expr", current_indent, ast->sizeof_expr.expr);
@@ -373,6 +381,24 @@ void print_ast(Ast *ast, int current_indent)
             printf("CAST_EXPR\n");
             print_sub_ast("Expr", current_indent, ast->cast_expr.expr);
             print_sub_ast("Type", current_indent, ast->cast_expr.type);
+            return;
+        case AST_BUILTIN_TYPE:
+            printf("BUILTIN_TYPE ");
+            switch (ast->builtin_type.type)
+            {
+                case BUILTIN_BOOL:
+                    printf("bool\n");
+                    break;
+                case BUILTIN_FLOAT:
+                    printf("float %d bits\n", ast->builtin_type.bits);
+                    break;
+                case BUILTIN_INT:
+                    printf("int %d bits\n", ast->builtin_type.bits);
+                    break;
+                case BUILTIN_UINT:
+                    printf("uint %d bits\n", ast->builtin_type.bits);
+                    break;
+            }
             return;
     }
     printf("TODO\n");
