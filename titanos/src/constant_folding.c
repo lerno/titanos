@@ -1,6 +1,7 @@
 #include "constant_folding.h"
 #include "ast_types.h"
 #include "error.h"
+#include "diagnostics.h"
 
 
 static inline AstConstState evaluate_constant_type_expr(Ast *type_expr)
@@ -21,7 +22,7 @@ static inline AstConstState evaluate_constant_type_expr(Ast *type_expr)
         case TYPE_EXPR_VOID:
             type_expr->const_state = CONST_FULL;
         default:
-            FATAL_ERRORF("Not reachable");
+            FATAL_ERROR("Not reachable");
     }
     return type_expr->const_state;
 }
@@ -56,8 +57,186 @@ static inline void replace_ast(Ast *target, Ast *source)
     target->span = original_span;
 }
 
-static inline void implicit_conversion(Ast *left, Ast *right)
+static inline bool convert_to_type(Ast *ast, AstType type, const char *type_name)
 {
+    if (ast->type == type) return true;
+    switch (ast->type)
+    {
+        case AST_STRING_EXPR:
+            FATAL_ERROR("Should never happen");
+            return false;
+        case AST_FLOAT_EXPR:
+            FATAL_ERROR("Conversion should never happen");
+        case AST_INT_EXPR:
+            assert(type == AST_FLOAT_EXPR);
+            ast->float_expr.f = (float_type)ast->int_expr.i;
+            ast->type = type;
+            return true;
+        case AST_UINT_EXPR:
+            assert(type == AST_INT_EXPR || type == AST_FLOAT_EXPR);
+            if (type == AST_INT_EXPR)
+            {
+                ast->int_expr.i = (int64_t)ast->uint_expr.u;
+                ast->type = type;
+            }
+            else
+            {
+                ast->float_expr.f = (float_type)ast->uint_expr.u;
+                ast->type = type;
+            }
+            return true;
+        case AST_BOOL_EXPR:
+            switch (type)
+            {
+                case AST_INT_EXPR:
+                    ast->int_expr.i = ast->bool_expr.i ? 1 : 0;
+                    break;
+                case AST_UINT_EXPR:
+                    ast->uint_expr.u = ast->bool_expr.i ? 1 : 0;
+                    break;
+                case AST_FLOAT_EXPR:
+                    ast->float_expr.f = ast->bool_expr.i ? 1.0 : 0.0;
+                    break;
+                default:
+                    FATAL_ERROR("Should never happen");
+            }
+            ast->type = type;
+            return true;
+        case AST_NIL_EXPR:
+            switch (type)
+            {
+                case AST_BOOL_EXPR:
+                    ast->bool_expr.i = 0;
+                    break;
+                case AST_INT_EXPR:
+                    ast->int_expr.i = 0;
+                    break;
+                case AST_UINT_EXPR:
+                    ast->uint_expr.u = 0;
+                    break;
+                case AST_FLOAT_EXPR:
+                    ast->float_expr.f = 0.0;
+                    break;
+                default:
+                    FATAL_ERROR("Should never happen");
+            }
+            ast->type = type;
+            return true;
+        default:
+            FATAL_ERROR("Should never happen");
+    }
+}
+static inline bool try_conversion(Ast *left, Ast *right, AstType type, const char *type_name)
+{
+    if (left->type == type)
+    {
+        return convert_to_type(right, type, type_name);
+    }
+    if (right->type == type)
+    {
+        return convert_to_type(left, type, type_name);
+    }
+    return false;
+}
+static inline bool implicit_conversion(Ast *left, Ast *right)
+{
+    if (left->type == AST_STRING_EXPR)
+    {
+        sema_error_at(&left->span, "Unexpected string in expression");
+        return false;
+    }
+    if (right->type == AST_STRING_EXPR)
+    {
+        sema_error_at(&right->span, "Unexpected string in expression");
+        return false;
+    }
+    if (try_conversion(left, right, AST_FLOAT_EXPR, "float")) return true;
+    if (try_conversion(left, right, AST_INT_EXPR, "int")) return true;
+    if (try_conversion(left, right, AST_UINT_EXPR, "uint")) return true;
+    convert_to_type(left, AST_INT_EXPR, "int");
+    convert_to_type(right, AST_INT_EXPR, "int");
+    return true;
+}
+
+static inline AstConstState evaluate_constant_plus(Ast *ast)
+{
+    Ast *left = ast->binary_expr.left;
+    Ast *right = ast->binary_expr.right;
+
+    if (!implicit_conversion(left, right)) return CONST_NONE;
+
+    switch (ast->binary_expr.right->type)
+    {
+        case AST_FLOAT_EXPR:
+            ast->float_expr.f = left->float_expr.f + right->float_expr.f;
+            ast->type = AST_FLOAT_EXPR;
+            break;
+        case AST_INT_EXPR:
+            ast->int_expr.i = left->int_expr.i + right->int_expr.i;
+            ast->type = AST_INT_EXPR;
+            break;
+        case AST_UINT_EXPR:
+            ast->uint_expr.u = left->uint_expr.u + right->uint_expr.u;
+            ast->type = AST_UINT_EXPR;
+            break;
+        default:
+            FATAL_ERROR("Should not reach this");
+    }
+    return CONST_FULL;
+}
+
+static inline AstConstState evaluate_constant_minus(Ast *ast)
+{
+    Ast *left = ast->binary_expr.left;
+    Ast *right = ast->binary_expr.right;
+
+    if (!implicit_conversion(left, right)) return CONST_NONE;
+
+    switch (ast->binary_expr.right->type)
+    {
+        case AST_FLOAT_EXPR:
+            ast->float_expr.f = left->float_expr.f - right->float_expr.f;
+            ast->type = AST_FLOAT_EXPR;
+            break;
+        case AST_INT_EXPR:
+            ast->int_expr.i = left->int_expr.i - right->int_expr.i;
+            ast->type = AST_INT_EXPR;
+            break;
+        case AST_UINT_EXPR:
+            ast->uint_expr.u = left->uint_expr.u - right->uint_expr.u;
+            ast->type = AST_UINT_EXPR;
+            break;
+        default:
+            FATAL_ERROR("Should not reach this");
+    }
+    return CONST_FULL;
+}
+
+static inline AstConstState evaluate_constant_mult(Ast *ast)
+{
+    Ast *left = ast->binary_expr.left;
+    Ast *right = ast->binary_expr.right;
+
+    if (!implicit_conversion(left, right)) return CONST_NONE;
+
+    switch (ast->binary_expr.right->type)
+    {
+        case AST_FLOAT_EXPR:
+            ast->float_expr.f = left->float_expr.f * right->float_expr.f;
+            ast->type = AST_FLOAT_EXPR;
+            break;
+        case AST_INT_EXPR:
+            ast->int_expr.i = left->int_expr.i * right->int_expr.i;
+            ast->type = AST_INT_EXPR;
+            break;
+        case AST_UINT_EXPR:
+            ast->uint_expr.u = left->uint_expr.u * right->uint_expr.u;
+            ast->type = AST_UINT_EXPR;
+            break;
+        default:
+            FATAL_ERROR("Should not reach this");
+    }
+    return CONST_FULL;
 }
 
 static inline AstConstState evaluate_constant_binary_expr(Ast *ast)
@@ -72,10 +251,14 @@ static inline AstConstState evaluate_constant_binary_expr(Ast *ast)
 
     switch (ast->binary_expr.operator)
     {
+        case TOKEN_PLUS:
+            return evaluate_constant_plus(ast);
+        case TOKEN_MINUS:
+            return evaluate_constant_minus(ast);
         case TOKEN_STAR:
-//            return evaluate_constant_mult(ast);
+            return evaluate_constant_mult(ast);
         default:
-            FATAL_ERRORF("TODO");
+            FATAL_ERROR("TODO");
 
     }
 }
@@ -222,7 +405,7 @@ AstConstState evaluate_constant(Ast *ast)
         case AST_NIL_EXPR:
         case AST_STRING_EXPR:
         case AST_UINT_EXPR:
-            FATAL_ERRORF("Should already be marked CONST_FULL");
+            FATAL_ERROR("Should already be marked CONST_FULL");
             return CONST_FULL;
         case AST_UNARY_EXPR:
             return evaluate_constant_unary_expr(ast);
@@ -242,9 +425,9 @@ AstConstState evaluate_constant(Ast *ast)
         case AST_STRUCT_INIT_VALUES_EXPR:break;
         case AST_DESIGNATED_INITIALIZED_EXPR:break;
         default:
-            FATAL_ERRORF("Unexpected type %d for folding", ast->type);
+            FATAL_ERROR("Unexpected type %d for folding", ast->type);
             return CONST_NONE;
     }
-    FATAL_ERRORF("TODO");
+    FATAL_ERROR("TODO");
     return CONST_UNKNOWN;
 }

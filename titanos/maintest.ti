@@ -1,8 +1,14 @@
 module test;
 import c2 local;
-import ctype local;
 
 type foo2 alias foo;
+
+type fekeo alias i32[1*2];
+
+type gog enum i32 {
+   brog,
+   trog
+}
 
 type foo struct
 {

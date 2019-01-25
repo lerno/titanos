@@ -3,9 +3,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "ansi_color.h"
-#define FATAL_ERRORF(_string, ...) do { printf("FATAL ERROR: " _string, ##__VA_ARGS__); printf("\n"); exit(-1); } while(0)
+#define FATAL_ERROR(_string, ...) do { printf("FATAL ERROR: " _string, ##__VA_ARGS__); printf("\n"); exit(-1); } while(0)
 
-#define ASSERT(_condition, _string, ...) while (!(_condition)) { FATAL_ERRORF(_string, ##__VA_ARGS__); }
+#define ASSERT(_condition, _string, ...) while (!(_condition)) { FATAL_ERROR(_string, ##__VA_ARGS__); }
 
 #define EXPECT(_string, _value, _expected) \
  do { long long __tempval1 = _value; long long __tempval2 = _expected; \

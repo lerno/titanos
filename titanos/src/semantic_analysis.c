@@ -139,61 +139,6 @@ void resolve_unresolved_type(Ast *type)
 void analyze_expression(Ast *expression)
 {}
 
-void resolve_type(Ast *type)
-{
-    switch (type->type)
-    {
-        case AST_UNSIZED_ARRAY_TYPE:
-        case AST_SIZED_ARRAY_TYPE:
-        case AST_PTR_TYPE:
-        case AST_BASIC_TYPE:
-            return;
-        case AST_UNRESOLVED_TYPE:
-            resolve_unresolved_type(type);
-            return;
-        case AST_UNRESOLVED_PTR_TYPE:
-            resolve_type(type->ptrType.baseType);
-            type->type = AST_PTR_TYPE;
-            return;
-        case AST_UNRESOLVED_UNSIZED_ARRAY_TYPE:
-            resolve_type(type->unsizedArrayType.baseType);
-            type->type = AST_UNSIZED_ARRAY_TYPE;
-            return;
-        case AST_UNRESOLVED_SIZED_ARRAY_TYPE:
-        {
-            analyze_expression(type->unresolvedSizedArrayType.sizeExpr);
-            uint64_t size = 0;
-            if (!convert_to_const_int(type->unresolvedSizedArrayType.sizeExpr))
-            {
-                error_at_ast(type->unresolvedSizedArrayType.sizeExpr, "Could not resolve constant size");
-            }
-            else if (type->unresolvedSizedArrayType.sizeExpr->integerExpr.sign)
-            {
-                int64_t i = type->unresolvedSizedArrayType.sizeExpr->integerExpr.i;
-                if (i < 0)
-                {
-                    error_at_ast(type->unresolvedSizedArrayType.sizeExpr, "Cannot have negative sizes");
-                    size = 0;
-                }
-                else
-                {
-                    size = (uint64_t)i;
-                }
-            }
-            else
-            {
-                size = type->unresolvedSizedArrayType.sizeExpr->integerExpr.u;
-            }
-            resolve_type(type->unresolvedSizedArrayType.baseType);
-            type->sizedArrayType.baseType = type->unresolvedSizedArrayType.baseType;
-            type->sizedArrayType.size = size;
-            type->type = AST_SIZED_ARRAY_TYPE;
-            return;
-        }
-        default:
-            assert(false && "Unexpected type");
-    }
-}
 bool analyse_function_decl(Ast *function_decl)
 {
     assert(function_decl->type == AST_FUNC_DECL && "Expected function decl");
@@ -281,6 +226,66 @@ static Ast *get_symbol(Analyser *analyser, Token *token, bool is_type, bool used
     return scope_find_symbol(&analyser->scope, token, is_type, used_public);
 }
 
+
+static bool resolve_array_size(Ast *type_expr)
+{
+    const static uint64_t max_array_size = 0xFFFFFFFF;
+    Ast *size_expr = type_expr->type_expr.array_type_expr.size;
+    if (!size_expr)
+    {
+        type_expr->type_expr.array_type_expr.fix_size = -1;
+        return true;
+    }
+    if (evaluate_constant(size_expr) != CONST_FULL)
+    {
+        sema_error_at(&size_expr->span, "Array size was not a compile time constant");
+        return false;
+    }
+    int64_t size;
+    switch (size_expr->type)
+    {
+        case AST_INT_EXPR:
+            size = size_expr->int_expr.i;
+            break;
+        case AST_UINT_EXPR:
+            if (size_expr->uint_expr.u > max_array_size)
+            {
+                size = max_array_size + 1;
+            }
+            else
+            {
+                size = (int64_t) size_expr->uint_expr.u;
+            }
+            break;
+        case AST_BOOL_EXPR:
+            sema_error_at(&size_expr->span, "Array size cannot be a boolean");
+            return false;
+        case AST_FLOAT_EXPR:
+            sema_error_at(&size_expr->span, "Array size cannot be a float");
+            return false;
+        case AST_NIL_EXPR:
+            size = 0;
+            break;
+        case AST_STRING_EXPR:
+            sema_error_at(&size_expr->span, "Array size cannot be a string");
+            return false;
+        default:
+            FATAL_ERROR("Unexpected constant expression for array size");
+    }
+    if (size < 0)
+    {
+        sema_error_at(&size_expr->span, "Negative array size is not allowed");
+        return false;
+    }
+    if (size > max_array_size)
+    {
+        sema_error_at(&size_expr->span, "Array size exceeded uint32 max");
+        return false;
+    }
+    type_expr->type_expr.array_type_expr.fix_size = size;
+    return true;
+}
+
 static bool resolve_type(Analyser *analyser, Ast *type_expr, bool used_public)
 {
     if (type_expr->type_expr.flags.resolved)
@@ -298,7 +303,7 @@ static bool resolve_type(Analyser *analyser, Ast *type_expr, bool used_public)
             if (!symbol) return false;
             if (symbol->type != AST_TYPE_DEFINITION)
             {
-                error_at(&type_expr->span, "Unknown type '%.*s'", name->length, name->start);
+                sema_error_at(&type_expr->span, "Unknown type '%.*s'", name->length, name->start);
                 return false;
             }
             type_expr->type_expr.identifier_type_expr.resolved_type = symbol;
@@ -306,8 +311,8 @@ static bool resolve_type(Analyser *analyser, Ast *type_expr, bool used_public)
             break;
         }
         case TYPE_EXPR_ARRAY:
-            resolves = resolve_type(analyser, type_expr->type_expr.array_type_expr.type, used_public);
-            // TODO also evaluate size.
+            resolves = resolve_type(analyser, type_expr->type_expr.array_type_expr.type, used_public)
+                    && resolve_array_size(type_expr);
             break;
         case TYPE_EXPR_POINTER:
             resolves = resolve_type(analyser, type_expr->type_expr.pointer_type_expr.type, used_public);
@@ -316,7 +321,7 @@ static bool resolve_type(Analyser *analyser, Ast *type_expr, bool used_public)
             resolves = true;
             break;
         default:
-            FATAL_ERRORF("Unsupported type expr");
+            FATAL_ERROR("Unsupported type expr");
     }
     type_expr->type_expr.flags.resolved = resolves;
     return resolves;
@@ -334,7 +339,7 @@ static bool register_function(Ast *function)
             function = function->func_definition.func_decl;
             break;
         default:
-            FATAL_ERRORF("This should never happen");
+            FATAL_ERROR("This should never happen");
     }
 /*    Ast *old = table_set(&symbols, function->func_decl.name->span.start, function->func_decl.name->span.length, function);
 
@@ -344,7 +349,7 @@ static bool register_function(Ast *function)
         sema_error_at(&old->span, "Previous definition was here");
         return false;
     }*/
-    FATAL_ERRORF("Broken");
+    FATAL_ERROR("Broken");
     return true;
 }
 
@@ -352,7 +357,7 @@ static bool register_function(Ast *function)
 
 static void register_alias(Analyser *analyser, const char *name, const char *alias)
 {
-    FATAL_ERRORF("TODO");
+    FATAL_ERROR("TODO");
 }
 
 static inline void add_imports(Analyser *analyser)
@@ -452,7 +457,7 @@ unsigned check_attributes(Ast *ast_attribute_list)
                 }
                 break;
             default:
-                FATAL_ERRORF("Unexpected value");
+                FATAL_ERROR("Unexpected value");
         }
     }
     return errors;
@@ -495,6 +500,108 @@ static unsigned analyse_struct_members(Analyser *analyser, Ast *type, Table *nam
     return errors;
 }
 
+
+static inline unsigned check_enum_type(Analyser *analyser, Ast *type)
+{
+    AstDefinition *def = &type->definition;
+
+    unsigned error = 0;
+
+    if (!resolve_type(analyser, def->def_enum.type, def->is_public))
+    {
+        error++;
+    }
+
+    // TODO check enum const-ness
+
+    if (def->def_enum.entries->size == 0)
+    {
+        sema_error_at(&def->name, "Enum '%.*s' is empty", def->name.length, def->name.start);
+        error++;
+    }
+    return error;
+}
+
+unsigned resolve_variable_decl(Ast *decl)
+{
+    /*
+    // TODO duplicate code with FileAnalyser::analyseDeclExpr()
+    QualType Q = TR->resolveType(D->getType(), D->isPublic());
+    if (!Q.isValid()) return 1;
+
+    D->setType(Q);
+
+    // TODO move to after checkVarInits() (to allow constants in array size)
+    if (Q.isArrayType()) {
+        functionAnalyser.checkArraySizeExpr(D);
+
+        const ArrayType* AT = cast<ArrayType>(Q.getCanonicalType());
+        if (AT->isIncremental()) {
+            if (D->getInitValue()) {
+                Diags.Report(D->getInitValue()->getLocation(),  diag::err_incremental_array_initlist);
+                return 1;
+            }
+            InitListExpr* ILE = new (ast.getASTContext()) InitListExpr(D->getLocation(), D->getLocation());
+            D->setInitValue(ILE);
+        }
+    }
+
+    TR->checkOpaqueType(D->getLocation(), D->isPublic(), Q);
+
+    if (!ast.isInterface() && !D->hasEmptyName()) {
+        if (Q.isConstant()) {
+            if (!isupper(D->getName()[0])) {
+                Diags.Report(D->getLocation(), diag::err_const_casing);
+            }
+        } else {
+            if (!islower(D->getName()[0])) {
+                Diags.Report(D->getLocation(), diag::err_var_casing);
+            }
+        }
+    }
+
+    // NOTE: dont check initValue here (doesn't have canonical type yet)
+     */
+    return 0;
+}
+
+
+unsigned check_function_decl(Analyser *analyser, Ast *function_decl, bool public)
+{
+    unsigned errors = 0;
+    AstFuncDecl *decl = &function_decl->func_decl;
+
+    // Return value
+    if (!resolve_type(analyser, decl->r_type, public))
+    {
+        errors++;
+//        TR->checkOpaqueType(D->getLocation(), D->isPublic(), Q);
+    }
+
+    // Arguments
+    Vector *list = decl->params->param_list.param_list;
+    for (unsigned i = 0; i < list->size; i++)
+    {
+        Ast *param_decl = list->entries[i];
+        assert(param_decl->type == AST_PARAM_DECL);
+        if (!resolve_type(analyser, param_decl->param_decl.type, public))
+        {
+            errors++;
+            continue;
+        }
+        if (param_decl->param_decl.default_value)
+        {
+            if (evaluate_constant(param_decl->param_decl.default_value) != CONST_FULL)
+            {
+                sema_error_at(&param_decl->param_decl.default_value->span,
+                              "Default value must be a compile time constant");
+                errors++;
+            }
+        }
+    }
+    return errors;
+}
+
 unsigned check_type(Analyser *analyser, Ast *type)
 {
     switch (type->definition.definition_type)
@@ -510,11 +617,11 @@ unsigned check_type(Analyser *analyser, Ast *type)
         case ALIAS_TYPE:
             return resolve_type(analyser, type->definition.def_alias.type_definition, type->definition.is_public) ? 0 : 1;
         case ENUM_TYPE:
-            FATAL_ERRORF("TODO");
+            return check_enum_type(analyser, type);
         case FUNC_TYPE:
-            FATAL_ERRORF("TODO");
+            return check_function_decl(analyser, type->definition.def_func.func_decl, type->definition.is_public);
         default:
-            FATAL_ERRORF("Invalid type");
+            FATAL_ERROR("Invalid type");
     }
 }
 unsigned check_types(Analyser *analyser)
@@ -528,79 +635,31 @@ unsigned check_types(Analyser *analyser)
         errors += check_type(analyser, type);
         check_attributes(type->var_definition.attributes);
     }
-#ifdef TODO
-    switch (an
-    switch (type->type_expr.type)
-    {
-        case TYPE_EXPR_ARRAY:
-            evaluate_constant(type->type_expr.array_type_expr.size);
-            resolve_type(analyser, type->type_expr.array_type_expr.type);
-            break;
-        case TYPE_EXPR_POINTER:
-            resolve_type(analyser, type->type_expr.pointer_type_expr.type);
-            break;
-        case TYPE_EXPR_VOID:
-            return;
-        case TYPE_EXPR_IDENTIFIER
-            resolve_type(type->alias_type.type_definition);
-            type->alias_type.alias
-        case AST_BUILTIN_TYPE:
-        case AST_ENUM_TYPE:
-        case AST_STRUCT_TYPE:
-        case AST_FUNC_TYPE:
+    return errors;
+}
 
-    }
-    assert(type->type = AST_TERNARY_EXPR)
-    // check generic type
-    type = type
-    unsigned errors = TR->checkType(D->getType(), D->isPublic());
+unsigned analyse_func_body(Analyser *analyser, Ast *func_def)
+{
+    return 1;
+}
 
-    // check extra stuff depending on subclass
-    switch (D->getKind()) {
-    case DECL_FUNC:
-    case DECL_VAR:
-    case DECL_ENUMVALUE:
-        FATAL_ERROR("Cannot have type");
-        break;
-    case DECL_ALIASTYPE:
-        // Any UnresolvedType should point to decl that has type set
-        if (errors == 0) {
-            AliasType* A = cast<AliasType>(D->getType().getTypePtr());
-            QualType Q = TR->resolveUnresolved(A->getRefType());
-            A->updateRefType(Q);
-        }
-        break;
-    case DECL_STRUCTTYPE:
+unsigned check_function(Analyser *analyser, Ast *func_def)
+{
+    assert(func_def->type == AST_FUNC_DEFINTION);
+    unsigned errors = check_function_decl(analyser, func_def->func_definition.func_decl, func_def->func_definition.is_public);
+    if (errors) return errors;
+    return analyse_func_body(analyser, func_def);
+}
+
+unsigned check_functions(Analyser *analyser)
+{
+    unsigned errors = 0;
+    for (unsigned i = 0; i < analyser->parser->functions->size; i++)
     {
-        Names names;
-        StructTypeDecl* S = cast<StructTypeDecl>(D);
-        analyseStructNames(S, names, S->isStruct());
-        break;
+        Ast *type = analyser->parser->functions->entries[i];
+        errors += check_function(analyser, type);
+        // check_attributes(type->var_definition.attributes);
     }
-    case DECL_ENUMTYPE:
-    {
-        EnumTypeDecl* E = cast<EnumTypeDecl>(D);
-        if (E->numConstants() == 0) {
-            Diags.Report(D->getLocation(), diag::err_empty_enum) << D->getName();
-            errors++;
-        }
-        break;
-    }
-    case DECL_FUNCTIONTYPE:
-    {
-        const FunctionTypeDecl* FTD = cast<FunctionTypeDecl>(D);
-        // set module on inner FunctionDecl
-        FTD->getDecl()->setModule(FTD->getModule());
-        // dont check return/argument types yet
-        break;
-    }
-    case DECL_ARRAYVALUE:
-    case DECL_IMPORT:
-    case DECL_LABEL:
-        FATAL_ERROR("Cannot have type decl");
-        break;
-    }
-#endif
     return errors;
 }
 
@@ -623,7 +682,7 @@ static inline void add_symbols(Analyser *analyser)
                 name = &import->import.alias;
                 break;
             default:
-                FATAL_ERRORF("Unknown type");
+                FATAL_ERROR("Unknown type");
         }
         Ast *old = module_add_symbol(analyser->module, name, import);
         if (old)
@@ -740,6 +799,13 @@ bool analyse(Component *component, Table *modules)
         check_types(analyser);
     }
 
+    if (error_found()) return 1;
+
+    for (unsigned i = 0; i < analyser_count; i++)
+    {
+        Analyser *analyser = analysers->entries[i];
+        check_functions(analyser);
+    }
 
     bool success = true;
     /*
@@ -753,5 +819,5 @@ bool analyse(Component *component, Table *modules)
     }
 */
     // analyse_module(ast->source.module);
-    return success;
+    return !success;
 }

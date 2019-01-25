@@ -43,6 +43,17 @@ ComponentType component_type_from_string(const char *string)
     return (ComponentType)-1;
 }
 
+void component_print_symbols(Component *component)
+{
+    printf("Component %s\n", component->name);
+    for (unsigned i = 0; i < component->modules.size; i++)
+    {
+        Module *module = component->modules.entries[i];
+        if (!module->files->size) continue;
+        module_print_symbols(module);
+    }
+}
+
 void component_print(Component *component)
 {
     printf("Component %s ", component->name);

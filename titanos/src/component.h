@@ -29,6 +29,7 @@ typedef struct _Component
 ComponentType component_type_from_string(const char *string);
 const char *component_type_to_string(ComponentType type);
 void component_print(Component *component);
+void component_print_symbols(Component *component);
 Component *component_create(const char *name, const char *path, ComponentType type, bool external, bool c_library, Array *export_list);
 bool component_has_dependency(Component *this, const Component* other);
 Module *component_find_module(Component *component, const Token *name);

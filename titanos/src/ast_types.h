@@ -126,9 +126,11 @@ typedef struct _AstAccessExpr
     Ast *sub_element;
 } AstAccessExpr;
 
+typedef double float_type;
+
 typedef struct _AstFloatExpr
 {
-    double f;
+    float_type f;
 } AstFloatExpr;
 
 typedef enum _DefinitionType
@@ -168,7 +170,7 @@ typedef struct _DefEnum
 
 typedef struct _DefFunc
 {
-    Ast *declaration; // AstFuncDeclaration
+    Ast *func_decl; // AstFuncDeclaration
 } DefFunc;
 
 
@@ -294,14 +296,16 @@ typedef struct _AstFuncDecl
     Ast *params;
     FunctionName *name; // AstTypeExpr
     Ast *attributes;
+    Module *module;
 } AstFuncDecl;
 
 typedef struct _AstParamDecl
 {
     Ast *type;
     Token name; //
-    Ast *defaultValue; // May be NULL!
+    Ast *default_value; // May be NULL!
 } AstParamDecl;
+
 
 typedef struct _AstFuncDefinition
 {
@@ -390,7 +394,11 @@ typedef struct _IdentifierType
 typedef struct _ArrayTypeExpr
 {
     Ast *type; // Note that this may either be a type or expression
-    Ast *size;
+    union
+    {
+        Ast *size;
+        int64_t fix_size;
+    };
 } ArrayTypeExpr;
 
 typedef struct _PointerTypeExpr

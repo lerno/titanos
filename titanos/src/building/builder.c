@@ -18,6 +18,7 @@
 #include "dependecy.h"
 #include "ast_types.h"
 #include "semantic_analysis.h"
+#include "codegen.h"
 
 BuildOptions build_options = { 0 };
 
@@ -198,7 +199,7 @@ static void build_setup()
     init_arena();
     builder.c2_mod = NULL;
     builder.main_component = NULL;
-    vector_init(&builder.modules, 8);
+    table_init(&builder.modules, 8);
     vector_init(&builder.components, 8);
     vector_init(&library_loader.lib_dirs, 8);
     table_init(&library_loader.libraries, 32);
@@ -724,9 +725,122 @@ static bool check_module_imports_and_parse(Component *component, Module *module,
 
 static bool check_main_function()
 {
-    // TODO from checkMainFunction
+    Ast *main_decl = NULL;
+    Token main_name = token_wrap("main");
+    for (unsigned i = 0; i < builder.main_component->modules.size; i++)
+    {
+        Module *module = builder.main_component->modules.entries[i];
+        Ast *main = module_find_symbol(module, &main_name);
+        if (!main) continue;
+        if (main_decl)
+        {
+            sema_error_at(&main->span, "Multiple main function");
+            sema_error_at(&main_decl->span, "Previous one was here");
+        }
+        else
+        {
+            main_decl = main;
+        }
+    }
+
+    if (builder.recipe->type == COMPONENT_TYPE_EXECUTABLE)
+    {
+        if (build_options.test_mode) return true;
+        if (!main_decl)
+        {
+            PRINT_ERROR("Missing main function");
+            return false;
+        }
+    }
+    else if (main_decl)
+    {
+        sema_error_at(&main_decl->span, "Libraries cannot have main functions");
+        return false;
+    }
     return true;
 }
+
+static void generate_optional_ir()
+{
+    bool single_module = true;
+    if (single_module)
+    {
+        clock_t t1 = clock();
+        const char *name = builder.recipe->name;
+        if (build_options.verbose)
+        {
+            LOG(COL_VERBOSE, "Generating IR for single module %s", name);
+        }
+        codegen(name, true, &builder.main_component->modules);
+        if (build_options.print_timing)
+        {
+            LOG(COL_TIME, "IR generation took %ld ms", (clock() - t1) * 1000 / CLOCKS_PER_SEC);
+        }
+        // TODO put it in the codegen.
+/*        build_options.
+        if (options.printIR) cgm.dump();
+        bool ok = cgm.verify();
+        if (ok) cgm.write(buildDir, filename);*/
+    }
+    else
+    {
+
+        /*
+         *         for (unsigned m=0; m<mods.size(); m++) {
+                     Module* M = mods[m];
+                     uint64_t t1 = Utils::getCurrentTime();
+                     if (M->isPlainC()) continue;
+                     if (M->getName() == "c2") continue;
+
+                     if (options.verbose) log(COL_VERBOSE, "generating IR for module %s", M->getName().c_str());
+                     ModuleList single;
+                     single.push_back(M);
+                     CodeGenModule cgm(M->getName(), false, single, context);
+                     cgm.generate();
+                     uint64_t t2 = Utils::getCurrentTime();
+                     if (options.printTiming) log(COL_TIME, "IR generation took %" PRIu64" usec", t2 - t1);
+                     if (options.printIR) cgm.dump();
+                     bool ok = cgm.verify();
+                     if (ok) cgm.write(buildDir, M->getName());
+                 }
+
+         */
+    }
+}
+
+static void generate_interface()
+{}
+
+static void generate_optional_deps()
+{}
+
+
+static Module *find_module(const char *name)
+{
+    return table_get_string(&builder.modules, name);
+}
+
+static bool check_exported_packages()
+{
+    for (unsigned i = 0; i < builder.recipe->exported.count; i++)
+    {
+        const char *name = builder.recipe->exported.entries[i];
+        Module *module = find_module(name);
+        if (!module)
+        {
+            PRINT_ERROR("cannot export '%s', no such module\n", name);
+            return false;
+        }
+        if (module->is_external)
+        {
+            PRINT_ERROR("cannot export external module '%s'\n", name);
+            return false;
+        }
+    }
+    return true;
+}
+
+
 static bool check_imports()
 {
     Vector imports_queue;
@@ -760,8 +874,27 @@ static void print_components()
     {
         component_print(builder.components.entries[i]);
     }
+}
 
-
+static void print_symbols(bool print_libs)
+{
+    assert(builder.main_component);
+    if (print_libs)
+    {
+        if (c2_module)
+        {
+            printf("Component <internal>\n");
+            module_print_symbols(c2_module);
+        }
+        for (unsigned i = 0; i < builder.components.size; i++)
+        {
+            component_print_symbols(builder.components.entries[i]);
+        }
+    }
+    else
+    {
+        component_print_symbols(builder.main_component);
+    }
 }
 static int make_build(void)
 {
@@ -885,41 +1018,34 @@ static int make_build(void)
     }
     if (build_options.print_symbols)
     {
-
-#ifdef TODO
-        print_symbols();
-#endif
+        print_symbols(build_options.print_lib_symbols);
     }
     if (errors) goto out;
 
     if (!check_main_function()) goto out;
 
+    if (!check_exported_packages()) goto out;
+
+    generate_optional_deps();
+
+    // generate_optional_tags();
+
+    generate_interface();
+
+    generate_optional_ir();
+
+    if (build_options.verbose)
+    {
+        LOG(COL_VERBOSE, "done");
+    }
+
     out:
-    return 0;
-}
 
-#if 0
-int C2Builder::build() {
-    // TODO refactor this function to 'Work'-framework
-
-    if (!checkExportedPackages()) goto out;
-
-    generateOptionalDeps();
-
-    generateOptionalTags(SM);
-
-    generateInterface();
-
-    generateOptionalC();
-
-    generateOptionalIR();
-
-    if (options.verbose) log(COL_VERBOSE, "done");
-out:
-    //SM.PrintStats();
-    uint64_t t2_build = Utils::getCurrentTime();
-    if (options.printTiming) log(COL_TIME, "total build took %" PRIu64" usec", t2_build - t1_build);
-    raw_ostream &OS = llvm::errs();
+    if (build_options.print_timing)
+    {
+        LOG(COL_TIME, "Total build took %ld ms", (clock() - build_time) * 1000 / CLOCKS_PER_SEC);
+    }
+    /*
     unsigned NumWarnings = client->getNumWarnings();
     unsigned NumErrors = client->getNumErrors();
     if (NumWarnings)
@@ -931,98 +1057,14 @@ out:
     if (NumWarnings || NumErrors)
         OS << " generated.\n";
     return NumErrors;
+*/
+    return 0;
 }
 
+#if 0
 
 
 
-
-C2::Module* C2Builder::findModule(const std::string& name) const {
-    ModulesConstIter iter = modules.find(name);
-    if (iter == modules.end()) return 0;
-    else return iter->second;
-}
-
-void C2Builder::printSymbols(bool printLibs) const {
-    assert(mainComponent);
-    StringBuilder output;
-    output.enableColor(true);
-    if (printLibs) {
-        if (c2Mod) {
-            output << "Component <internal>\n";
-            c2Mod->printSymbols(output);
-        }
-        for (unsigned i=0; i<components.size(); i++) {
-            components[i]->printSymbols(output);
-        }
-    } else {
-        mainComponent->printSymbols(output);
-    }
-    printf("%s\n", (const char*)output);
-}
-
-
-
-void C2Builder::log(const char* color, const char* format, ...) const {
-    char buffer[256];
-    va_list(Args);
-    va_start(Args, format);
-    vsprintf(buffer, format, Args);
-    va_end(Args);
-
-    if (useColors) printf("%s%s" ANSI_NORMAL "\n", color, buffer);
-    else printf("%s\n", buffer);
-}
-
-bool C2Builder::checkMainFunction(DiagnosticsEngine& Diags) {
-    assert(mainComponent);
-
-    Decl* mainDecl = 0;
-    const ModuleList& mods = mainComponent->getModules();
-    for (unsigned m=0; m<mods.size(); m++) {
-        const Module* M = mods[m];
-        Decl* decl = M->findSymbol("main");
-        if (decl) {
-            if (mainDecl) {
-                // TODO multiple main functions
-            } else {
-                mainDecl = decl;
-            }
-        }
-    }
-
-    if (recipe.type == Component::EXECUTABLE) {
-        // bin: must have main
-        if (options.testMode) return true;
-        if (!mainDecl) {
-            Diags.Report(diag::err_main_missing);
-            return false;
-        }
-    } else {
-        // lib: cannot have main
-        if (mainDecl) {
-            Diags.Report(mainDecl->getLocation(), diag::err_lib_has_main);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool C2Builder::checkExportedPackages() const {
-    for (unsigned i=0; i<recipe.exported.size(); i++) {
-        const std::string& modName = recipe.exported[i];
-        const Module* M = findModule(modName);
-        if (!M) {
-            fprintf(stderr, "cannot export '%s', no such module\n", modName.c_str());
-            return false;
-        }
-        if (M->isExternal()) {
-            fprintf(stderr, "cannot export external module '%s'\n", modName.c_str());
-            return false;
-        }
-    }
-    return true;
-}
 
 
 void C2Builder::generateOptionalDeps() {

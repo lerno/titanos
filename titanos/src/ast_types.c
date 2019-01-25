@@ -116,9 +116,9 @@ void print_ast(Ast *ast, int current_indent)
             print_token(&ast->param_decl.name);
             printf("\n");
             print_sub_ast("Type", current_indent, ast->param_decl.type);
-            if (ast->param_decl.defaultValue)
+            if (ast->param_decl.default_value)
             {
-                print_sub_ast("Default", current_indent, ast->param_decl.defaultValue);
+                print_sub_ast("Default", current_indent, ast->param_decl.default_value);
             }
             return;
         case AST_COMPOUND_STMT:
@@ -358,7 +358,7 @@ void print_ast(Ast *ast, int current_indent)
                     break;
                 case FUNC_TYPE:
                     printf(" func\n");
-                    print_sub_ast("Declaration", current_indent, ast->definition.def_func.declaration);
+                    print_sub_ast("Declaration", current_indent, ast->definition.def_func.func_decl);
                     printf("BUILTIN_TYPE ");
                     break;
                 case BUILTIN_TYPE:

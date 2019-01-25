@@ -53,3 +53,17 @@ void module_print_files(Module *module)
         printf("%s\n", parser->filename);
     }
 }
+
+void module_print_symbols(Module *module)
+{
+    indent(1);
+    printf("module %.*s\n", module->name.length, module->name.start);
+    for (unsigned i = 0; i < module->symbols.capacity; i++)
+    {
+        Entry *entry = &module->symbols.entries[i];
+        if (!entry->key) continue;
+        indent(2);
+        printf("[%.*s]\n", entry->key_len, entry->key);
+        print_ast(entry->value, 3);
+    }
+}

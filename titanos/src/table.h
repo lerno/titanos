@@ -24,6 +24,7 @@ typedef struct _Table
 void table_init(Table *table, uint32_t initial_size);
 void *table_set(Table *table, const char *key, uint32_t len, void *value);
 void *table_get(Table *table, const char *key, uint32_t len);
+void *table_get_string(Table *table, const char *key);
 void *table_delete(Table *table, const char *key, uint32_t len);
 
 static void *table_set_token(Table *table, const Token *token, void *entry)

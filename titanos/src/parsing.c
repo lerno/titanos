@@ -496,7 +496,7 @@ Ast *parse_array_type(Ast *base)
  *                  | type_qualifier array_specifier const?
  *                  | type_qualifier '*' const?
  *                  |
- * @param allow_qulifier read optional type specifiers (volatile, const etc)
+ * @param accept_qualifiers read optional type specifiers (volatile, const etc)
  * @return type
  */
 Ast *parse_type(bool accept_qualifiers)
@@ -565,7 +565,7 @@ static inline Ast *parse_param_decl()
 	Ast *param_decl = new_ast_with_span(AST_PARAM_DECL, &type->span);
 	param_decl->param_decl.type = type;
 	param_decl->param_decl.name.type = TOKEN_VOID;
-	param_decl->param_decl.defaultValue = NULL;
+	param_decl->param_decl.default_value = NULL;
 	if (!try_consume(TOKEN_IDENTIFIER))
 	{
 		return end_ast(param_decl, &prev_tok);
@@ -573,8 +573,8 @@ static inline Ast *parse_param_decl()
 	param_decl->param_decl.name = prev_tok;
 	if (try_consume(TOKEN_EQEQ))
 	{
-		param_decl->param_decl.defaultValue = parse_expression();
-		if (!param_decl->param_decl.defaultValue) return NULL;
+		param_decl->param_decl.default_value = parse_expression();
+		if (!param_decl->param_decl.default_value) return NULL;
 	}
 
 	UPDATE_AND_RETURN_AST(param_decl);
@@ -630,6 +630,8 @@ static inline Ast *parse_func_decl()
 	advance_and_verify(TOKEN_FUNC);
 
 	Ast *ast = new_ast_with_span(AST_FUNC_DECL, &prev_tok);
+
+	ast->func_decl.module = NULL;
 
 	Ast *return_type = parse_type(true);
 	if (!return_type) return NULL;
@@ -1443,7 +1445,7 @@ static Ast *parse_function_type(bool public, Token *initial_token)
 
 	if (!func_decl) return NULL;
 
-	type->definition.def_func.declaration = func_decl;
+	type->definition.def_func.func_decl = func_decl;
 
 	CONSUME_EOS_OR_EXIT;
 
@@ -1503,6 +1505,7 @@ static Ast *parse_enum_type(bool public, Token *initial_token)
         if (!try_consume(TOKEN_COMMA))
 		{
 			CONSUME_END_BRACE_OR_EXIT;
+            break;
 		}
         if (try_consume(TOKEN_RBRACE)) break;
     }

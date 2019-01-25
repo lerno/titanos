@@ -94,6 +94,11 @@ void *table_set(Table *table, const char *key, uint32_t len, void *value)
     return old;
 }
 
+void *table_get_string(Table *table, const char *key)
+{
+    return table_get(table, key, (uint32_t)strlen(key));
+}
+
 void *table_get(Table *table, const char *key, uint32_t len)
 {
     if (!table->entries) return NULL;
