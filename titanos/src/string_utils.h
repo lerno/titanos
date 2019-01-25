@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory.h>
+#include "value.h"
 #include "common.h"
 #include "stdlib.h"
 
@@ -76,30 +77,22 @@ static inline char *path_to_underscore_prefix(char *namespace_name)
 }
 
 // Parse normal integers, parse 0xBEEF, parse 0o1337, parse 0b1010101 – positive numbers only
-static inline uint64_t parse_uint64(const char *string, int len)
+static inline Value parse_uint64(const char *string, int len)
 {
 	if (len > 2)
 	{
 		switch (string[1])
 		{
 			case 'x':
-				return parse_uint64_hex(string + 2, len - 2);
+				return value_new_int(string + 2, (uint16_t) (len - 2), 16);
 			case 'o':
-				return parse_uint64_oct(string + 2, len - 2);
+				return value_new_int(string + 2, (uint16_t) (len - 2), 8);
 			case 'b':
-				return parse_uint64_bin(string + 2, len - 2);
+				return value_new_int(string + 2, (uint16_t) (len - 2), 2);
 			default:
 				break;
 		}
 	}
-	uint64_t value = 0;
-	const char *end = string + len;
-	while (string < end)
-	{
-		char c = *(string++);
-		if (c == '_') continue;
-		value = value * 10 + c - '0';
-	}
-	return value;
+	return value_new_int(string, (uint16_t) len, 10);
 }
 

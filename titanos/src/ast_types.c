@@ -193,20 +193,10 @@ void print_ast(Ast *ast, int current_indent)
             print_token(&ast->label_stmt.label_name);
             printf("]\n");
             return;
-        case AST_FLOAT_EXPR:
-            printf("FLOAT_EXPR %f\n", ast->float_expr.f);
-            return;
-        case AST_BOOL_EXPR:
-            printf("BOOL_EXPR %s\n", ast->bool_expr.i ? "TRUE" : "FALSE");
-            return;
-        case AST_UINT_EXPR:
-            printf("UINT_EXPR %llu\n", ast->uint_expr.u);
-            return;
-        case AST_INT_EXPR:
-            printf("INT_EXPR %lld\n", ast->int_expr.i);
-            return;
-        case AST_NIL_EXPR:
-            printf("NIL\n");
+        case AST_CONST_EXPR:
+            printf("CONST_EXPR ");
+            value_print(ast->const_expr.value);
+            printf("\n");
             return;
         case AST_BINARY_EXPR:
             printf("BINARY_EXPR %s\n", token_type_to_string(ast->binary_expr.operator));
@@ -318,14 +308,6 @@ void print_ast(Ast *ast, int current_indent)
         case AST_STRUCT_INIT_VALUES_EXPR:
             printf("STRUCT_INIT_VALUES_EXPR\n");
             print_sub_ast_list("Values", current_indent, ast->struct_init_values_expr.values);
-            return;
-        case AST_STRING_EXPR:
-            printf("STRING_EXPR\n");
-            indent(current_indent);
-            printf("Text: ");
-            print_token(&ast->string_expr.string);
-            printf("\n");
-            print_sub_ast("Next", current_indent, ast->string_expr.next_string);
             return;
         case AST_DESIGNATED_INITIALIZED_EXPR:
             printf("DESIGNATED_INITIALIZED_EXPR ");

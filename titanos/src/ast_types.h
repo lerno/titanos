@@ -8,6 +8,7 @@
 #include "common.h"
 #include "vector.h"
 #include "component.h"
+#include "value.h"
 
 typedef struct _Ast Ast;
 typedef enum _AstType
@@ -35,12 +36,7 @@ typedef enum _AstType
     AST_FOR_STMT,
     AST_DECLARATION,
     AST_LABEL,
-    AST_FLOAT_EXPR,
-    AST_BOOL_EXPR,
-    AST_INT_EXPR,
-    AST_UINT_EXPR,
-    AST_NIL_EXPR,
-    AST_STRING_EXPR,
+    AST_CONST_EXPR,
     AST_BINARY_EXPR,
     AST_TERNARY_EXPR,
     AST_UNARY_EXPR,
@@ -207,21 +203,10 @@ typedef struct _AstDefinition
     };
 } AstDefinition;
 
-
-typedef struct _AstIntExpr
+typedef struct _AstConstExpr
 {
-    int64_t i;
-} AstIntExpr;
-
-typedef struct _AstUIntExpr
-{
-    uint64_t u;
-} AstUIntExpr;
-
-typedef struct _AstBoolExpr
-{
-    bool i;
-} AstBoolExpr;
+    Value value;
+} AstConstExpr;
 
 typedef struct _AstParamList
 {
@@ -509,11 +494,7 @@ typedef struct _Ast
         AstDeclaration declaration;
         AstLabelStmt label_stmt;
 
-        AstFloatExpr float_expr;
-        AstIntExpr int_expr;
-        AstUIntExpr uint_expr;
-        AstBoolExpr bool_expr;
-        AstStringExpr string_expr;
+        AstConstExpr const_expr;
         AstBinaryExpr binary_expr;
         AstTernaryExpr ternary_expr;
         AstUnaryExpr unary_expr;

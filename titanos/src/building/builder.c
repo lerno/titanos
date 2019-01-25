@@ -568,11 +568,14 @@ static bool parse_file(Component *component, Module *module, const char *filenam
 static Module *c2_module;
 
 
-static void register_c2_constant(const char *name, const char *type, Ast *value)
+static void register_c2_constant(const char *name, const char *type, Value *value)
 {
     Token token = token_wrap(name);
     Token type_token = token_wrap(type);
     Ast *ast = new_ast_with_span(AST_VAR_DEFINITION, &token);
+    Ast *ast_value = new_ast_with_span(AST_CONST_EXPR, &token);
+    ast_value->const_expr.value = value;
+
     ast->var_definition.name = token;
     Ast *type_ast = new_type_expr(TYPE_EXPR_IDENTIFIER, &type_token);
     type_ast->type_expr.identifier_type_expr.name = token;
@@ -581,24 +584,18 @@ static void register_c2_constant(const char *name, const char *type, Ast *value)
     ast->var_definition.type = type_ast;
     ast->var_definition.is_public = true;
     ast->var_definition.is_exported = true;
-    ast->var_definition.value = value;
+    ast->var_definition.value = ast_value;
     ast->var_definition.attributes = NULL;
     Parser *parser = c2_module->files->entries[0];
     vector_add(parser->variables, ast);
 }
 static void register_c2_unsigned_constant(const char *type, const char *name, uint64_t size)
 {
-    Token token = token_wrap(name);
-    Ast *value = new_ast_with_span(AST_UINT_EXPR, &token);
-    value->uint_expr.u = size;
-    register_c2_constant(name, type, value);
+    register_c2_constant(name, type, value_new_int_with_uint(size));
 }
 static void register_c2_signed_constant(const char *type, const char *name, int64_t size)
 {
-    Token token = token_wrap(name);
-    Ast *value = new_ast_with_span(AST_INT_EXPR, &token);
-    value->int_expr.i = size;
-    register_c2_constant(name, type, value);
+    register_c2_constant(name, type, value_new_int_with_int(size));
 }
 
 static void register_c2_builtin(const char *name, BuiltinFamily family, unsigned bits)

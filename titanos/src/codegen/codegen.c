@@ -10,8 +10,8 @@
 #include <string.h>
 #include "module.h"
 #include "parser.h"
-#include "ast_utils.h"
 #include "error.h"
+#include "ast_types.h"
 
 static LLVMTypeRef codegen_convert_type_expr(Ast *type);
 
@@ -73,12 +73,14 @@ static LLVMTypeRef codegen_convert_type_expr(Ast *type)
             {
                 return LLVMPointerType(codegen_convert_type_expr(type->type_expr.array_type_expr.type), 0);
             }
+#ifdef TODO
             assert(type->type_expr.array_type_expr.size->type == AST_UINT_EXPR
                            || type->type_expr.array_type_expr.size->type == AST_INT_EXPR);
             return LLVMArrayType(codegen_convert_type_expr(type->type_expr.array_type_expr.type),
                                  type->type_expr.array_type_expr.size->type == AST_UINT_EXPR
                                  ? (unsigned)type->type_expr.array_type_expr.size->uint_expr.u
                                  : (unsigned)type->type_expr.array_type_expr.size->int_expr.i);
+#endif
         case TYPE_EXPR_IDENTIFIER:
             assert(type->type_expr.identifier_type_expr.resolved_type);
             return codegen_convert_type(type->type_expr.identifier_type_expr.resolved_type);

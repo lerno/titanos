@@ -1,7 +1,6 @@
 #include "module.h"
 #include "printer.h"
 #include "parser.h"
-#include "ast_utils.h"
 
 void module_init(Module *module, Token *name, bool is_external, bool is_c_lib)
 {

@@ -246,19 +246,31 @@ Ast *parse_module()
 static Ast *parse_string_literal(Ast *left)
 {
 	assert(!left && "Had left hand side");
-	Ast *ast_string = new_ast_with_span(AST_STRING_EXPR, &prev_tok);
-	ast_string->string_expr.string = prev_tok;
+	Ast *ast_string = new_ast_with_span(AST_CONST_EXPR, &prev_tok);
+
+	const char *str = prev_tok.start;
+	uint32_t len = prev_tok.length;
+
 	// Just keep chaining if there are multiple parts.
-	ast_string->string_expr.next_string = try_consume(TOKEN_STRING) ? parse_string_literal(NULL) : NULL;
+
+	while (try_consume(TOKEN_STRING))
+	{
+		char *new_string = malloc_arena(len + prev_tok.length);
+		memcpy(new_string, str, len);
+		memcpy(new_string + len, prev_tok.start, prev_tok.length);
+		str = new_string;
+		len += prev_tok.length;
+	}
+	ast_string->const_expr.value = value_new_string(str, len);
 	ast_string->const_state = CONST_FULL;
-	return ast_string;
+	UPDATE_AND_RETURN_AST(ast_string);
 }
 
 static Ast *parse_integer(Ast *left)
 {
 	assert(!left && "Had left hand side");
-	Ast *number = new_ast_with_span(AST_UINT_EXPR, &tok);
-	number->uint_expr.u = parse_uint64(prev_tok.start, prev_tok.length);
+	Ast *number = new_ast_with_span(AST_CONST_EXPR, &tok);
+	number->const_expr.value = parse_uint64(prev_tok.start, prev_tok.length);
 	number->const_state = CONST_FULL;
 	return number;
 }
@@ -267,26 +279,27 @@ static Ast *parse_integer(Ast *left)
 static Ast *parse_double(Ast *left)
 {
 	assert(!left && "Had left hand side");
-	Ast *number = new_ast_with_span(AST_FLOAT_EXPR, &tok);
+	Ast *number = new_ast_with_span(AST_CONST_EXPR, &tok);
 	number->const_state = CONST_FULL;
-	// TODO handle error
-	number->float_expr.f = strtod(prev_tok.start, NULL);
+	Value value = value_new_float(prev_tok.start, prev_tok.length);
+	number->const_expr.value = value;
 	return number;
 }
 
 static Ast *parse_bool(Ast *left)
 {
 	assert(!left && "Had left hand side");
-	Ast *number = new_ast_with_span(AST_BOOL_EXPR, &tok);
+	Ast *number = new_ast_with_span(AST_CONST_EXPR, &tok);
 	number->const_state = CONST_FULL;
-	number->bool_expr.i = tok.type == TOKEN_TRUE;
+	number->const_expr.value = value_new_bool(tok.type == TOKEN_TRUE);
 	return number;
 }
 
 static Ast *parse_nil(Ast *left)
 {
 	assert(!left && "Had left hand side");
-	Ast *value = new_ast_with_span(AST_NIL_EXPR, &tok);;
+	Ast *value = new_ast_with_span(AST_CONST_EXPR, &tok);;
+	value->const_expr.value = value_nil();
 	value->const_state = CONST_FULL;
 	return value;
 }

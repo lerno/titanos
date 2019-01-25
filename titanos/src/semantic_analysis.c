@@ -2,8 +2,6 @@
 #include "diagnostics.h"
 #include "semantic_analysis.h"
 #include "vector.h"
-#include "ast_utils.h"
-#include "vector.h"
 #include "ast_types.h"
 #include "parser.h"
 #include "error.h"
@@ -226,7 +224,7 @@ static Ast *get_symbol(Analyser *analyser, Token *token, bool is_type, bool used
     return scope_find_symbol(&analyser->scope, token, is_type, used_public);
 }
 
-
+#ifdef TODO
 static bool resolve_array_size(Ast *type_expr)
 {
     const static uint64_t max_array_size = 0xFFFFFFFF;
@@ -285,6 +283,7 @@ static bool resolve_array_size(Ast *type_expr)
     type_expr->type_expr.array_type_expr.fix_size = size;
     return true;
 }
+#endif
 
 static bool resolve_type(Analyser *analyser, Ast *type_expr, bool used_public)
 {
@@ -311,8 +310,10 @@ static bool resolve_type(Analyser *analyser, Ast *type_expr, bool used_public)
             break;
         }
         case TYPE_EXPR_ARRAY:
+#ifdef TODO
             resolves = resolve_type(analyser, type_expr->type_expr.array_type_expr.type, used_public)
                     && resolve_array_size(type_expr);
+#endif
             break;
         case TYPE_EXPR_POINTER:
             resolves = resolve_type(analyser, type_expr->type_expr.pointer_type_expr.type, used_public);
@@ -391,12 +392,14 @@ unsigned check_attributes(Ast *ast_attribute_list)
         Ast *value = attribute->attribute.value;
         if (value)
         {
+#ifdef TODO
             if (evaluate_constant(attribute->attribute.value) == CONST_FULL)
             {
                 sema_error_at(&attribute->attribute.value->span, "Value must be a constant");
                 errors++;
                 continue;
             }
+#endif
         }
         else
         {
@@ -415,13 +418,15 @@ unsigned check_attributes(Ast *ast_attribute_list)
                 errors++;
                 break;
             case ATTR_ARG_STRING:
-                if (value->type != AST_STRING_EXPR)
+                if (value->type != AST_CONST_EXPR && !value_is_string(value->const_expr.value))
                 {
                     sema_error_at(&value->span, "Expected a string argument");
                     errors++;
                 }
                 break;
+#ifdef TODO
             case ATTR_ARG_UINT:
+                if (value->type != AST_CONST_EXPR)
                 switch (value->type)
                 {
                     case AST_UINT_EXPR:
@@ -456,6 +461,7 @@ unsigned check_attributes(Ast *ast_attribute_list)
                     errors++;
                 }
                 break;
+#endif
             default:
                 FATAL_ERROR("Unexpected value");
         }
@@ -591,12 +597,14 @@ unsigned check_function_decl(Analyser *analyser, Ast *function_decl, bool public
         }
         if (param_decl->param_decl.default_value)
         {
+#ifdef TODO
             if (evaluate_constant(param_decl->param_decl.default_value) != CONST_FULL)
             {
                 sema_error_at(&param_decl->param_decl.default_value->span,
                               "Default value must be a compile time constant");
                 errors++;
             }
+#endif
         }
     }
     return errors;

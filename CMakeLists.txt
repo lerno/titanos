@@ -16,6 +16,7 @@ include_directories(titanos/src/building)
 include_directories(titanos/src/codegen)
 include_directories(titanos/src/readers)
 include_directories(titanos/src/targets)
+include_directories(titanos/src/values)
 
 set(LLVM_LINK_COMPONENTS
         Analysis
@@ -102,7 +103,9 @@ add_executable(titanos
         titanos/src/tests.h
         titanos/src/vector.c
         titanos/src/vector.h
-        titanos/main.c)
+        titanos/src/values/value.c
+        titanos/src/values/value.h
+        titanos/main.c )
 
 
 target_link_libraries(titanos ${llvm_libs})
