@@ -2,6 +2,7 @@
 #include "table.h"
 #include "ast_types.h"
 #include "diagnostics.h"
+#include "error.h"
 
 void scope_init(Scope *scope, const Token *name, Table *modules)
 {
@@ -134,4 +135,150 @@ Ast *scope_find_symbol(Scope *scope, Token *symbol, bool is_type, bool used_publ
     return ast;
 }
 
+bool scope_had_errors(Scope *scope)
+{
+    unsigned errors_at_scope_start = scope->cur_scope ? scope->cur_scope->errors : 0;
+    return errors_at_scope_start < errors();
+}
 
+void scope_add_scoped_symbol(Scope *scope, Ast *var_decl)
+{
+    assert(scope->cur_scope);
+    assert(var_decl->type == AST_DECL);
+
+    vector_add(scope->cur_scope->local_decls, var_decl);
+    table_set_token(&scope->symbol_cache, &var_decl->decl.name, var_decl);
+}
+
+Ast *scope_check_scoped_symbol(Scope *scope, Token *token)
+{
+    Ast *old = table_get_token(&scope->symbol_cache, token);
+
+    if (old) return old;
+
+    // Check in local modules
+    for (unsigned i = 0; i < scope->locals->size; i++)
+    {
+        Module *module = scope->locals->entries[i];
+        old = module_find_symbol(module, token);
+        if (old) return old;
+    }
+
+    return NULL;
+}
+
+Ast *scope_defer_top(Scope *scope)
+{
+    for (unsigned i = scope->scope_index; i > 0; i--)
+    {
+        if (scope->scopes[i - 1].last_defer)
+        {
+            return scope->scopes[i - 1].last_defer;
+        }
+    }
+    return NULL;
+}
+
+static inline bool should_skip_exit_defer_stmt(Ast *stmt)
+{
+    if (!stmt) return false;
+    switch (stmt->type)
+    {
+        case AST_RETURN_STMT:
+        case AST_BREAK_STMT:
+        case AST_CONTINUE_STMT:
+        case AST_GOTO_STMT:
+            return true;
+        case AST_COMPOUND_STMT:
+            return should_skip_exit_defer_stmt(ast_compound_stmt_last(stmt));
+        default:
+            return false;
+    }
+}
+
+void scope_enter(Scope *scope, unsigned flags)
+{
+    if (scope->scope_index >= MAX_SCOPE_DEPTH) FATAL_ERROR("Out of scopes");
+    DynamicScope *parent = scope->cur_scope;
+    scope->cur_scope = &scope->scopes[scope->scope_index++];
+
+    scope->cur_scope->errors = errors();
+    if (!scope->cur_scope->local_decls)
+    {
+        scope->cur_scope->local_decls = new_vector(64);
+    }
+    else
+    {
+        scope->cur_scope->local_decls->size = 0;
+    }
+    scope->cur_scope->flags = flags;
+    scope->cur_scope->flags_created = flags;
+    scope->cur_scope->last_defer = NULL;
+
+    if (parent)
+    {
+        // Keep the break/continue/defer flags.
+        scope->cur_scope->flags |= (parent->flags & (SCOPE_BREAK | SCOPE_CONTINUE | SCOPE_DEFER));
+    }
+    if (flags & SCOPE_DEFER)
+    {
+        // Continue is not valid when entering Defer.
+        scope->cur_scope->flags &= ~SCOPE_CONTINUE;
+    }
+}
+
+void scope_exit(Scope *scope, Ast *stmt)
+{
+    DynamicScope *current = scope->cur_scope;
+    bool had_errors = scope_had_errors(scope);
+    for (unsigned i = 0; i < current->local_decls->size; i++)
+    {
+        Ast *decl = current->local_decls->entries[i];
+        assert(decl->type == AST_DECL);
+        if (!decl->decl.is_used && !had_errors)
+        {
+            if (decl->decl.is_parameter)
+            {
+                sema_warn_at(DIAG_UNUSED_PARAMETER, &decl->span, "Unused parameter");
+            }
+            else
+            {
+                sema_warn_at(DIAG_UNUSED_VARIABLE, &decl->span, "Unused variable");
+            }
+        }
+        // IMPROVE this assumes shadowing is disallowed.
+        table_delete_token(&scope->symbol_cache, &decl->decl.name);
+    }
+
+    Ast *defer = scope_defer_top(scope);
+
+    scope->scope_index--;
+    scope->cur_scope = scope->scope_index ? &scope->scopes[scope->scope_index] : NULL;
+
+    Ast *defer_end = scope_defer_top(scope);
+
+    if (defer == defer_end) return;
+
+    DeferList list = { .defer_start = defer, .defer_end = defer_end };
+    switch (stmt->type)
+    {
+        case AST_COMPOUND_STMT:
+            // Ignore defer if the last statement was an exit.
+            if (should_skip_exit_defer_stmt(ast_compound_stmt_last(stmt))) return;
+            stmt->compound_stmt.defer_list = list;
+            return;
+        case AST_CASE_STMT:
+            stmt->case_stmt.defer_list = list;
+            return;
+        case AST_DEFAULT_STMT:
+            stmt->default_stmt.defer_list = list;
+            return;
+        default:
+            break;
+    }
+    Ast *old_stmt = new_ast(stmt->type);
+    *old_stmt = *stmt;
+    stmt->type = AST_DEFER_RELASE;
+    stmt->defer_release_stmt.inner = old_stmt;
+    stmt->defer_release_stmt.list = list;
+}

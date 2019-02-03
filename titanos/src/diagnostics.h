@@ -51,8 +51,10 @@ void diagnostics_use_color(bool use_color);
 void error_at(struct _Token *token, const char *message, ...);
 void verror_at(struct _Token *token, const char *message, va_list args);
 void sema_error_at(struct _Token *token, const char *message, ...);
-void vprint_error(struct _Token *token, const char *message, va_list args);
+void prev_at(struct _Token *token, const char *message, ...);
+void sema_warn_at(DiagnosticsType type, struct _Token *token, const char *message, ...);
 bool in_panic_mode(void);
+unsigned errors();
 void reset_panic_mode(void);
 bool error_found(void);
 

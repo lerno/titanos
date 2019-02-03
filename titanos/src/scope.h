@@ -33,6 +33,7 @@ typedef struct _DynamicScope
     unsigned flags_created;
     Vector *local_decls;
     Ast *last_defer;
+    unsigned errors;
 } DynamicScope;
 
 typedef struct _Import Import;
@@ -54,7 +55,7 @@ typedef struct _Scope
 
 void scope_add_import_declaration(Scope *scope, Ast *import);
 void scope_init(Scope *scope, const Token *name, Table *modules);
-bool scope_check_scoped_symbol(Scope *scope, Ast *var_decl);
+Ast *scope_check_scoped_symbol(Scope *scope, Token *name);
 void scope_add_scoped_symbol(Scope *scope, Ast *var_decl);
 Module *scope_find_used_module(Scope *scope, Token *name, bool used_public);
 Ast *scope_find_symbol(Scope *scope, Token *token, bool is_type, bool used_public);
@@ -62,13 +63,14 @@ Ast *scope_find_symbol_in_module(Scope *scope, Token *token, Module *module);
 void scope_check_access(Scope *scope, Ast *decl, Token *loc);
 void push_defer(Scope *scope, Ast *defer_stmt);
 void scope_enter(Scope *scope, unsigned flags);
-void scope_exit(Scope *scope /* context * stmt ref*/);
-Ast *defer_top(Scope *scope);
+void scope_exit(Scope *scope, Ast *stmt);
+Ast *scope_defer_top(Scope *scope);
 Ast **exit_scope_defers(unsigned flags);
 static inline void scope_set_has_decls(Scope *scope)
 {
     scope->cur_scope->flags |= SCOPE_HAS_DECLS;
 }
+bool scope_had_errors(Scope *scope);
 void scope_set_has_breaks(Scope *breaks);
 bool scope_has_error(Scope *scope);
 static inline bool scope_allow_break(Scope *scope)

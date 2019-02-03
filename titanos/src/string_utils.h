@@ -6,52 +6,91 @@
 #include "stdlib.h"
 
 // Assume well-formed hex!
-static inline uint64_t parse_uint64_hex(const char *string, int len)
+static inline Value parse_hex(const char *string, int len)
 {
-	uint64_t value = 0;
+	Value value = { .type = TYPE_INT };
+	BigInt *b = &value.big_int;
+	bigint_init_signed(b, 0);
 	const char *end = string + len;
+	BigInt temp = { .digit_count = 0 };
+	BigInt add = { .digit_count = 0 };
 	while (string < end)
 	{
 		char c = *(string++);
 		if (c == '_') continue;
+		bigint_shl_int(&temp, b, 4);
 		if (c < 'A')
 		{
-			value = (value << 4) + (c - '0');
+			bigint_init_signed(&add, (c - '0'));
 		}
 		else if (c < 'a')
 		{
-			value = (value << 4) + (c - 'A' + 10);
+			bigint_init_signed(&add, (c - 'A' + 10));
 		}
 		else
 		{
-			value = (value << 4) + (c - 'a' + 10);
+			bigint_init_signed(&add, (c - 'a' + 10));
 		}
+		bigint_add(b, &temp, &add);
 	}
 	return value;
 }
 
-static inline uint64_t parse_uint64_oct(const char *string, int len)
+static inline Value parse_dec(const char *string, int len)
 {
-	uint64_t value = 0;
+	Value value = { .type = TYPE_INT };
+	BigInt *b = &value.big_int;
+	bigint_init_signed(b, 0);
 	const char *end = string + len;
+	BigInt temp = { .digit_count = 0 };
+	BigInt mult;
+	bigint_init_signed(&mult, 10);
+	BigInt add = { .digit_count = 0 };
 	while (string < end)
 	{
 		char c = *(string++);
 		if (c == '_') continue;
-		value = (value << 3) + (c - '0');
+		bigint_mul(&temp, b, &mult);
+		bigint_init_signed(&add, (c - '0'));
+		bigint_add(b, &temp, &add);
 	}
 	return value;
 }
 
-static inline uint64_t parse_uint64_bin(const char *string, int len)
+static inline Value parse_oct(const char *string, int len)
 {
-	uint64_t value = 0;
+	Value value = { .type = TYPE_INT };
+	BigInt *b = &value.big_int;
+	bigint_init_signed(b, 0);
 	const char *end = string + len;
+	BigInt temp = { .digit_count = 0 };
+	BigInt add = { .digit_count = 0 };
 	while (string < end)
 	{
 		char c = *(string++);
 		if (c == '_') continue;
-		value = (value << 1) + (c - '0');
+		bigint_shl_int(&temp, b, 3);
+		bigint_init_signed(&add, (c - '0'));
+		bigint_add(b, &temp, &add);
+	}
+	return value;
+}
+
+static inline Value parse_bin(const char *string, int len)
+{
+	Value value = { .type = TYPE_INT };
+	BigInt *b = &value.big_int;
+	bigint_init_signed(b, 0);
+	const char *end = string + len;
+	BigInt temp = { .digit_count = 0 };
+	BigInt add = { .digit_count = 0 };
+	while (string < end)
+	{
+		char c = *(string++);
+		if (c == '_') continue;
+		bigint_shl_int(&temp, b, 1);
+		bigint_init_signed(&add, (c - '0'));
+		bigint_add(b, &temp, &add);
 	}
 	return value;
 }
@@ -77,22 +116,22 @@ static inline char *path_to_underscore_prefix(char *namespace_name)
 }
 
 // Parse normal integers, parse 0xBEEF, parse 0o1337, parse 0b1010101 – positive numbers only
-static inline Value parse_uint64(const char *string, int len)
+static inline Value parse_int(const char *string, int len)
 {
 	if (len > 2)
 	{
 		switch (string[1])
 		{
 			case 'x':
-				return value_new_int(string + 2, (uint16_t) (len - 2), 16);
+				return parse_hex(string + 2, (uint16_t) (len - 2));
 			case 'o':
-				return value_new_int(string + 2, (uint16_t) (len - 2), 8);
+				return parse_oct(string + 2, (uint16_t) (len - 2));
 			case 'b':
-				return value_new_int(string + 2, (uint16_t) (len - 2), 2);
+				return parse_bin(string + 2, (uint16_t) (len - 2));
 			default:
 				break;
 		}
 	}
-	return value_new_int(string, (uint16_t) len, 10);
+	return parse_dec(string, (uint16_t) len);
 }
 

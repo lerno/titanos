@@ -568,7 +568,7 @@ static bool parse_file(Component *component, Module *module, const char *filenam
 static Module *c2_module;
 
 
-static void register_c2_constant(const char *name, const char *type, Value *value)
+static void register_c2_constant(const char *name, const char *type, Value value)
 {
     Token token = token_wrap(name);
     Token type_token = token_wrap(type);
@@ -591,7 +591,7 @@ static void register_c2_constant(const char *name, const char *type, Value *valu
 }
 static void register_c2_unsigned_constant(const char *type, const char *name, uint64_t size)
 {
-    register_c2_constant(name, type, value_new_int_with_uint(size));
+    register_c2_constant(name, type, value_new_int_with_int(size));
 }
 static void register_c2_signed_constant(const char *type, const char *name, int64_t size)
 {

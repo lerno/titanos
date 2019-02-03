@@ -15,6 +15,7 @@ void init_parser(Parser *parser, const char *filename, bool is_interface)
 	parser->current_module.length = 0;
 	parser->imports = new_vector(16);
 	parser->types = new_vector(32);
+	parser->enum_values = new_vector(32);
 	parser->variables = new_vector(8);
 	parser->functions = new_vector(8);
 	parser->filename = filename;

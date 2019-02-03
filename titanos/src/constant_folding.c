@@ -52,73 +52,32 @@ static inline bool try_conversion(Value *left, Value *right, ValueType type, con
 static inline bool implicit_conversion(Value *left, Value *right)
 {
     if (try_conversion(left, right, TYPE_FLOAT, "float")) return true;
-    if (try_conversion(left, right, TYPE_INT, "int")) return true;
-    if (try_conversion(left, right, TYPE_UINT, "int")) return true;
-    if (!value_convert_to_type(left, TYPE_INT, "int")) return false;
-    return value_convert_to_type(right, TYPE_INT, "int");
+    return value_convert_to_type(left, TYPE_INT, "int") && value_convert_to_type(right, TYPE_INT, "int");
 }
 
-static inline AstConstState evaluate_constant_plus(Ast *ast)
+typedef Value (*BinOp)(Value, Value);
+
+static inline AstConstState evaluate_constant_operation(Ast *ast, BinOp operation, const char *error)
 {
     Value left = ast->binary_expr.left->const_expr.value;
     Value right = ast->binary_expr.right->const_expr.value;
 
     if (!implicit_conversion(&left, &right)) return ast->const_state = CONST_NONE;
 
-    Value value = value_mult(left, right);
+    Value value = operation(left, right);
     if (value.type == TYPE_ERROR)
     {
-        sema_error_at(&ast->span, "Can't multiply '%s' and '%s'",
+        sema_error_at(&ast->span, error,
+                operation,
                 value_type_name(ast->binary_expr.left->const_expr.value),
                 value_type_name(ast->binary_expr.right->const_expr.value));
         return ast->const_state = CONST_NONE;
     }
-
     ast->const_expr.value = value;
     ast->type = AST_CONST_EXPR;
     return ast->const_state = CONST_FULL;
 }
 
-static inline AstConstState evaluate_constant_minus(Ast *ast)
-{
-    Value left = ast->binary_expr.left->const_expr.value;
-    Value right = ast->binary_expr.right->const_expr.value;
-
-    if (!implicit_conversion(&left, &right)) return ast->const_state = CONST_NONE;
-
-    Value value = value_sub(left, right);
-    if (value.type == TYPE_ERROR)
-    {
-        sema_error_at(&ast->span, "Can't subtract '%s' from '%s'",
-                      value_type_name(ast->binary_expr.left->const_expr.value),
-                      value_type_name(ast->binary_expr.right->const_expr.value));
-        return ast->const_state = CONST_NONE;
-    }
-
-    ast->const_expr.value = value;
-    ast->type = AST_CONST_EXPR;
-    return ast->const_state = CONST_FULL;
-}
-
-static inline AstConstState evaluate_constant_mult(Ast *ast)
-{
-    Value *left = ast->binary_expr.left->const_expr.value;
-    Value *right = ast->binary_expr.right->const_expr.value;
-
-    if (!implicit_conversion(&left, &right)) return ast->const_state = CONST_NONE;
-
-    Value *result = value_mult(left, right);
-    if (result)
-    {
-        ast->const_expr.value = result;
-        ast->type = AST_CONST_EXPR;
-        return ast->const_state = CONST_FULL;
-    }
-    else
-    {
-        return ast->const_state = CONST_NONE;
-    }
-}
 
 static inline AstConstState evaluate_constant_binary_expr(Ast *ast)
 {
@@ -133,11 +92,15 @@ static inline AstConstState evaluate_constant_binary_expr(Ast *ast)
     switch (ast->binary_expr.operator)
     {
         case TOKEN_PLUS:
-            return evaluate_constant_plus(ast);
+            return evaluate_constant_operation(ast, &value_add, "Cant't add '%s' to '%s'");
         case TOKEN_MINUS:
-            return evaluate_constant_minus(ast);
+            return evaluate_constant_operation(ast, &value_sub, "Can't subtract '%s' from '%s'");
         case TOKEN_STAR:
-            return evaluate_constant_mult(ast);
+            return evaluate_constant_operation(ast, &value_mult, "Can't multiply '%s' by '%s'");;
+        case TOKEN_DIV:
+            return evaluate_constant_operation(ast, &value_div, "Can't divide '%s' by '%s'");
+        case TOKEN_MOD:
+            return evaluate_constant_operation(ast, &value_mod, "Can't get reminder of '%s' divided by '%s'");
         default:
             FATAL_ERROR("TODO");
 
@@ -149,10 +112,12 @@ static inline AstConstState evaluate_constant_ternary_expr(Ast *ast)
     AstConstState decider = evaluate_constant(ast->ternary_expr.expr);
 
     if (decider != CONST_FULL) return decider;
-    if (!value_to_bool(ast->ternary_expr.expr->const_expr.value))
+    Value expr = value_to_bool(ast->ternary_expr.expr->const_expr.value);
+    if (expr.type == TYPE_ERROR)
     {
         return ast->const_state = CONST_NONE;
     }
+    ast->ternary_expr.expr->const_expr.value = expr;
     AstConstState const_true = evaluate_constant(ast->ternary_expr.true_expr);
     AstConstState const_false = evaluate_constant(ast->ternary_expr.true_expr);
 
@@ -162,7 +127,9 @@ static inline AstConstState evaluate_constant_ternary_expr(Ast *ast)
         return ast->const_state = CONST_NONE;
     }
 
-    if (value_bool_value(ast->ternary_expr.expr->const_expr.value))
+    assert(ast->ternary_expr.expr->const_expr.value.type == TYPE_BOOL);
+
+    if (ast->ternary_expr.expr->const_expr.value.b)
     {
         replace_ast(ast, ast->ternary_expr.true_expr);
     }
@@ -180,12 +147,12 @@ static inline AstConstState evaluate_constant_unary_expr(Ast *ast)
         return ast->const_state = CONST_NONE;
     }
     Ast *value = ast->unary_expr.expr;
-    Value *res = NULL;
+    Value res = { .type = TYPE_ERROR };
     switch (ast->unary_expr.operator)
     {
         case TOKEN_NOT:
             res = value_to_bool(value->const_expr.value);
-            if (!res)
+            if (res.type == TYPE_ERROR)
             {
                 error_at(&value->span, "%s cannot be implictly converted to boolean", value_type_name(value->const_expr.value));
                 break;
@@ -194,14 +161,14 @@ static inline AstConstState evaluate_constant_unary_expr(Ast *ast)
             break;
         case TOKEN_BIT_NOT:
             res = value_not(value->const_expr.value);
-            if (!res)
+            if (res.type == TYPE_ERROR)
             {
                 error_at(&value->span, "%s cannot be bit negated", value_type_name(value->const_expr.value));
             }
             break;
         case TOKEN_MINUS:
             res = value_negate(value->const_expr.value);
-            if (!res)
+            if (res.type == TYPE_ERROR)
             {
                 error_at(&value->span, "%s cannot be negated", value_type_name(value->const_expr.value));
             }
@@ -213,7 +180,7 @@ static inline AstConstState evaluate_constant_unary_expr(Ast *ast)
         default:
             break;
     }
-    if (!res)
+    if (res.type == TYPE_ERROR)
     {
         return ast->const_state = CONST_NONE;
     }

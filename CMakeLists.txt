@@ -10,6 +10,7 @@ include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
 set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_EXTENSIONS true)
 
 include_directories(titanos/src)
 include_directories(titanos/src/building)
@@ -105,7 +106,7 @@ add_executable(titanos
         titanos/src/vector.h
         titanos/src/values/value.c
         titanos/src/values/value.h
-        titanos/main.c )
+        titanos/main.c titanos/src/values/bigint.c titanos/src/values/bigint.h titanos/src/analyser.c titanos/src/analyser.h titanos/src/statement_analysis.c titanos/src/statement_analysis.h)
 
 
 target_link_libraries(titanos ${llvm_libs})

@@ -14,6 +14,7 @@ void vector_init(Vector *vector, unsigned size)
     vector->entries = malloc_arena(size * sizeof(void *));
 }
 
+
 Vector *new_vector(unsigned size)
 {
     Vector *vector = malloc_arena(sizeof(Vector));
@@ -35,6 +36,15 @@ void vector_add(Vector *vector, void *element)
     }
 
     vector->entries[vector->size++] = element;
+}
+
+void vector_copy(Vector *dst, Vector *src)
+{
+    dst->size = 0;
+    for (unsigned i = 0; i < src->size; i++)
+    {
+        vector_add(dst, src[i].entries[i]);
+    }
 }
 
 void *vector_remove(Vector *vector)

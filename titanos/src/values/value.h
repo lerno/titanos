@@ -3,11 +3,11 @@
 // Created by Christoffer Lernö on 2019-01-25.
 //
 #include "common.h"
+#include "bigint.h"
 
 typedef enum _ValueType
 {
     TYPE_FLOAT,
-    TYPE_UINT,
     TYPE_INT,
     TYPE_BOOL,
     TYPE_NIL,
@@ -15,23 +15,36 @@ typedef enum _ValueType
     TYPE_ERROR,
 } ValueType;
 
+typedef struct _BigInt BigInt;
+
 typedef struct _Value
 {
-    void *val;
     ValueType type;
+    union
+    {
+        BigInt big_int;
+        long double f;
+        bool b;
+        struct {
+            const char *str;
+            uint32_t str_len;
+        };
+    };
 } Value;
 
-Value value_new_int(const char *string, uint32_t len, uint8_t radix);
-Value value_new_int_with_uint(uint64_t val);
+bool value_is_number(const Value *value);
+Value value_new_int_with_bigint(BigInt big_int);
 Value value_new_int_with_int(int64_t val);
-Value value_new_float(const char *string, uint32_t len);
+Value value_new_float(long double f);
 Value value_new_string(const char *string, uint32_t len);
 Value value_new_bool(bool value);
 Value value_to_bool(Value value);
 Value value_negate(Value value);
 Value value_mult(Value lhs, Value rhs);
 Value value_sub(Value lhs, Value rhs);
-bool value_bool_value(Value value);
+Value value_add(Value lhs, Value rhs);
+Value value_mod(Value lhs, Value rhs);
+Value value_div(Value lhs, Value rhs);
 Value value_not(Value value);
 Value value_nil();
 const char *value_type_name(Value value);

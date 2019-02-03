@@ -7,72 +7,30 @@
 #include <error.h>
 #include "value.h"
 
-#define ERROR_VALUE (Value) { NULL, TYPE_ERROR }
+#define ERROR_VALUE (Value) { .type = TYPE_ERROR }
 
-LLVMTypeRef constFP()
+
+Value value_new_int_with_bigint(BigInt big_int)
 {
-    return LLVMFP128Type();
+    return (Value) { .big_int = big_int, .type = TYPE_INT };
 }
 
-LLVMTypeRef constInt()
+Value value_new_float(long double f)
 {
-    return LLVMInt128Type();
+    return (Value) { .f = f, .type = TYPE_INT };
 }
-
-static LLVMValueRef zero_fp()
-{
-    static LLVMValueRef zero = NULL;
-    if (!zero)
-    {
-        zero = LLVMConstReal(constFP(), 0.0);
-    }
-    return zero;
-}
-
-static LLVMValueRef zero_uint()
-{
-    static LLVMValueRef zero = NULL;
-    if (!zero)
-    {
-        zero = LLVMConstInt(constInt(), 0, false);
-    }
-    return zero;
-}
-
-static LLVMValueRef zero_int()
-{
-    static LLVMValueRef zero = NULL;
-    if (!zero)
-    {
-        zero = LLVMConstInt(constInt(), 0, true);
-    }
-    return zero;
-}
-
-Value value_new_int(const char *string, uint32_t len, uint8_t radix)
-{
-    return (Value) { LLVMConstIntOfStringAndSize(LLVMIntType(128), string, len, radix), TYPE_INT };
-}
-
-Value value_new_int_with_uint(uint64_t val)
-{
-    return (Value) { LLVMConstInt(LLVMInt64Type(), val, false), TYPE_UINT };
-}
-
 Value value_new_int_with_int(int64_t val)
 {
-    return (Value) { LLVMConstInt(LLVMInt64Type(), (uint64_t)val, true), TYPE_INT };
+    Value value;
+    bigint_init_signed(&value.big_int, val);
+    value.type = TYPE_INT;
+    return value;
 }
 
-Value value_new_float(const char *string, uint32_t len)
-{
-    if (len == 1 && string[0] == '0') return (Value) { zero_fp(), TYPE_FLOAT };
-    return (Value) { LLVMConstRealOfStringAndSize(LLVMIntType(128), string, len), TYPE_FLOAT };
-}
 
 Value value_nil()
 {
-    return (Value) { NULL, TYPE_NIL };
+    return (Value) { .b = false, .type = TYPE_NIL };
 }
 
 
@@ -81,12 +39,11 @@ Value value_not(Value value)
     switch (value.type)
     {
         case TYPE_FLOAT:
-            return (Value) { LLVMConstFCmp(LLVMRealOEQ, value.val, zero_fp()), TYPE_BOOL };
-        case TYPE_UINT:
+            return (Value) { .b = value.f == 0.0, .type = TYPE_BOOL };
         case TYPE_INT:
-            return (Value) { LLVMConstICmp(LLVMIntEQ, value.val, zero_int()), TYPE_BOOL };
+            return (Value) { .b = bigint_cmp_zero(&value.big_int) == INT_EQ, .type = TYPE_BOOL };
         case TYPE_BOOL:
-            return (Value) { LLVMConstNot(value.val), TYPE_BOOL };
+            return (Value) { .b = !value.b, .type = TYPE_BOOL };
         case TYPE_NIL:
             return value_new_bool(true);
         case TYPE_STRING:
@@ -96,63 +53,47 @@ Value value_not(Value value)
     return ERROR_VALUE;
 }
 
-bool value_bool_value(Value value)
-{
-    assert(value.type == TYPE_BOOL);
-    return LLVMConstIntGetZExtValue(value.val) != 0;
+
+#define BIN_OP(_x, _intop, _floatop) \
+Value value_## _x(Value lhs, Value rhs) { \
+    assert(lhs.type == rhs.type); \
+    switch (lhs.type)\
+    { \
+        case TYPE_FLOAT: \
+            return (Value) { .f = lhs.f _floatop rhs.f, .type = TYPE_FLOAT }; \
+        case TYPE_INT: {\
+            Value value = value_new_int_with_int(0);\
+            _intop(&value.big_int, &lhs.big_int, &rhs.big_int);\
+            return value;\
+        }\
+        case TYPE_BOOL:\
+        case TYPE_STRING:\
+        case TYPE_NIL:\
+        case TYPE_ERROR:\
+            return ERROR_VALUE;\
+    }\
 }
 
-
-Value value_mult(Value lhs, Value rhs)
-{
-    assert(lhs.type == rhs.type);
-    switch (lhs.type)
-    {
-        case TYPE_FLOAT:
-            return (Value) { LLVMConstFMul(lhs.val, rhs.val), TYPE_FLOAT };
-        case TYPE_INT:
-        case TYPE_UINT:
-            return (Value) { LLVMConstMul(lhs.val, rhs.val), lhs.type };
-        case TYPE_BOOL:
-            return (Value) { LLVMConstMul(LLVMConstZExt(lhs.val, constInt()), LLVMConstZExt(lhs.val, constInt())), TYPE_UINT };
-        case TYPE_STRING:
-        case TYPE_NIL:
-        case TYPE_ERROR:
-            return ERROR_VALUE;
-    }
-}
-
-Value value_sub(Value lhs, Value rhs)
-{
-    assert(lhs.type == rhs.type);
-    switch (lhs.type)
-    {
-        case TYPE_FLOAT:
-            return (Value) { LLVMConstFSub(lhs.val, rhs.val), TYPE_FLOAT };
-        case TYPE_INT:
-        case TYPE_UINT:
-            return (Value) { LLVMConstSub(lhs.val, rhs.val), lhs.type };
-        case TYPE_BOOL:
-            return (Value) { LLVMConstSub(LLVMConstZExt(lhs.val, constInt()), LLVMConstZExt(lhs.val, constInt())), TYPE_UINT };
-        case TYPE_STRING:
-        case TYPE_NIL:
-        case TYPE_ERROR:
-            return ERROR_VALUE;
-    }
-}
-
+BIN_OP(sub, bigint_sub, -)
+BIN_OP(add, bigint_add, +)
+BIN_OP(mult, bigint_mul, *)
+BIN_OP(div, bigint_div_floor, /)
+BIN_OP(mod, bigint_mod, /)
 
 Value value_negate(Value value)
 {
     switch (value.type)
     {
-        case TYPE_UINT:
         case TYPE_INT:
-            return (Value) { LLVMConstNeg(value.val), TYPE_INT };
+        {
+            Value result = value_new_int_with_int(0);
+            bigint_negate(&result.big_int, &value.big_int);
+            return result;
+        }
         case TYPE_BOOL:
-            return (Value) { LLVMConstNeg(LLVMConstSExt(value.val, LLVMInt128Type())), TYPE_INT };
+            return value_new_int_with_int(value.b ? -1 : 0);
         case TYPE_FLOAT:
-            return (Value) { LLVMConstFNeg(value.val), TYPE_FLOAT };
+            return value_new_float(-value.f);
         case TYPE_NIL:
         case TYPE_STRING:
         case TYPE_ERROR:
@@ -161,25 +102,14 @@ Value value_negate(Value value)
     return ERROR_VALUE;
 }
 
-Value value_new_bool(bool value)
+inline Value value_new_bool(bool value)
 {
-    static LLVMTypeRef t = NULL;
-    static LLVMTypeRef f = NULL;
-    if (!value)
-    {
-        if (!f) f = LLVMConstInt(LLVMInt1Type(), 0, false);
-        return (Value) { f, TYPE_BOOL };
-    }
-    else
-    {
-        if (!t) t = LLVMConstInt(LLVMInt1Type(), 1, false);
-        return (Value) { t, TYPE_BOOL };
-    }
+    return (Value) { .b = value, .type = TYPE_BOOL };
 }
 
 Value value_new_string(const char *string, uint32_t len)
 {
-    return (Value) { LLVMConstString(string, len, false), TYPE_STRING };
+    return (Value) { .str = string, .str_len = len, .type = TYPE_STRING };
 }
 
 Value value_to_bool(Value value)
@@ -187,10 +117,9 @@ Value value_to_bool(Value value)
     switch (value.type)
     {
         case TYPE_FLOAT:
-            return (Value) { LLVMConstFCmp(LLVMRealONE, value.val, zero_fp()), TYPE_BOOL };
-        case TYPE_UINT:
+            return value_new_bool(value.f != 0.0);
         case TYPE_INT:
-            return (Value) { LLVMConstICmp(LLVMIntNE, value.val, zero_int()), TYPE_BOOL };
+            return value_new_bool(bigint_cmp_zero(&value.big_int) != INT_EQ);
         case TYPE_BOOL:
             return value;
         case TYPE_NIL:
@@ -214,7 +143,6 @@ const char *value_type_name(Value value)
             return "float";
         case TYPE_STRING:
             return "string";
-        case TYPE_UINT:
         case TYPE_INT:
             return "int";
         case TYPE_ERROR:
@@ -224,11 +152,36 @@ const char *value_type_name(Value value)
 }
 
 
+
+bool value_is_number(const Value *value)
+{
+    return value->type == TYPE_INT || value->type == TYPE_FLOAT;
+}
+
+
 void value_print(Value value)
 {
-    char *c = LLVMPrintValueToString(value.val);
-    printf("%s", c);
-    LLVMDisposeMessage(c);
+    switch (value.type)
+    {
+        case TYPE_BOOL:
+            printf(value.b ? "true" : "false");
+            break;
+        case TYPE_STRING:
+            printf("%.*s", value.str_len, value.str);
+            break;
+        case TYPE_INT:
+            bigint_print(&value.big_int, 10);
+            break;
+        case TYPE_ERROR:
+            printf("ERROR");
+            break;
+        case TYPE_FLOAT:
+            printf("%Lf", value.f);
+            break;
+        case TYPE_NIL:
+            printf("nil");
+            break;
+    }
 }
 
 
@@ -243,31 +196,20 @@ bool value_convert_to_type(Value *value, ValueType type, const char *type_name)
             FATAL_ERROR("Conversion should never happen");
         case TYPE_INT:
             assert(type == TYPE_FLOAT);
-            *value = (Value) { LLVMConstSIToFP(value->val, constFP()), TYPE_FLOAT };
-            return true;
-        case TYPE_UINT:
-            if (type == TYPE_UINT)
-            {
-                *value = (Value) { value->val, TYPE_INT };
-                return true;
-            }
-            assert(type == TYPE_FLOAT);
-            *value = (Value) { LLVMConstUIToFP(value->val, constFP()), TYPE_FLOAT };
+            value->f = bigint_as_float(&value->big_int);
+            value->type = TYPE_FLOAT;
             return true;
         case TYPE_BOOL:
             if (type == TYPE_FLOAT)
             {
-                *value = (Value) { LLVMConstUIToFP(value->val, constFP()), TYPE_FLOAT };
+                value->f = value->b ? 1.0 : 0.0;
+                value->type = TYPE_FLOAT;
                 return true;
             }
             if (type == TYPE_INT)
             {
-                *value = (Value) { LLVMConstIntCast(value->val, constInt(), true), TYPE_INT };
-                return true;
-            }
-            if (type == TYPE_UINT)
-            {
-                *value = (Value) { LLVMConstIntCast(value->val, constInt(), false), TYPE_UINT };
+                bigint_init_signed(&value->big_int, value->b ? 1 : 0);
+                value->type = TYPE_INT;
                 return true;
             }
             FATAL_ERROR("Should never happen");
@@ -275,23 +217,20 @@ bool value_convert_to_type(Value *value, ValueType type, const char *type_name)
         case TYPE_NIL:
             if (type == TYPE_FLOAT)
             {
-                *value = (Value) { zero_fp(), TYPE_FLOAT };
+                value->f = 0.0;
+                value->type = TYPE_FLOAT;
                 return true;
             }
             if (type == TYPE_INT)
             {
-                *value = (Value) { zero_int(), TYPE_INT };
-                return true;
-            }
-            if (type == TYPE_UINT)
-            {
-                *value = (Value) { zero_uint(), TYPE_UINT };
+                bigint_init_signed(&value->big_int, 0);
+                value->type = TYPE_INT;
                 return true;
             }
             if (type == TYPE_BOOL)
             {
-                *value = value_new_bool(false);
-                return true;
+                value->b = false;
+                value->type = TYPE_BOOL;
             }
             FATAL_ERROR("Should never happen");
             return false;

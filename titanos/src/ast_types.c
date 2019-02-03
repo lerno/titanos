@@ -29,6 +29,13 @@ Ast *new_ast_with_span(AstType type, Token *span)
     return ast;
 }
 
+Ast *new_decl(Ast *type)
+{
+    Ast *decl = new_ast_with_span(AST_DECL, &type->span);
+    decl->decl = (AstDecl) { .type = type };
+    return decl;
+}
+
 Ast *end_ast(Ast *ast, Token *end)
 {
     token_expand(&ast->span, end);
@@ -111,19 +118,13 @@ void print_ast(Ast *ast, int current_indent)
             printf("\n");
             print_sub_ast_list("Params", current_indent, ast->param_list.param_list);
             return;
-        case AST_PARAM_DECL:
-            printf("PARAM_DECL ");
-            print_token(&ast->param_decl.name);
-            printf("\n");
-            print_sub_ast("Type", current_indent, ast->param_decl.type);
-            if (ast->param_decl.default_value)
-            {
-                print_sub_ast("Default", current_indent, ast->param_decl.default_value);
-            }
-            return;
         case AST_COMPOUND_STMT:
             printf("COMPOUND_STMT\n");
             print_sub_ast_list("Lines", current_indent, ast->compound_stmt.stmts);
+            return;
+        case AST_ASM_STMT:
+            printf("ASM_STMT\n");
+            printf("TODO");
             return;
         case AST_IF_STMT:
             printf("IF_STMT\n");
@@ -181,17 +182,23 @@ void print_ast(Ast *ast, int current_indent)
             print_sub_ast("Incr", current_indent, ast->for_stmt.incr);
             print_sub_ast("Body", current_indent, ast->for_stmt.body);
             return;
-        case AST_DECLARATION:
+        case AST_DECL:
             printf("DECLARATION ");
-            print_token(&ast->declaration.identifier);
+            print_token(&ast->decl.name);
+            if (ast->decl.is_parameter) printf(" parameter");
+            if (ast->decl.is_used) printf(" used");
+            if (ast->decl.is_public) printf(" public");
+            if (ast->decl.is_exported) printf(" exported");
             printf("\n");
-            print_sub_ast("Type", current_indent, ast->declaration.declType);
-            print_sub_ast("Init", current_indent, ast->declaration.initExpr);
+            print_sub_ast("Type", current_indent, ast->decl.type);
+            print_sub_ast("Init", current_indent, ast->decl.init_expr);
             return;
         case AST_LABEL:
             printf("LABEL [");
             print_token(&ast->label_stmt.label_name);
-            printf("]\n");
+            printf("]");
+            if (ast->label_stmt.is_used) printf(" used");
+            printf("\n");
             return;
         case AST_CONST_EXPR:
             printf("CONST_EXPR ");
@@ -281,7 +288,12 @@ void print_ast(Ast *ast, int current_indent)
                 case TYPE_EXPR_ARRAY:
                     printf(" ARRAY\n");
                     print_sub_ast("Base", current_indent, ast->type_expr.array_type_expr.type);
-                    if (ast->type_expr.array_type_expr.size)
+                    if (ast->type_expr.flags.resolved)
+                    {
+                        indent(current_indent);
+                        printf("Size: %llu\n", ast->type_expr.array_type_expr.fix_size);
+                    }
+                    else if (ast->type_expr.array_type_expr.size)
                     {
                         print_sub_ast("Size", current_indent, ast->type_expr.array_type_expr.size);
                     }
@@ -334,6 +346,11 @@ void print_ast(Ast *ast, int current_indent)
                     print_sub_ast("Type", current_indent, ast->definition.def_enum.type);
                     print_sub_ast_list("Entries", current_indent, ast->definition.def_enum.entries);
                     break;
+                case ENUM_ENTRY_TYPE:
+                    printf(" enum entry");
+                    printf("\n");
+                    print_sub_ast("Value", current_indent, ast->definition.def_enum_entry.value);
+                    break;
                 case ALIAS_TYPE:
                     printf(" alias\n");
                     print_sub_ast("Type", current_indent, ast->definition.def_alias.type_definition);
@@ -374,12 +391,6 @@ void print_ast(Ast *ast, int current_indent)
             print_sub_ast("Value", current_indent, ast->var_definition.value);
             print_sub_ast("Attributes", current_indent, ast->var_definition.attributes);
             return;
-        case AST_ENUM_ENTRY:
-            printf("ENUM_ENTRY ");
-            print_token(&ast->enum_entry.name);
-            printf("\n");
-            print_sub_ast("Value", current_indent, ast->enum_entry.value);
-            return;
         case AST_INCREMENTAL_ARRAY:
             printf("INCREMENTAL_ARRAY ");
             print_token(&ast->incremental_array.name);
@@ -393,6 +404,12 @@ void print_ast(Ast *ast, int current_indent)
             printf("CAST_EXPR\n");
             print_sub_ast("Expr", current_indent, ast->cast_expr.expr);
             print_sub_ast("Type", current_indent, ast->cast_expr.type);
+            return;
+        case AST_DEFER_RELASE:
+            printf("DEFER_RELEASE\n");
+            print_sub_ast("Inner", current_indent, ast->defer_release_stmt.inner);
+            print_sub_ast("DeferStart", current_indent, ast->defer_release_stmt.list.defer_start);
+            print_sub_ast("DeferEnd", current_indent, ast->defer_release_stmt.list.defer_end);
             return;
     }
     printf("TODO\n");
@@ -424,4 +441,19 @@ Ast *new_type_definition(DefinitionType type, Token *name, bool public, Token *i
 	ast->definition.module = NULL;
 	ast->definition.attributes = NULL;
 	return ast;
+}
+
+Ast *ast_compound_stmt_last(Ast *compound_stmt)
+{
+    assert(compound_stmt->type == AST_COMPOUND_STMT);
+    for (unsigned i = compound_stmt->compound_stmt.stmts->size; i > 0; i--)
+    {
+        Ast *last = compound_stmt->compound_stmt.stmts->entries[i];
+        if (last->type == AST_COMPOUND_STMT)
+        {
+            last = ast_compound_stmt_last(last);
+        }
+        if (last) return last;
+    }
+    return NULL;
 }

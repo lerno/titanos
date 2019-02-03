@@ -17,6 +17,7 @@ typedef struct _Parser
 	Vector *types;
 	Vector *variables;
 	Vector *functions;
+	Vector *enum_values;
 	const char *filename;
 } Parser;
 

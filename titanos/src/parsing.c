@@ -128,7 +128,7 @@ static bool consume(token_type type, const char *message, ...)
 
 	va_list args;
 	va_start(args, message);
-	vprint_error(&tok, message, args);
+	verror_at(&tok, message, args);
 	va_end(args);
 	return false;
 }
@@ -270,7 +270,7 @@ static Ast *parse_integer(Ast *left)
 {
 	assert(!left && "Had left hand side");
 	Ast *number = new_ast_with_span(AST_CONST_EXPR, &tok);
-	number->const_expr.value = parse_uint64(prev_tok.start, prev_tok.length);
+	number->const_expr.value = parse_int(prev_tok.start, prev_tok.length);
 	number->const_state = CONST_FULL;
 	return number;
 }
@@ -281,8 +281,14 @@ static Ast *parse_double(Ast *left)
 	assert(!left && "Had left hand side");
 	Ast *number = new_ast_with_span(AST_CONST_EXPR, &tok);
 	number->const_state = CONST_FULL;
-	Value value = value_new_float(prev_tok.start, prev_tok.length);
-	number->const_expr.value = value;
+	char *end = NULL;
+	long double fval = strtold(prev_tok.start, &end);
+	if (end != prev_tok.length + prev_tok.start)
+	{
+		error_at(&prev_tok, "Invalid float");
+		return NULL;
+	}
+	number->const_expr.value = value_new_float(fval);
 	return number;
 }
 
@@ -575,21 +581,18 @@ static inline Ast *parse_param_decl()
 	Ast *type = parse_type(true);
 	if (!type) return NULL;
 
-	Ast *param_decl = new_ast_with_span(AST_PARAM_DECL, &type->span);
-	param_decl->param_decl.type = type;
-	param_decl->param_decl.name.type = TOKEN_VOID;
-	param_decl->param_decl.default_value = NULL;
+	Ast *param_decl = new_decl(type);
+	param_decl->decl.is_parameter = true;
 	if (!try_consume(TOKEN_IDENTIFIER))
 	{
 		return end_ast(param_decl, &prev_tok);
 	}
-	param_decl->param_decl.name = prev_tok;
+	param_decl->decl.name = prev_tok;
 	if (try_consume(TOKEN_EQEQ))
 	{
-		param_decl->param_decl.default_value = parse_expression();
-		if (!param_decl->param_decl.default_value) return NULL;
+		param_decl->decl.init_expr = parse_expression();
+		if (!param_decl->decl.init_expr) return NULL;
 	}
-
 	UPDATE_AND_RETURN_AST(param_decl);
 }
 
@@ -798,6 +801,8 @@ static Ast *parse_defer_stmt()
 	Ast *defer_body = parse_stmt();
 	if (!defer_body) return NULL;
 	defer_stmt->defer_stmt.body = defer_body;
+	defer_stmt->defer_stmt.emit_boolean = false;
+	defer_stmt->defer_stmt.prev_defer = NULL;
 	UPDATE_AND_RETURN_AST(defer_stmt);
 }
 
@@ -1086,19 +1091,19 @@ static Ast *parse_init_value_and_optional_eos()
  */
 static Ast *parse_declaration()
 {
-	Ast *declaration = new_ast_with_span(AST_DECLARATION, &prev_tok);
 	Ast *type = parse_type(true);
 	if (type == NULL) return NULL;
 
-	Token identifier = tok;
+    Ast *declaration = new_decl(type);
+
 	if (!consume(TOKEN_IDENTIFIER, "Expected variable name")) return NULL;
 
-	Ast *init_expr = try_consume(TOKEN_EQ) ? parse_init_value() : NULL;
+    declaration->decl.name = prev_tok;
 
-	declaration->type = AST_DECLARATION;
-	declaration->declaration.identifier = identifier;
-	declaration->declaration.initExpr = init_expr;
-	declaration->declaration.declType = type;
+    Ast *init_expr = try_consume(TOKEN_EQ) ? parse_init_value() : NULL;
+
+	declaration->decl.init_expr = init_expr;
+
 	return declaration;
 }
 
@@ -1111,7 +1116,8 @@ static Ast *parse_label_stmt()
 	advance_and_verify(TOKEN_IDENTIFIER);
 	Ast *ast = new_ast_with_span(AST_LABEL, &prev_tok);
 	ast->label_stmt.label_name = prev_tok;
-
+	ast->label_stmt.is_used = false;
+	ast->label_stmt.defer_top = NULL;
 	// Already checked!
 	advance_and_verify(TOKEN_COLON);
 
@@ -1126,8 +1132,8 @@ static Ast *parse_declaration_stmt()
 {
 	Ast *declaration = parse_declaration();
 	if (!declaration) return NULL;
-	if (!declaration->declaration.initExpr
-			|| declaration->declaration.initExpr->type != AST_STRUCT_INIT_VALUES_EXPR)
+	if (!declaration->decl.init_expr
+			|| declaration->decl.init_expr->type != AST_STRUCT_INIT_VALUES_EXPR)
 	{
 		CONSUME_EOS_OR_EXIT;
 	}
@@ -1501,18 +1507,19 @@ static Ast *parse_enum_type(bool public, Token *initial_token)
 	while (1)
     {
 	    if (!consume(TOKEN_IDENTIFIER, "Expected enum name")) return NULL;
-        Ast *enum_entry = new_ast_with_span(AST_ENUM_ENTRY, &prev_tok);
-        enum_entry->enum_entry.name = prev_tok;
+	    Ast *enum_entry = new_type_definition(ENUM_ENTRY_TYPE, &prev_tok, public, &prev_tok);
+	    enum_entry->definition.name = prev_tok;
         vector_add(entries, enum_entry);
+        vector_add(current_parser->enum_values, enum_entry);
         if (try_consume(TOKEN_EQ))
         {
             Ast *value = parse_expression();
             if (!value) return NULL;
-            enum_entry->enum_entry.value = value;
+            enum_entry->definition.def_enum_entry.value = value;
         }
         else
         {
-            enum_entry->enum_entry.value = NULL;
+			enum_entry->definition.def_enum_entry.value = NULL;
         }
         // IMPROVE add values to enum
         if (!try_consume(TOKEN_COMMA))
@@ -1575,6 +1582,7 @@ static Ast *parse_func_definition(bool public)
 
     ast->func_definition.is_public = public;
     ast->func_definition.is_exported = false;
+    ast->func_definition.defers = NULL;
 
     Ast *decl = parse_func_decl();
     if (!decl) return NULL;
@@ -1609,6 +1617,7 @@ static Ast *parse_var_definition(bool public)
 
     ast->var_definition.is_public = public;
     ast->var_definition.is_exported = false;
+    ast->var_definition.is_used = false;
 
     Ast *type = parse_type(true);
     if (!type) return NULL;

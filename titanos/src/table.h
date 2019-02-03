@@ -37,3 +37,7 @@ static void *table_get_token(Table *table, const Token *token)
 }
 
 
+static void *table_delete_token(Table *table, const Token *token)
+{
+    return table_delete(table, token->start, token->length);
+}

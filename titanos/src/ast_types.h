@@ -20,7 +20,6 @@ typedef enum _AstType
     AST_FUNC_DECL,
     AST_FUNC_DEFINTION,
     AST_PARAM_LIST,
-    AST_PARAM_DECL,
     AST_COMPOUND_STMT,
     AST_IF_STMT,
     AST_WHILE_STMT,
@@ -34,7 +33,7 @@ typedef enum _AstType
     AST_RETURN_STMT,
     AST_GOTO_STMT,
     AST_FOR_STMT,
-    AST_DECLARATION,
+    AST_DECL,
     AST_LABEL,
     AST_CONST_EXPR,
     AST_BINARY_EXPR,
@@ -51,10 +50,17 @@ typedef enum _AstType
     AST_DESIGNATED_INITIALIZED_EXPR,
     AST_VAR_DEFINITION,
     AST_TYPE_DEFINITION,
-    AST_ENUM_ENTRY,
     AST_INCREMENTAL_ARRAY,
-    AST_IMPORT
+    AST_IMPORT,
+    AST_DEFER_RELASE,
+    AST_ASM_STMT,
 } AstType;
+
+typedef struct _DeferList
+{
+    Ast *defer_start;
+    Ast *defer_end;
+} DeferList;
 
 
 typedef struct _AstSizeofExpr
@@ -72,6 +78,7 @@ typedef struct _AstVarDefinition
 {
     bool is_public : 1;
     bool is_exported : 1;
+    bool is_used : 1;
     Token name;
     Ast *type;
     Ast *attributes;
@@ -91,11 +98,7 @@ typedef struct _AstTernaryExpr
     Ast *false_expr;
 } AstTernaryExpr;
 
-typedef struct _AstEnumEntry
-{
-    Token name;
-    Ast *value; // MAY BE NULL
-} AstEnumEntry;
+
 
 typedef struct _AstIdentifierExpr
 {
@@ -136,6 +139,7 @@ typedef enum _DefinitionType
     ALIAS_TYPE,
     ENUM_TYPE,
     FUNC_TYPE,
+    ENUM_ENTRY_TYPE,
 } DefinitionType;
 
 typedef enum _BuiltinFamily
@@ -160,9 +164,13 @@ typedef struct _DefAlias
 typedef struct _DefEnum
 {
     Ast *type; // Will be an identifier!
-    Vector *entries; // AstEnumEntry
+    Vector *entries; // AstDefinition
 } DefEnum;
 
+typedef struct _DefEnumEntry
+{
+    Ast *value;
+} DefEnumEntry;
 
 typedef struct _DefFunc
 {
@@ -200,6 +208,7 @@ typedef struct _AstDefinition
         DefEnum def_enum;
         DefBuiltin def_builtin;
         DefStruct def_struct;
+        DefEnumEntry def_enum_entry;
     };
 } AstDefinition;
 
@@ -217,14 +226,9 @@ typedef struct _AstParamList
 typedef struct _AstCompoundStmt
 {
     Vector *stmts; // May be NULL!
+    DeferList defer_list;
 } AstCompoundStmt;
 
-typedef struct _AstDeclaration
-{
-    Token identifier;
-    Ast *initExpr; // May be NULL!
-    Ast *declType;
-} AstDeclaration;
 
 typedef struct _AstIfStmt
 {
@@ -236,12 +240,14 @@ typedef struct _AstIfStmt
 typedef struct _AstDefaultStmt
 {
     Vector *stmts;
+    DeferList defer_list;
 } AstDefaultStmt;
 
 typedef struct _AstCaseStmt
 {
     Ast *expr;
     Vector *stmts;
+    DeferList defer_list;
 } AstCaseStmt;
 
 typedef struct _AstForStmt
@@ -284,13 +290,16 @@ typedef struct _AstFuncDecl
     Module *module;
 } AstFuncDecl;
 
-typedef struct _AstParamDecl
+typedef struct _AstDecl
 {
+    bool is_public : 1;
+    bool is_exported : 1;
+    bool is_parameter : 1;
+    bool is_used : 1;
+    Token name;
+    Ast *init_expr; // May be NULL!
     Ast *type;
-    Token name; //
-    Ast *default_value; // May be NULL!
-} AstParamDecl;
-
+} AstDecl;
 
 typedef struct _AstFuncDefinition
 {
@@ -298,6 +307,7 @@ typedef struct _AstFuncDefinition
     bool is_exported : 1;
     Ast *func_decl; // AstFuncDecl
     Ast *body; // AstCompoundStmt will be NULL in interfaces.
+    Vector *defers; // NULL unless defers
 } AstFuncDefinition;
 
 typedef struct _AstStructInitValuesExpr
@@ -307,17 +317,26 @@ typedef struct _AstStructInitValuesExpr
 
 typedef struct _AstGotoStmt
 {
-    Ast *label;
+    union
+    {
+        Ast *label;
+        Ast *label_stmt;
+    };
+    DeferList defer_list;
+
 } AstGotoStmt;
 
 typedef struct _AstReturnStmt
 {
     Ast *expr; // May be NULL
+    Ast *defer_top;
 } AstReturnStmt;
 
 typedef struct _AstDeferStmt
 {
-    struct _Ast* body;
+    bool emit_boolean : 1;
+    Ast *body;
+    Ast *prev_defer;
 } AstDeferStmt;
 
 typedef struct _AstBinaryExpr
@@ -353,7 +372,9 @@ typedef struct _AstPostExpr
 
 typedef struct _AstLabel
 {
+    bool is_used : 1;
     Token label_name;
+    Ast *defer_top;
 } AstLabelStmt;
 
 
@@ -452,6 +473,12 @@ typedef struct _AstImport
     Module *module;
 } AstImport;
 
+typedef struct _AstDeferReleaseStmt
+{
+    Ast *inner;
+    DeferList list;
+} AstDeferReleaseStmt;
+
 typedef enum
 {
     CONST_UNKNOWN,
@@ -471,12 +498,10 @@ typedef struct _Ast
         AstParamList param_list;
         AstAttributeList attribute_list;
         AstAttribute attribute;
-        AstParamDecl param_decl;
 
         AstTypeExpr type_expr;
         AstStructMember struct_member;
         AstDefinition definition;
-        AstEnumEntry enum_entry;
         AstIncrementalArray incremental_array;
         AstVarDefinition var_definition;
 
@@ -491,8 +516,9 @@ typedef struct _Ast
         AstGotoStmt goto_stmt;
         AstReturnStmt return_stmt;
         AstForStmt for_stmt;
-        AstDeclaration declaration;
+        AstDecl decl;
         AstLabelStmt label_stmt;
+        AstDeferReleaseStmt defer_release_stmt;
 
         AstConstExpr const_expr;
         AstBinaryExpr binary_expr;
@@ -517,5 +543,7 @@ void print_ast(Ast *ast, int current_indent);
 Ast *new_ast(AstType type);
 Ast *new_ast_with_span(AstType type, Token *span);
 Ast *end_ast(Ast *ast, Token *end);
+Ast *new_decl(Ast *type);
 Ast *new_type_expr(TypeExprType type_expr, Token *span);
 Ast *new_type_definition(DefinitionType type, Token *name, bool public, Token *initial_token);
+Ast *ast_compound_stmt_last(Ast *compound_stmt);
