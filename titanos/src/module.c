@@ -22,18 +22,18 @@ const std::string& Module::getCName() const {
 
 
 
-Ast *module_find_symbol(Module *module, Token *symbol)
+Decl *module_find_symbol(Module *module, Token *symbol)
 {
     return table_get_token(&module->symbols, symbol);
 }
 
-Ast *module_add_symbol(Module *module, Token *symbol, Ast *value)
+Decl *module_add_symbol(Module *module, Token *symbol, Decl *value)
 {
     assert(symbol->length > 0);
     return table_set_token(&module->symbols, symbol, value);
 }
 
-Ast *module_add_struct_function(Module *module, Token *symbol, Ast *value)
+Decl *module_add_struct_function(Module *module, Token *symbol, Decl *value)
 {
     return table_set_token(&module->struct_functions, symbol, value);
 }
@@ -63,6 +63,6 @@ void module_print_symbols(Module *module)
         if (!entry->key) continue;
         indent(2);
         printf("[%.*s]\n", entry->key_len, entry->key);
-        print_ast(entry->value, 3);
+        decl_print(entry->value, 3);
     }
 }

@@ -51,8 +51,8 @@ static inline bool try_conversion(Value *left, Value *right, ValueType type, con
 
 static inline bool implicit_conversion(Value *left, Value *right)
 {
-    if (try_conversion(left, right, TYPE_FLOAT, "float")) return true;
-    return value_convert_to_type(left, TYPE_INT, "int") && value_convert_to_type(right, TYPE_INT, "int");
+    if (try_conversion(left, right, VALUE_TYPE_FLOAT, "float")) return true;
+    return value_convert_to_type(left, VALUE_TYPE_INT, "int") && value_convert_to_type(right, VALUE_TYPE_INT, "int");
 }
 
 typedef Value (*BinOp)(Value, Value);
@@ -65,7 +65,7 @@ static inline AstConstState evaluate_constant_operation(Ast *ast, BinOp operatio
     if (!implicit_conversion(&left, &right)) return ast->const_state = CONST_NONE;
 
     Value value = operation(left, right);
-    if (value.type == TYPE_ERROR)
+    if (value.type == VALUE_TYPE_ERROR)
     {
         sema_error_at(&ast->span, error,
                 operation,
@@ -113,7 +113,7 @@ static inline AstConstState evaluate_constant_ternary_expr(Ast *ast)
 
     if (decider != CONST_FULL) return decider;
     Value expr = value_to_bool(ast->ternary_expr.expr->const_expr.value);
-    if (expr.type == TYPE_ERROR)
+    if (expr.type == VALUE_TYPE_ERROR)
     {
         return ast->const_state = CONST_NONE;
     }
@@ -127,7 +127,7 @@ static inline AstConstState evaluate_constant_ternary_expr(Ast *ast)
         return ast->const_state = CONST_NONE;
     }
 
-    assert(ast->ternary_expr.expr->const_expr.value.type == TYPE_BOOL);
+    assert(ast->ternary_expr.expr->const_expr.value.type == VALUE_TYPE_BOOL);
 
     if (ast->ternary_expr.expr->const_expr.value.b)
     {
@@ -147,12 +147,12 @@ static inline AstConstState evaluate_constant_unary_expr(Ast *ast)
         return ast->const_state = CONST_NONE;
     }
     Ast *value = ast->unary_expr.expr;
-    Value res = { .type = TYPE_ERROR };
+    Value res = { .type = VALUE_TYPE_ERROR };
     switch (ast->unary_expr.operator)
     {
         case TOKEN_NOT:
             res = value_to_bool(value->const_expr.value);
-            if (res.type == TYPE_ERROR)
+            if (res.type == VALUE_TYPE_ERROR)
             {
                 error_at(&value->span, "%s cannot be implictly converted to boolean", value_type_name(value->const_expr.value));
                 break;
@@ -161,14 +161,14 @@ static inline AstConstState evaluate_constant_unary_expr(Ast *ast)
             break;
         case TOKEN_BIT_NOT:
             res = value_not(value->const_expr.value);
-            if (res.type == TYPE_ERROR)
+            if (res.type == VALUE_TYPE_ERROR)
             {
                 error_at(&value->span, "%s cannot be bit negated", value_type_name(value->const_expr.value));
             }
             break;
         case TOKEN_MINUS:
             res = value_negate(value->const_expr.value);
-            if (res.type == TYPE_ERROR)
+            if (res.type == VALUE_TYPE_ERROR)
             {
                 error_at(&value->span, "%s cannot be negated", value_type_name(value->const_expr.value));
             }
@@ -180,7 +180,7 @@ static inline AstConstState evaluate_constant_unary_expr(Ast *ast)
         default:
             break;
     }
-    if (res.type == TYPE_ERROR)
+    if (res.type == VALUE_TYPE_ERROR)
     {
         return ast->const_state = CONST_NONE;
     }

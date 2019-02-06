@@ -1,4 +1,5 @@
 #include <string.h>
+#include "types/type.h"
 #include "diagnostics.h"
 #include "semantic_analysis.h"
 #include "vector.h"
@@ -12,145 +13,23 @@
 #include "constant_folding.h"
 #include "analyser.h"
 #include "statement_analysis.h"
+#include "decl.h"
+#include "type_analysis.h"
 
+const static uint64_t MAX_ARRAY_SIZE = UINT32_MAX;
 
-
-static Ast *get_symbol(Analyser *analyser, Token *token, bool is_type, bool used_public)
+static Decl *get_symbol(Analyser *analyser, Token *token, bool is_type, bool used_public)
 {
     return scope_find_symbol(&analyser->scope, token, is_type, used_public);
 }
 
-static bool resolve_array_size(Ast *type_expr)
-{
-    const static uint64_t max_array_size = 0xFFFFFFFF;
-    Ast *size_expr = type_expr->type_expr.array_type_expr.size;
-    if (!size_expr)
-    {
-        type_expr->type_expr.array_type_expr.fix_size = -1;
-        return true;
-    }
-    if (evaluate_constant(size_expr) != CONST_FULL)
-    {
-        sema_error_at(&size_expr->span, "Array size was not a compile time constant");
-        return false;
-    }
-    Value *val = &size_expr->const_expr.value;
-    uint64_t size;
-    switch (val->type)
-    {
-        case TYPE_INT:
-            if (val->big_int.is_negative)
-            {
-                sema_error_at(&size_expr->span, "Negative array size is not allowed");
-                return false;
-            }
-            if (val->big_int.digit_count != 1)
-            {
-                sema_error_at(&size_expr->span, "Array size exceeded int64 max");
-                return false;
-            }
-            size = bigint_as_unsigned(&val->big_int);
-            break;
-        case TYPE_BOOL:
-            sema_error_at(&size_expr->span, "Array size cannot be a boolean");
-            return false;
-        case TYPE_FLOAT:
-            sema_error_at(&size_expr->span, "Array size cannot be a float");
-            return false;
-        case TYPE_NIL:
-            size = 0;
-            break;
-        case TYPE_STRING:
-            sema_error_at(&size_expr->span, "Array size cannot be a string");
-            return false;
-        default:
-            FATAL_ERROR("Unexpected constant expression for array size");
-    }
-    if (size > max_array_size)
-    {
-        sema_error_at(&size_expr->span, "Array size exceeded uint32 max");
-        return false;
-    }
-    type_expr->type_expr.array_type_expr.fix_size = size;
-    return true;
-}
-
-static bool resolve_type(Ast *type_expr, bool used_public)
-{
-    if (type_expr->type_expr.flags.resolved)
-    {
-        return true;
-    }
-    bool resolves = false;
-    switch (type_expr->type_expr.type)
-    {
-        case TYPE_EXPR_IDENTIFIER:
-        {
-            // TODO module symbol
-            Token *name = &type_expr->type_expr.identifier_type_expr.name;
-            Ast *symbol = get_symbol(analyser, name, true, used_public);
-            if (!symbol) return false;
-            if (symbol->type != AST_TYPE_DEFINITION)
-            {
-                sema_error_at(&type_expr->span, "Unknown type '%.*s'", name->length, name->start);
-                return false;
-            }
-            type_expr->type_expr.identifier_type_expr.resolved_type = symbol;
-            resolves = true;
-            break;
-        }
-        case TYPE_EXPR_ARRAY:
-            resolves = resolve_type(type_expr->type_expr.array_type_expr.type, used_public)
-                    && resolve_array_size(type_expr);
-            break;
-        case TYPE_EXPR_POINTER:
-            resolves = resolve_type(type_expr->type_expr.pointer_type_expr.type, used_public);
-            break;
-        case TYPE_EXPR_VOID:
-            resolves = true;
-            break;
-        default:
-            FATAL_ERROR("Unsupported type expr");
-    }
-    type_expr->type_expr.flags.resolved = resolves;
-    return resolves;
-}
 
 
 
-static bool register_function(Ast *function)
-{
-    switch (function->type)
-    {
-        case AST_FUNC_DECL:
-            break;
-        case AST_FUNC_DEFINTION:
-            function = function->func_definition.func_decl;
-            break;
-        default:
-            FATAL_ERROR("This should never happen");
-    }
-/*    Ast *old = table_set(&symbols, function->func_decl.name->span.start, function->func_decl.name->span.length, function);
-
-    if (old)
-    {
-        sema_error_at(&function->func_decl.name->span, "Redefinition of symbol");
-        sema_error_at(&old->span, "Previous definition was here");
-        return false;
-    }*/
-    FATAL_ERROR("Broken");
-    return true;
-}
-
-
-
-static void register_alias(Analyser *analyser, const char *name, const char *alias)
-{
-    FATAL_ERROR("TODO");
-}
 
 static inline void add_imports()
 {
+    LOG_FUNC;
     for (unsigned i = 0; i < analyser->parser->imports->size; i++)
     {
         scope_add_import_declaration(&analyser->scope, analyser->parser->imports->entries[i]);
@@ -159,10 +38,11 @@ static inline void add_imports()
 
 unsigned check_attributes(Ast *ast_attribute_list)
 {
+    // TODO transfer this
     if (!ast_attribute_list) return 0;
     unsigned errors = 0;
-    assert(ast_attribute_list->type == AST_ATTRIBUTE_LIST);
-    Vector *attributes = ast_attribute_list->attribute_list.list;
+    assert(false);
+    Vector *attributes = NULL;
     for (unsigned a = 0; a < attributes->size; a++)
     {
         // Improve: check that same attribute does not appear more than once?
@@ -204,7 +84,7 @@ unsigned check_attributes(Ast *ast_attribute_list)
                 errors++;
                 break;
             case ATTR_ARG_STRING:
-                if (value->type != AST_CONST_EXPR || value->const_expr.value.type != TYPE_STRING)
+                if (value->type != AST_CONST_EXPR || value->const_expr.value.type != VALUE_TYPE_STRING)
                 {
                     sema_error_at(&value->span, "Expected a string argument");
                     errors++;
@@ -212,7 +92,7 @@ unsigned check_attributes(Ast *ast_attribute_list)
                 break;
             case ATTR_ARG_UINT:
                 if (value->type != AST_CONST_EXPR
-                    || value->const_expr.value.type != TYPE_INT
+                    || value->const_expr.value.type != VALUE_TYPE_INT
                     || value->const_expr.value.big_int.is_negative)
                 {
                     sema_error_at(&value->span, "Expected a unsigned int value");
@@ -220,7 +100,7 @@ unsigned check_attributes(Ast *ast_attribute_list)
                 }
                 break;
             case ATTR_ARG_INT:
-                if (value->type != AST_CONST_EXPR || value->const_expr.value.type != TYPE_INT)
+                if (value->type != AST_CONST_EXPR || value->const_expr.value.type != VALUE_TYPE_INT)
                 {
                     sema_error_at(&value->span, "Expected an integer value");
                     errors++;
@@ -234,7 +114,7 @@ unsigned check_attributes(Ast *ast_attribute_list)
                 }
                 break;
             case ATTR_ARG_BOOL:
-                if (value->type != AST_CONST_EXPR || value->const_expr.value.type != TYPE_INT)
+                if (value->type != AST_CONST_EXPR || value->const_expr.value.type != VALUE_TYPE_INT)
                 {
                     sema_error_at(&value->span, "Expected a boolean value");
                     errors++;
@@ -247,173 +127,45 @@ unsigned check_attributes(Ast *ast_attribute_list)
     return errors;
 }
 
-static unsigned int analyse_struct_members(Ast *type, Table *names, Vector *members, bool used_public)
+static bool analyse_struct_members(Decl *type, bool used_public)
 {
-    unsigned errors = 0;
-    for (unsigned  i = 0; i < members->size; i++)
+    bool success = true;
+    if (type->structure.is_global && analyser->parser->is_interface && type->name.length && !is_lower(&type->name))
     {
-        Ast *member = members->entries[i];
-        Token *name = &member->struct_member.name;
-        if (name->length == 0)
+        sema_error_at(&type->name, "Struct name needs to start with lower case.");
+        success = false;
+    }
+    for (unsigned  i = 0; i < type->structure.members->size; i++)
+    {
+        Decl *member = type->structure.members->entries[i];
+        Token *name = &member->name;
+        switch (member->type_id)
         {
-            errors += analyse_struct_members(member, names, member->struct_member.members, used_public);
-            continue;
-        }
-        Ast *old_member = table_set_token(names, name, member);
-        if (old_member)
-        {
-            sema_error_at(name, "Duplicate member '%.*s'", SPLAT_TOK(*name));
-            sema_error_at(&old_member->span, "Previous definition was here");
-            errors++;
-            continue;
-        }
-        if (member->struct_member.type != STRUCT_MEMBER_TYPE_NORMAL)
-        {
-            Table table;
-            table_init(&table, 4);
-            analyse_struct_members(member, &table, member->struct_member.members, used_public);
-        }
-        else
-        {
-            if (!resolve_type(member->struct_member.value_type, used_public))
-            {
-                errors++;
-            }
+            case DECL_STRUCT_TYPE:
+                success = analyse_struct_members(member, used_public) && success;
+                break;
+            case DECL_VAR:
+                return false;
+                FATAL_ERROR("TODO");
+                // success = decl_resolve_type(member);
+                break;
+            case DECL_FUNC:
+            case DECL_ENUM_CONSTANT:
+            case DECL_ALIAS_TYPE:
+            case DECL_ENUM_TYPE:
+            case DECL_FUNC_TYPE:
+            case DECL_ARRAY_VALUE:
+            case DECL_IMPORT:
+            case DECL_LABEL:
+                FATAL_ERROR("Cannot occur here.");
+                break;
         }
     }
-    return errors;
+    return success;
 }
 
-static bool is_valid_value(DefBuiltin *builtin, Value *value)
-{
-    switch (builtin->type)
-    {
-        case BUILTIN_INT:
-            return value->type == TYPE_INT && bigint_fits_in_bits(&value->big_int, builtin->bits, true);
-        case BUILTIN_UINT:
-            return value->type == TYPE_INT
-            && !value->big_int.is_negative
-            && bigint_fits_in_bits(&value->big_int, builtin->bits, false);
-        case BUILTIN_FLOAT:
-            return value->type == TYPE_FLOAT;
-        case BUILTIN_BOOL:
-            return value->type == TYPE_BOOL;
-    }
-    FATAL_ERROR("Cannot reach");
-}
 
-static inline unsigned check_enum_type(Ast *type)
-{
-    AstDefinition *def = &type->definition;
 
-    Ast *enum_type = def->def_enum.type;
-
-    if (!resolve_type(def->def_enum.type, def->is_public))
-    {
-        return 1;
-    }
-    if (enum_type->type_expr.type != TYPE_EXPR_IDENTIFIER)
-    {
-        sema_error_at(&enum_type->span, "Expected an integer type");
-        return 1;
-    }
-
-    // TODO if this one is public but the alias used isn't, should we flag the enum as an error?
-
-    Ast *resolved_type = enum_type->type_expr.identifier_type_expr.resolved_type;
-    if (resolved_type->definition.definition_type != BUILTIN_TYPE)
-    {
-        sema_error_at(&enum_type->span, "Expected an integer type");
-        return 1;
-    }
-    DefBuiltin *builtin = &resolved_type->definition.def_builtin;
-    switch (builtin->type)
-    {
-        case BUILTIN_UINT:
-        case BUILTIN_INT:
-            break;
-        case BUILTIN_BOOL:
-        case BUILTIN_FLOAT:
-            sema_error_at(&enum_type->span, "Expected an integer type");
-            return 1;
-    }
-
-    if (def->def_enum.entries->size == 0)
-    {
-        sema_error_at(&def->name, "Enum '%.*s' is empty", SPLAT_TOK(def->name));
-        return 1;
-    }
-
-    unsigned errors = 0;
-
-    // TODO what about use of previous constants?
-    Table table;
-    table_init(&table, def->def_enum.entries->size * 2 + 2);
-
-    bool is_first_value = true;
-    BigInt current_value;
-    bigint_init_signed(&current_value, 0);
-    for (unsigned i = 0; i < def->def_enum.entries->size; i++)
-    {
-        Ast *entry = def->def_enum.entries->entries[i];
-        entry->definition.module = def->module;
-        if (entry->definition.is_exported && def->module->is_exported) entry->definition.is_exported = true;
-
-        if (!is_upper(&entry->definition.name) && !analyser->parser->is_interface)
-        {
-            sema_error_at(&entry->definition.name, "Enum values must start with upper case");
-            errors++;
-        }
-        Ast *previous_entry = table_set(&table, entry->definition.name.start, entry->definition.name.length, entry);
-        if (previous_entry)
-        {
-            sema_error_at(&entry->span, "Duplicate definition of '%.*s'", SPLAT_TOK(entry->definition.name));
-            errors++;
-        }
-
-        Ast *value = entry->definition.def_enum_entry.value;
-        if (!value)
-        {
-            value = new_ast_with_span(AST_CONST_EXPR, &entry->span);
-            entry->definition.def_enum_entry.value = value;
-            bigint_init_bigint(&value->const_expr.value.big_int, &current_value);
-            value->const_expr.value.type = TYPE_INT;
-            value->const_state = CONST_FULL;
-            bigint_incr(&current_value);
-            is_first_value = false;
-            continue;
-        }
-        if (!evaluate_constant(value))
-        {
-            sema_error_at(&entry->span, "Enum value '%.*s' is not constant", SPLAT_TOK(entry->definition.name));
-            errors++;
-            is_first_value = false;
-            continue;
-        }
-        if (value->const_expr.value.type != TYPE_INT)
-        {
-            sema_error_at(&value->span, "Expected an integer constant for '%.*s'", SPLAT_TOK(entry->definition.name));
-            errors++;
-            is_first_value = false;
-            continue;
-        }
-        if (!is_valid_value(builtin, &value->const_expr.value))
-        {
-            sema_error_at(&value->span, "Enum value constant out of range '%.*s'", SPLAT_TOK(entry->definition.name));
-            errors++;
-            is_first_value = false;
-        }
-        if (!is_first_value && bigint_cmp(&current_value, &value->const_expr.value.big_int) != INT_LT)
-        {
-            sema_error_at(&value->span, "Enum values must be placed in strictly ascending value order");
-            errors++;
-        }
-        bigint_init_bigint(&current_value, &value->const_expr.value.big_int);
-        bigint_incr(&current_value);
-        is_first_value = false;
-    }
-    return errors;
-}
 
 unsigned resolve_variable_decl(Ast *decl)
 {
@@ -459,63 +211,78 @@ unsigned resolve_variable_decl(Ast *decl)
 }
 
 
-unsigned check_function_decl(Ast *function_decl, bool public)
+static bool check_function_decl(Decl *func_decl, bool public)
 {
-    unsigned errors = 0;
-    AstFuncDecl *decl = &function_decl->func_decl;
+    assert(func_decl->type_id == DECL_FUNC);
+    assert(func_decl->type->type_id != TYPE_UNRESOLVED);
 
-    // Return value
-    if (!resolve_type(decl->r_type, public))
+    bool had_errors = false;
+
+    Type *rtype = func_decl->func_decl.rtype;
+    if (rtype)
     {
-        errors++;
-//        TR->checkOpaqueType(D->getLocation(), D->isPublic(), Q);
+        func_decl->func_decl.rtype = rtype;
+        if (rtype->type_id == TYPE_OPAQUE && public)
+        {
+            sema_error_at(&rtype->span, "Opaque type returned for public function");
+            had_errors = true;
+        }
+    }
+    else
+    {
+        had_errors = true;
     }
 
     // Arguments
-    Vector *list = decl->params->param_list.param_list;
+    Vector *list = func_decl->func_decl.args;
     for (unsigned i = 0; i < list->size; i++)
     {
-        Ast *param_decl = list->entries[i];
-        assert(param_decl->type == AST_DECL && param_decl->decl.is_parameter);
-        if (!resolve_type(param_decl->decl.type, public))
+        Decl *param_decl = list->entries[i];
+        assert(param_decl->type_id == DECL_VAR && param_decl->var.kind == VARDECL_PARAM);
+        //assert(!param_decl->is_resolved);
+        //Type *type = resolve_type(param_decl->type_expr, public);
+        //if (!type)
         {
-            errors++;
+            had_errors = true;
             continue;
         }
-        if (param_decl->decl.init_expr)
+        //param_decl->type = type;
+        //param_decl->is_resolved = true;
+        if (param_decl->var.init_expr)
         {
-            if (evaluate_constant(param_decl->decl.init_expr) != CONST_FULL)
+            if (evaluate_constant(param_decl->var.init_expr) != CONST_FULL)
             {
-                sema_error_at(&param_decl->decl.init_expr->span,
+                sema_error_at(&param_decl->var.init_expr->span,
                               "Default value must be a compile time constant");
-                errors++;
+                had_errors = true;
             }
         }
     }
-    return errors;
+//    func_decl->is_resolved = true;
+    return had_errors;
 }
 
-unsigned check_type(Ast *type)
+bool check_type(Decl *decl_type)
 {
-    switch (type->definition.definition_type)
+    assert(decl_is_type(decl_type));
+  //  assert(!decl_type->is_resolved);
+    switch (decl_type->type_id)
     {
-        case BUILTIN_TYPE:
-            return 0;
-        case STRUCT_TYPE:
+        case DECL_STRUCT_TYPE:
         {
             Table names;
             table_init(&names, 4);
-            return analyse_struct_members(type, &names, type->definition.def_struct.members, type->definition.is_public);
+//            return analyse_struct_members(decl_type, &names, decl_type->definition.def_struct.members, decl_type->definition.is_public);
         }
-        case ALIAS_TYPE:
-            return resolve_type(type->definition.def_alias.type_definition, type->definition.is_public) ? 0 : 1;
-        case ENUM_TYPE:
-            return check_enum_type(type);
-        case FUNC_TYPE:
-            return check_function_decl(type->definition.def_func.func_decl, type->definition.is_public);
-        default:
-            FATAL_ERROR("Invalid type");
+        case DECL_ALIAS_TYPE:
+  //          return decl_resolve_type(decl_type);
+        case DECL_ENUM_TYPE:
+    //        return check_enum_type(decl_type);
+        case DECL_FUNC_TYPE:
+            return check_function_decl(decl_type->func_type.func_decl, decl_type->is_public);
+
     }
+    return false;
 }
 unsigned check_types()
 {
@@ -524,9 +291,9 @@ unsigned check_types()
     for (unsigned i = 0; i < analyser->parser->types->size; i++)
     {
         Ast *type = analyser->parser->types->entries[i];
-        assert(type->definition.module);
+//        assert(type->definition.module);
         errors += check_type(type);
-        check_attributes(type->var_definition.attributes);
+  //      check_attributes(type->var_definition.attributes);
         print_ast(type, 0);
     }
     // resolveTypes
@@ -537,64 +304,57 @@ unsigned check_types()
 
 
 
-static inline bool analyse_body(Analyser *analyser, Ast *compound_stmt)
+static inline bool analyse_body(Decl *func)
 {
-    // TODO
-    // bool no_unused_params = func->hasAttribute(ATTR_UNUSED_PARAMS);
+    bool skip_unused_params_check = decl_has_attribute(func, ATTRIBUTE_UNUSED_PARAMS);
 
-    bool no_unused_params = false;
+    //assert(func->is_resolved);
 
-    if (analyser->parser->is_interface) no_unused_params = true;
+    if (analyser->parser->is_interface) skip_unused_params_check = true;
 
-    Ast *func_decl = analyser->current_func->func_definition.func_decl;
-
-    AstParamList *param_list = &func_decl->func_decl.params->param_list;
-
-    bool variadic = param_list->variadic;
+    FuncDecl *func_decl = &func->func_decl;
 
     // add arguments to new scope
-    for (unsigned i = 0; i < param_list->param_list->size; i++)
+    for (unsigned i = 0; i < func_decl->args->size; i++)
     {
-        Ast *decl = func_decl->param_list.param_list->entries[i];
-        if (no_unused_params)
+        Decl *param_decl = func_decl->args->entries[i];
+  //      assert(param_decl->is_resolved);
+        if (skip_unused_params_check)
         {
-            decl->decl.is_used = true;
+            param_decl->is_used = true;
         }
-        if (decl->decl.name.length)
+        if (param_decl->name.length)
         {
-            Ast *old = scope_check_scoped_symbol(&analyser->scope, &decl->decl.name);
+            Decl *old = scope_check_scoped_symbol(&analyser->scope, &param_decl->name);
             if (old)
             {
-                sema_error_at(&decl->decl.name, "Parameter %.*s shadows global identifier", SPLAT_TOK(decl->decl.name));
+                sema_error_at(&param_decl->name, "Parameter %.*s shadows global identifier", SPLAT_TOK(param_decl->name));
                 prev_at(&old->span, "Previous declaration was here");
                 continue;
             }
-            scope_add_scoped_symbol(&analyser->scope, decl);
+            scope_add_scoped_symbol(&analyser->scope, param_decl);
         }
     }
 
     if (scope_had_errors(&analyser->scope)) return false;
 
-    if (analyser->current_func->func_definition.body)
+    if (func->func_decl.body)
     {
-        analyse_compound_stmt(analyser->current_func->func_definition.body);
+        analyse_compound_stmt(func->func_decl.body);
     }
     if (scope_had_errors(&analyser->scope)) return false;
-
-    Ast *return_type = func_decl->func_decl.r_type;
 
     // check for return statement of return value is required
-    bool needs_return = return_type->type_expr.type == TYPE_EXPR_VOID;
+    bool needs_return = func_decl->rtype->type_id == TYPE_VOID;
 
-    if (needs_return && analyser->current_func->func_definition.body)
+    if (needs_return && func_decl->body)
     {
-
-#ifdef TODO
-        Stmt* lastStmt = body->getLastStmt();
-        if (!lastStmt || lastStmt->getKind() != STMT_RETURN) {
-            Diag(body->getRight(), diag::warn_falloff_nonvoid_function);
+        Ast *last_stmt = ast_compound_stmt_last(func_decl->body);
+        if (!last_stmt || last_stmt->type != AST_RETURN_STMT)
+        {
+            sema_error_at(last_stmt ? &last_stmt->span : &func_decl->body->span, "Expected a return at the end of a non void function");
+            return false;
         }
-#endif
     }
     return true;
 }
@@ -682,7 +442,7 @@ Make sure this is set!
 
 }
 
-static bool analyse_func_body(Ast *func_def)
+static bool analyse_func_body(Decl *func)
 {
     // func_def->func_definition.func_decl?
     /* Done?
@@ -699,10 +459,10 @@ static bool analyse_func_body(Ast *func_def)
     analyser->labels.size = 0;
     analyser->gotos.size = 0;
     analyser->defers.size = 0;
-    analyser->current_func = func_def;
+    analyser->current_func = func;
     scope_enter(&analyser->scope, SCOPE_FUNC | SCOPE_DECL);
-    bool success = analyse_body(analyser, func_def->func_definition.body);
-    scope_exit(&analyser->scope, func_def->func_definition.body);
+    bool success = analyse_body(func);
+    scope_exit(&analyser->scope, func->func_decl.body);
 
     for (unsigned i = 0; i < analyser->labels.size; i++)
     {
@@ -718,47 +478,32 @@ static bool analyse_func_body(Ast *func_def)
         else
         {
             assert(label->gotoAst->goto_stmt.label->type == AST_CONST_EXPR);
-            assert(label->gotoAst->goto_stmt.label->const_expr.value.type == TYPE_STRING);
+            assert(label->gotoAst->goto_stmt.label->const_expr.value.type == VALUE_TYPE_STRING);
             Value *goto_label = &label->gotoAst->goto_stmt.label->const_expr.value;
             sema_error_at(&label->gotoAst->span, "Unknown label '%.*s", goto_label->str_len, goto_label->str);
             success = false;
         }
     }
 
-    if (success)
-    {
-        success = analyse_defer_goto(analyser);
-    }
-
-
-    // We need to add a list of defer variables in the beginning of the function.
-    if (analyser->defers.size)
-    {
-        func_def->func_definition.defers = new_vector(analyser->defers.size);
-        vector_copy(func_def->func_definition.defers, &analyser->defers);
-    }
-
-    return success;
+    return analyse_defer_goto(analyser) && success;
 }
 
-bool check_function(Ast *func_def)
+static bool check_function(Decl *func_def)
 {
     assert(func_def->type == AST_FUNC_DEFINTION);
     // check_attributes(type->var_definition.attributes);
-    unsigned errors = check_function_decl(func_def->func_definition.func_decl, func_def->func_definition.is_public);
-    if (errors) return !errors;
-    return analyse_func_body(func_def);
+    return check_function_decl(func_def, func_def->is_public) && analyse_func_body(func_def);
 }
 
-unsigned check_functions()
+bool check_functions()
 {
-    unsigned errors = 0;
+    bool success = true;
     for (unsigned i = 0; i < analyser->parser->functions->size; i++)
     {
         Ast *type = analyser->parser->functions->entries[i];
-        errors += check_function(type);
+        success &= check_function(type);
     }
-    return errors;
+    return success;
 }
 
 
@@ -767,14 +512,14 @@ static inline void add_symbols()
     // First, register imports
     for (unsigned i = 0; i < analyser->parser->imports->size; i++)
     {
-        Ast *import = analyser->parser->imports->entries[i];
-        assert(import->type == AST_IMPORT);
+        Decl *import = analyser->parser->imports->entries[i];
+        assert(import->type_id == DECL_IMPORT);
         Token *name;
         switch (import->import.type)
         {
             case IMPORT_TYPE_LOCAL:
             case IMPORT_TYPE_FULL:
-                name = &import->import.module_name;
+                name = &import->name;
                 break;
             case IMPORT_TYPE_ALIAS:
                 name = &import->import.alias;
@@ -782,78 +527,75 @@ static inline void add_symbols()
             default:
                 FATAL_ERROR("Unknown type");
         }
-        Ast *old = module_add_symbol(analyser->module, name, import);
+        Decl *old = module_add_symbol(analyser->module, name, import);
         if (old)
         {
             sema_error_at(name, "Identifier '%.*s' already in use", name->length, name->start);
-            sema_error_at(&old->span, "Old definition was here");
+            prev_at(&old->span, "Old definition was here");
         }
     }
 
     // Then add all types
     for (unsigned i = 0; i < analyser->parser->types->size; i++)
     {
-        Ast *type = analyser->parser->types->entries[i];
-        type->definition.module = analyser->module;
-        assert(type->type == AST_TYPE_DEFINITION);
-        Ast *old = module_add_symbol(analyser->module, &type->definition.name, type);
+        Decl *type = analyser->parser->types->entries[i];
+        type->module = analyser->module;
+        Decl *old = module_add_symbol(analyser->module, &type->name, type);
         if (old)
         {
-            sema_error_at(&type->definition.name, "Type '%.*s' redefines identifier", type->definition.name.length, type->definition.name.start);
-            sema_error_at(&old->span, "Old definition was here");
+            sema_error_at(&type->span, "Type '%.*s' redefines identifier", SPLAT_TOK(type->name));
+            prev_at(&old->span, "Old definition was here");
         }
-        if (type->definition.is_public && analyser->module->is_exported)
+        if (type->is_public && analyser->module->is_exported)
         {
-            type->definition.is_exported = true;
+            type->is_exported = true;
         }
     }
 
     // Then add global variables types
     for (unsigned i = 0; i < analyser->parser->variables->size; i++)
     {
-        Ast *var = analyser->parser->variables->entries[i];
-        assert(var->type == AST_VAR_DEFINITION);
-        Ast *old = module_add_symbol(analyser->module, &var->var_definition.name, var);
+        Decl *var = analyser->parser->variables->entries[i];
+        assert(var->type_id == DECL_VAR);
+        Decl *old = module_add_symbol(analyser->module, &var->name, var);
         if (old)
         {
-            sema_error_at(&var->var_definition.name, "Global variable '%.*s' redefines identifier", &var->var_definition.name);
-            sema_error_at(&old->span, "Old definition was here");
+            sema_error_at(&var->name, "Global variable '%.*s' redefines identifier", SPLAT_TOK(var->name));
+            prev_at(&old->span, "Old definition was here");
         }
-        if (var->var_definition.is_public && analyser->module->is_exported)
+        if (var->is_public && analyser->module->is_exported)
         {
-            var->var_definition.is_exported = true;
+            var->is_exported = true;
         }
     }
 
     // Then functions
     for (unsigned i = 0; i < analyser->parser->functions->size; i++)
     {
-        Ast *type = analyser->parser->functions->entries[i];
-        FunctionName *name = type->func_definition.func_decl->func_decl.name;
+        Decl *type = analyser->parser->functions->entries[i];
 
-        if (name->struct_name.length)
+        if (type->func_decl.is_static_struct_func)
         {
-            Ast *old = module_add_struct_function(analyser->module, &name->full_name, type);
+            Decl *old = module_add_struct_function(analyser->module, &type->func_decl.full_name, type);
             if (old)
             {
-                sema_error_at(&type->func_definition.func_decl->span, "Function '%.*s' redefines identifier", name->full_name.length, name->full_name.start);
-                sema_error_at(&old->func_definition.func_decl->span, "The old definition was here");
+                sema_error_at(&type->span, "Function '%.*s' redefines identifier", SPLAT_TOK(type->func_decl.full_name));
+                prev_at(&old->span, "The old definition was here");
             }
         }
         else
         {
-            Ast *old = module_add_symbol(analyser->module, &name->function_name, type);
+            Decl *old = module_add_symbol(analyser->module, &type->name, type);
             if (old)
             {
-                sema_error_at(&name->function_name, "Function '%.*s' redefines identifier", name->full_name.length, name->full_name.start);
-                sema_error_at(&old->func_definition.func_decl->span, "The old definition was here");
+                sema_error_at(&type->span, "Function '%.*s' redefines identifier", SPLAT_TOK(type->name));
+                prev_at(&old->span, "The old definition was here");
             }
         }
 
-
-        if (type->func_definition.is_public && analyser->module->is_exported)
+        if (type->is_public && analyser->module->is_exported)
         {
-            type->func_definition.is_exported = true;
+            type->is_exported = true;
         }
     }
 }
@@ -866,9 +608,11 @@ static inline void init_analyser(Analyser *analyser, Module *module, Table *modu
     vector_init(&analyser->labels, 16);
     vector_init(&analyser->gotos, 16);
     vector_init(&analyser->defers, 16);
+    table_init(&analyser->temp_table, 128);
+    vector_init(&analyser->temp_vector, 16);
 }
 
-void select_analyser(Analyser *current_analyser)
+static void select_analyser(Analyser *current_analyser)
 {
     analyser = current_analyser;
 }
@@ -900,6 +644,20 @@ bool analyse(Component *component, Table *modules)
     {
         select_analyser(analysers->entries[i]);
         add_symbols();
+    }
+
+    if (error_found()) return false;
+
+    for (unsigned i = 0; i < analyser_count; i++)
+    {
+        select_analyser(analysers->entries[i]);
+        resolve_types();
+    }
+
+    for (unsigned i = 0; i < analyser_count; i++)
+    {
+        select_analyser(analysers->entries[i]);
+//        resolve_type_canonicals();
     }
 
     for (unsigned i = 0; i < analyser_count; i++)

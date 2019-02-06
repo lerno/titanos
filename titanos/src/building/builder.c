@@ -528,22 +528,22 @@ static bool parse_file(Component *component, Module *module, const char *filenam
         printf("[IMPORTS]\n");
         for (unsigned i = 0; i < parser->imports->size; i++)
         {
-            print_ast(parser->imports->entries[i], 1);
+            decl_print(parser->imports->entries[i], 1);
         }
         printf("[FUNCTIONS]\n");
         for (unsigned i = 0; i < parser->functions->size; i++)
         {
-            print_ast(parser->functions->entries[i], 1);
+            decl_print(parser->functions->entries[i], 1);
         }
         printf("[TYPES]\n");
         for (unsigned i = 0; i < parser->types->size; i++)
         {
-            print_ast(parser->types->entries[i], 1);
+            decl_print(parser->types->entries[i], 1);
         }
         printf("[VARIABLES]\n");
         for (unsigned i = 0; i < parser->variables->size; i++)
         {
-            print_ast(parser->variables->entries[i], 1);
+            decl_print(parser->variables->entries[i], 1);
         }
     }
     if (module)
@@ -572,22 +572,20 @@ static void register_c2_constant(const char *name, const char *type, Value value
 {
     Token token = token_wrap(name);
     Token type_token = token_wrap(type);
-    Ast *ast = new_ast_with_span(AST_VAR_DEFINITION, &token);
+    Decl *decl = decl_new(DECL_VAR, &token, &token, true);
     Ast *ast_value = new_ast_with_span(AST_CONST_EXPR, &token);
     ast_value->const_expr.value = value;
-
-    ast->var_definition.name = token;
     Ast *type_ast = new_type_expr(TYPE_EXPR_IDENTIFIER, &type_token);
     type_ast->type_expr.identifier_type_expr.name = token;
     type_ast->type_expr.identifier_type_expr.module_name.length = 0;
     type_ast->type_expr.identifier_type_expr.resolved_type = NULL;
-    ast->var_definition.type = type_ast;
-    ast->var_definition.is_public = true;
-    ast->var_definition.is_exported = true;
-    ast->var_definition.value = ast_value;
-    ast->var_definition.attributes = NULL;
+    decl->var.init_expr = ast_value;
+    decl->var.kind = VARDECL_GLOBAL;
+    decl->is_exported = true;
+    decl->type = new_type(TYPE_UNRESOLVED, true, &type_token);
+    decl->type->unresolved.type_expr = type_ast;
     Parser *parser = c2_module->files->entries[0];
-    vector_add(parser->variables, ast);
+    vector_add(parser->variables, decl);
 }
 static void register_c2_unsigned_constant(const char *type, const char *name, uint64_t size)
 {
@@ -598,14 +596,29 @@ static void register_c2_signed_constant(const char *type, const char *name, int6
     register_c2_constant(name, type, value_new_int_with_int(size));
 }
 
-static void register_c2_builtin(const char *name, BuiltinFamily family, unsigned bits)
+static void register_c2_builtin(const char *name, TypeId family, unsigned bits, bool is_signed)
 {
     Token token = token_wrap(name);
-    Ast *builtin = new_type_definition(BUILTIN_TYPE, &token, true, &token);
-    builtin->definition.def_builtin.bits = bits;
-    builtin->definition.def_builtin.type = family;
-    builtin->definition.module = c2_module;
-    module_add_symbol(c2_module, &token, builtin);
+    Decl *alias = decl_new(DECL_ALIAS_TYPE, &token, &token, true);
+    Type *builtin = new_type(family, true, &token);
+    switch (family)
+    {
+        case TYPE_INT:
+            builtin->integer.bits = bits;
+            builtin->integer.is_signed = is_signed;
+            break;
+        case TYPE_FLOAT:
+            builtin->real.bits = bits;
+            break;
+        case TYPE_BOOL:
+            break;
+        default:
+            FATAL_ERROR("Unsupported builtin");
+    }
+    alias->module = c2_module;
+    alias->type = builtin;
+    builtin->module = c2_module;
+    module_add_symbol(c2_module, &token, alias);
 }
 
 static void create_c2_module()
@@ -640,17 +653,17 @@ static void create_c2_module()
         register_c2_signed_constant("i64", "max_i64", 0x7FFFFFFFFFFFFFFFll);
         register_c2_unsigned_constant("u64", "min_u64", 0);
         register_c2_unsigned_constant("u64", "max_u64", 0xFFFFFFFFFFFFFFFFllu);
-        register_c2_builtin("u8", BUILTIN_UINT, 8);
-        register_c2_builtin("u16", BUILTIN_UINT, 16);
-        register_c2_builtin("u32", BUILTIN_UINT, 32);
-        register_c2_builtin("u64", BUILTIN_UINT, 64);
-        register_c2_builtin("i8", BUILTIN_INT, 8);
-        register_c2_builtin("i16", BUILTIN_INT, 16);
-        register_c2_builtin("i32", BUILTIN_INT, 32);
-        register_c2_builtin("i64", BUILTIN_INT, 64);
-        register_c2_builtin("f32", BUILTIN_FLOAT, 32);
-        register_c2_builtin("f64", BUILTIN_FLOAT, 64);
-        register_c2_builtin("bool", BUILTIN_UINT, 1);
+        register_c2_builtin("u8", TYPE_INT, 8, false);
+        register_c2_builtin("u16", TYPE_INT, 16, false);
+        register_c2_builtin("u32", TYPE_INT, 32, false);
+        register_c2_builtin("u64", TYPE_INT, 64, false);
+        register_c2_builtin("i8", TYPE_INT, 8, true);
+        register_c2_builtin("i16", TYPE_INT, 16, true);
+        register_c2_builtin("i32", TYPE_INT, 32, true);
+        register_c2_builtin("i64", TYPE_INT, 64, true);
+        register_c2_builtin("f32", TYPE_FLOAT, 32, true);
+        register_c2_builtin("f64", TYPE_FLOAT, 64, true);
+        register_c2_builtin("bool", TYPE_BOOL, 1, true);
     }
 };
 
@@ -672,49 +685,47 @@ static bool check_module_imports_and_parse(Component *component, Module *module,
     {
         Parser* parser = files->entries[a];
         // NOTE: first import is module
-        Ast *module_import = parser->imports->entries[0];
-        module_import->import.module = module;
+        Decl *module_import = parser->imports->entries[0];
+        module_import->module = module;
         for (unsigned u = 1; u < parser->imports->size; u++)
         {
-            Ast *import = parser->imports->entries[u];
+            Decl *import = parser->imports->entries[u];
             assert(import);
-            if (exceeds_identifier_len(&import->import.module_name))
+            if (exceeds_identifier_len(&import->name))
             {
-                error_at(&import->import.module_name, "Module name exceeds max length");
+                error_at(&import->name, "Module name exceeds max length");
                 ok = false;
                 continue;
             }
             // handle c2 pseudo-module
-            if (token_compare_str(&import->import.module_name, "c2"))
+            if (token_compare_str(&import->name, "c2"))
             {
                 create_c2_module();
-                import->import.module = c2_module;
+                import->module = c2_module;
                 continue;
             }
-            const LibInfo *target = find_module_lib(&import->import.module_name);
+            const LibInfo *target = find_module_lib(&import->name);
             if (!target)
             {
-                error_at(&import->import.module_name, "Unknown module");
+                error_at(&import->name, "Unknown module");
                 ok = false;
                 continue;
             }
-            import->import.module = target->module;
+            import->module = target->module;
             if (target->component != component)
             {
                 // check that imports are in directly dependent component (no indirect component)
                 if (!component_has_dependency(component, target->component))
                 {
-                    char buffer[512];
-                    snprintf(buffer, 512, "%s has no dependency on library %s, needed for module %.*s)",
+                    error_at(&import->span, "%s has no dependency on library %s, needed for module %.*s",
                             component->name, target->component->name,
-                            import->import.module_name.length, import->import.module_name.start);
-                    error_at(&import->span, buffer);
+                            SPLAT_TOK(import->name));
                     ok = false;
                     continue;
                 }
             }
             if (target->module->files->size) continue;
-            vector_add(queue, &import->import.module_name);
+            vector_add(queue, &import->name);
         }
     }
     return ok;

@@ -107,7 +107,7 @@ const char *token_type_to_string(token_type type);
 
 static_assert(TOKEN_EOF < 128, "Too many different token types");
 
-#define SPLAT_TOK(_tok) (_tok).length, (_tok).start
+#define SPLAT_TOK(_tok) (int)((_tok).length), (_tok).start
 
 typedef struct _Token
 {

@@ -53,13 +53,13 @@ typedef struct _Scope
 } Scope;
 
 
-void scope_add_import_declaration(Scope *scope, Ast *import);
+void scope_add_import_declaration(Scope *scope, Decl *import);
 void scope_init(Scope *scope, const Token *name, Table *modules);
-Ast *scope_check_scoped_symbol(Scope *scope, Token *name);
-void scope_add_scoped_symbol(Scope *scope, Ast *var_decl);
+Decl *scope_check_scoped_symbol(Scope *scope, Token *token);
+void scope_add_scoped_symbol(Scope *scope, Decl *var_decl);
 Module *scope_find_used_module(Scope *scope, Token *name, bool used_public);
-Ast *scope_find_symbol(Scope *scope, Token *token, bool is_type, bool used_public);
-Ast *scope_find_symbol_in_module(Scope *scope, Token *token, Module *module);
+Decl *scope_find_symbol(Scope *scope, Token *token, bool is_type, bool used_public);
+Decl *scope_find_symbol_in_module(Scope *scope, Token *token, Module *module);
 void scope_check_access(Scope *scope, Ast *decl, Token *loc);
 void push_defer(Scope *scope, Ast *defer_stmt);
 void scope_enter(Scope *scope, unsigned flags);

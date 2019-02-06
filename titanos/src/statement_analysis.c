@@ -7,6 +7,7 @@
 #include "analyser.h"
 #include "diagnostics.h"
 #include "error.h"
+#include "types/type.h"
 
 enum
 {
@@ -37,7 +38,7 @@ bool analyse_compound_stmt(Ast *compound_stmt)
     return true;
 }
 
-bool cast_to_type(Ast *expression, Ast *type_expression)
+bool cast_to_type(Ast *expression, Type *type_expression)
 {
     return true;
 }
@@ -52,12 +53,12 @@ bool analyse_return(Ast *stmt)
     Ast *r_value = stmt->return_stmt.expr;
     if (r_value)
     {
-        if (analyser->current_func->func_decl.r_type->type_expr.type == TYPE_EXPR_VOID)
+        if (analyser->current_func->func_decl.rtype->type_id == TYPE_VOID)
         {
             sema_error_at(&r_value->span, "Return value is invalid for void function");
             return false;
         }
-        if (!cast_to_type(r_value, analyser->current_func->func_decl.r_type))
+        if (!cast_to_type(r_value, analyser->current_func->func_decl.rtype))
         {
             // IMPROVE type
             sema_error_at(&r_value->span, "Return value does not match function return type");
@@ -66,7 +67,7 @@ bool analyse_return(Ast *stmt)
     }
     else
     {
-        if (analyser->current_func->func_decl.r_type->type_expr.type != TYPE_EXPR_VOID)
+        if (analyser->current_func->func_decl.rtype->type_id != TYPE_VOID)
         {
             sema_error_at(&stmt->span, "Expected return value");
             return false;

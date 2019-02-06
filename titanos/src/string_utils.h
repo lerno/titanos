@@ -8,7 +8,7 @@
 // Assume well-formed hex!
 static inline Value parse_hex(const char *string, int len)
 {
-	Value value = { .type = TYPE_INT };
+	Value value = { .type = VALUE_TYPE_INT };
 	BigInt *b = &value.big_int;
 	bigint_init_signed(b, 0);
 	const char *end = string + len;
@@ -38,7 +38,7 @@ static inline Value parse_hex(const char *string, int len)
 
 static inline Value parse_dec(const char *string, int len)
 {
-	Value value = { .type = TYPE_INT };
+	Value value = { .type = VALUE_TYPE_INT };
 	BigInt *b = &value.big_int;
 	bigint_init_signed(b, 0);
 	const char *end = string + len;
@@ -59,7 +59,7 @@ static inline Value parse_dec(const char *string, int len)
 
 static inline Value parse_oct(const char *string, int len)
 {
-	Value value = { .type = TYPE_INT };
+	Value value = { .type = VALUE_TYPE_INT };
 	BigInt *b = &value.big_int;
 	bigint_init_signed(b, 0);
 	const char *end = string + len;
@@ -78,7 +78,7 @@ static inline Value parse_oct(const char *string, int len)
 
 static inline Value parse_bin(const char *string, int len)
 {
-	Value value = { .type = TYPE_INT };
+	Value value = { .type = VALUE_TYPE_INT };
 	BigInt *b = &value.big_int;
 	bigint_init_signed(b, 0);
 	const char *end = string + len;

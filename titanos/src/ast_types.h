@@ -14,16 +14,14 @@ typedef struct _Ast Ast;
 typedef enum _AstType
 {
     AST_STRUCT_MEMBER,
-    AST_ATTRIBUTE_LIST,
     AST_ATTRIBUTE,
     AST_TYPE_EXPR,
-    AST_FUNC_DECL,
     AST_FUNC_DEFINTION,
-    AST_PARAM_LIST,
     AST_COMPOUND_STMT,
     AST_IF_STMT,
     AST_WHILE_STMT,
     AST_DO_STMT,
+    AST_DECLARE_STMT,
     AST_DEFER_STMT,
     AST_SWITCH_STMT,
     AST_CASE_STMT,
@@ -33,7 +31,6 @@ typedef enum _AstType
     AST_RETURN_STMT,
     AST_GOTO_STMT,
     AST_FOR_STMT,
-    AST_DECL,
     AST_LABEL,
     AST_CONST_EXPR,
     AST_BINARY_EXPR,
@@ -48,10 +45,6 @@ typedef enum _AstType
     AST_ACCESS_EXPR,
     AST_STRUCT_INIT_VALUES_EXPR,
     AST_DESIGNATED_INITIALIZED_EXPR,
-    AST_VAR_DEFINITION,
-    AST_TYPE_DEFINITION,
-    AST_INCREMENTAL_ARRAY,
-    AST_IMPORT,
     AST_DEFER_RELASE,
     AST_ASM_STMT,
 } AstType;
@@ -62,6 +55,11 @@ typedef struct _DeferList
     Ast *defer_end;
 } DeferList;
 
+
+typedef struct _AstDeclareStmt
+{
+    struct _Decl *decl;
+} AstDeclareStmt;
 
 typedef struct _AstSizeofExpr
 {
@@ -74,22 +72,6 @@ typedef struct _AstCastExpr
     Ast *type;
 } AstCastExpr;
 
-typedef struct _AstVarDefinition
-{
-    bool is_public : 1;
-    bool is_exported : 1;
-    bool is_used : 1;
-    Token name;
-    Ast *type;
-    Ast *attributes;
-    Ast *value; // May be NULL
-} AstVarDefinition;
-
-typedef struct _AstIncrementalArray
-{
-    Token name;
-    Ast *value;
-} AstIncrementalArray;
 
 typedef struct _AstTernaryExpr
 {
@@ -132,96 +114,12 @@ typedef struct _AstFloatExpr
     float_type f;
 } AstFloatExpr;
 
-typedef enum _DefinitionType
-{
-    BUILTIN_TYPE,
-    STRUCT_TYPE,
-    ALIAS_TYPE,
-    ENUM_TYPE,
-    FUNC_TYPE,
-    ENUM_ENTRY_TYPE,
-} DefinitionType;
-
-typedef enum _BuiltinFamily
-{
-    BUILTIN_FLOAT,
-    BUILTIN_BOOL,
-    BUILTIN_UINT,
-    BUILTIN_INT,
-} BuiltinFamily;
-
-typedef struct _DefBuiltin
-{
-    BuiltinFamily type : 3;
-    unsigned bits : 13;
-} DefBuiltin;
-
-typedef struct _DefAlias
-{
-    Ast *type_definition;
-} DefAlias;
-
-typedef struct _DefEnum
-{
-    Ast *type; // Will be an identifier!
-    Vector *entries; // AstDefinition
-} DefEnum;
-
-typedef struct _DefEnumEntry
-{
-    Ast *value;
-} DefEnumEntry;
-
-typedef struct _DefFunc
-{
-    Ast *func_decl; // AstFuncDeclaration
-} DefFunc;
-
-
-typedef struct _DefStruct
-{
-    Vector *members;
-} DefStruct;
-
-typedef enum _StructMemberType
-{
-    STRUCT_MEMBER_TYPE_NORMAL,
-    STRUCT_MEMBER_TYPE_STRUCT,
-    STRUCT_MEMBER_TYPE_UNION
-} StructMemberType;
-
-typedef struct _AstDefinition
-{
-    DefinitionType definition_type : 3;
-    bool is_public : 1;
-    bool is_exported : 1;
-    bool is_incremental : 1;
-    bool is_struct : 1;
-    bool is_used_public : 1;
-    Token name;
-    Module *module;
-    Ast *attributes; // May be NULL
-    union
-    {
-        DefAlias def_alias;
-        DefFunc def_func;
-        DefEnum def_enum;
-        DefBuiltin def_builtin;
-        DefStruct def_struct;
-        DefEnumEntry def_enum_entry;
-    };
-} AstDefinition;
 
 typedef struct _AstConstExpr
 {
     Value value;
 } AstConstExpr;
 
-typedef struct _AstParamList
-{
-    bool variadic : 1;
-    Vector *param_list;
-} AstParamList;
 
 typedef struct _AstCompoundStmt
 {
@@ -274,21 +172,6 @@ typedef struct _AstSwitchStmt
     Ast *default_stmt;
 } AstSwitchStmt;
 
-typedef struct _FunctionName
-{
-    Token struct_name;
-    Token function_name;
-    Token full_name;
-} FunctionName;
-
-typedef struct _AstFuncDecl
-{
-    Ast *r_type;
-    Ast *params;
-    FunctionName *name; // AstTypeExpr
-    Ast *attributes;
-    Module *module;
-} AstFuncDecl;
 
 typedef struct _AstDecl
 {
@@ -301,11 +184,13 @@ typedef struct _AstDecl
     Ast *type;
 } AstDecl;
 
+typedef struct _Type Type;
+
 typedef struct _AstFuncDefinition
 {
     bool is_public : 1;
     bool is_exported : 1;
-    Ast *func_decl; // AstFuncDecl
+    Type *func_decl;
     Ast *body; // AstCompoundStmt will be NULL in interfaces.
     Vector *defers; // NULL unless defers
 } AstFuncDefinition;
@@ -399,12 +284,8 @@ typedef struct _IdentifierType
 
 typedef struct _ArrayTypeExpr
 {
-    Ast *type; // Note that this may either be a type or expression
-    union
-    {
-        Ast *size;
-        int64_t fix_size;
-    };
+    Ast *type; // TypeExpr
+    Ast *size;
 } ArrayTypeExpr;
 
 typedef struct _PointerTypeExpr
@@ -444,34 +325,7 @@ typedef struct _AstAttribute
 } AstAttribute;
 
 
-typedef struct _AstStructMember
-{
-    StructMemberType type : 2;
-    Token name;
-    union
-    {
-        Vector *members;
-        Ast *value_type;
-    };
-} AstStructMember;
 
-
-typedef enum
-{
-    IMPORT_TYPE_FULL,
-    IMPORT_TYPE_ALIAS,
-    IMPORT_TYPE_LOCAL,
-} ImportType;
-
-typedef struct _AstImport
-{
-    ImportType type : 3;
-    bool used : 1;
-    bool used_public : 1;
-    Token module_name;
-    Token alias;
-    Module *module;
-} AstImport;
 
 typedef struct _AstDeferReleaseStmt
 {
@@ -493,18 +347,11 @@ typedef struct _Ast
     Token span;
     union {
 
-        AstFuncDecl func_decl;
-        AstFuncDefinition func_definition;
-        AstParamList param_list;
-        AstAttributeList attribute_list;
         AstAttribute attribute;
 
         AstTypeExpr type_expr;
-        AstStructMember struct_member;
-        AstDefinition definition;
-        AstIncrementalArray incremental_array;
-        AstVarDefinition var_definition;
 
+        AstDeclareStmt declare_stmt;
         AstCompoundStmt compound_stmt;
         AstIfStmt if_stmt;
         AstDoStmt do_stmt;
@@ -534,16 +381,14 @@ typedef struct _Ast
         AstSizeofExpr sizeof_expr;
         AstCastExpr cast_expr;
 
-        AstImport import;
     };
 } Ast;
 
-void print_ast(Ast *ast, int current_indent);
-
+void print_ast(Ast *ast, unsigned current_indent);
+void print_sub_ast(const char *header, unsigned current_indent, Ast *ast);
 Ast *new_ast(AstType type);
 Ast *new_ast_with_span(AstType type, Token *span);
 Ast *end_ast(Ast *ast, Token *end);
-Ast *new_decl(Ast *type);
+
 Ast *new_type_expr(TypeExprType type_expr, Token *span);
-Ast *new_type_definition(DefinitionType type, Token *name, bool public, Token *initial_token);
 Ast *ast_compound_stmt_last(Ast *compound_stmt);

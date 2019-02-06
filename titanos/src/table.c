@@ -31,6 +31,12 @@ void table_init(Table *table, uint32_t initial_size)
     table->entries = entries;
 }
 
+void table_clear(Table *table)
+{
+    memset(table->entries, 0, sizeof(table->capacity * sizeof(Entry)));
+    table->count = 0;
+}
+
 #define TOMBSTONE ((void *)0x01)
 static Entry *entry_find(Entry *entries, uint32_t capacity, const char *key, uint32_t key_len, uint32_t hash)
 {

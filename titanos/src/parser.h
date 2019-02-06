@@ -13,8 +13,8 @@ typedef struct _Parser
 	bool is_interface : 1;
 	unsigned remainder : 31;
     Token current_module;
-    Vector *imports;
-	Vector *types;
+    Vector *imports; // Decl *
+	Vector *types; // Decl *
 	Vector *variables;
 	Vector *functions;
 	Vector *enum_values;

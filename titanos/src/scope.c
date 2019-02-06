@@ -22,15 +22,17 @@ Module *scope_find_any_module(Scope *scope, const Token *token)
     return table_get_token(scope->all_modules, token);
 }
 
-void scope_add_import_declaration(Scope *scope, Ast *import)
+void scope_add_import_declaration(Scope *scope, Decl *import)
 {
-    assert(import->import.module && "Module missing");
+    assert(import->module && "Module missing");
 
-    Token *name = &import->import.module_name;
+    Token *name = &import->name;
+    DEBUG_LOG("Importing %.*s", SPLAT_TOK(*name));
+
     switch (import->import.type)
     {
         case IMPORT_TYPE_LOCAL:
-            vector_add(scope->locals,import->import.module);
+            vector_add(scope->locals, import->module);
             break;
         case IMPORT_TYPE_ALIAS:
             name = &import->import.alias;
@@ -56,36 +58,56 @@ void scope_mark_import_as_used(Scope *scope, Module *module, bool used_public)
     {
         Entry *entry = &scope->imported_modules.entries[i];
         if (entry->key == NULL) continue;
-        Ast *import = entry->value;
-        if (module == import->import.module)
+        Decl *import = entry->value;
+        if (module == import->module)
         {
-            import->import.used = true;
-            import->import.used_public = true;
+            import->is_used = true;
+            import->is_used_public = true;
             break;
         }
     }
 }
 
-Ast *scope_find_symbol(Scope *scope, Token *symbol, bool is_type, bool used_public)
+Decl *scope_find_symbol_in_module(Scope *scope, Token *token, Module *module)
 {
-    Ast *ast = table_get_token(&scope->symbol_cache, symbol);
-    if (ast)
+    Decl *symbol = module_find_symbol(module, token);
+    if (!symbol)
     {
-        if (used_public && ast->definition.module != scope->module)
+        sema_error_at(token, "Cannot find %.*s in module %.*s", SPLAT_TOK(*token), SPLAT_TOK(module->name));
+        return NULL;
+    }
+    if (scope_is_external_module(scope, module))
+    {
+        if (!symbol->is_public)
         {
-            scope_mark_import_as_used(scope, ast->import.module, used_public);
+            sema_error_at(token, "%.*s.%.*s is not public", SPLAT_TOK(module->name), SPLAT_TOK(*token));
+            return NULL;
         }
-        return ast;
+        symbol->is_used_public = true;
+    }
+    return symbol;
+}
+
+Decl *scope_find_symbol(Scope *scope, Token *symbol, bool is_type, bool used_public)
+{
+    Decl *symbol_decl = table_get_token(&scope->symbol_cache, symbol);
+    if (symbol_decl)
+    {
+        if (used_public && symbol_decl->module != scope->module)
+        {
+            scope_mark_import_as_used(scope, symbol_decl->module, used_public);
+        }
+        return symbol_decl;
     }
     bool ambiguous = false;
     bool visible_match = false;
     for (unsigned i = 0; i < scope->locals->size; i++)
     {
         Module *module = scope->locals->entries[i];
-        Ast *decl = module_find_symbol(module, symbol);
+        Decl *decl = module_find_symbol(module, symbol);
         if (!decl) continue;
-        bool visible = !module->is_external || decl->definition.is_public;
-        if (ast)
+        bool visible = !module->is_external || decl->is_public;
+        if (symbol_decl)
         {
             // if previous result was non-visible, replace with new one
             if (visible_match == visible)
@@ -100,12 +122,12 @@ Ast *scope_find_symbol(Scope *scope, Token *symbol, bool is_type, bool used_publ
             }
             if (visible_match) continue;
         }
-        ast = decl;
+        symbol_decl = decl;
         visible_match = visible;
     }
     if (ambiguous) return NULL;
 
-    if (!ast)
+    if (!symbol_decl)
     {
         if (is_type)
         {
@@ -120,19 +142,19 @@ Ast *scope_find_symbol(Scope *scope, Token *symbol, bool is_type, bool used_publ
 
 
     // mark import as as used
-    scope_mark_import_as_used(scope, ast->import.module, used_public);
+    scope_mark_import_as_used(scope, symbol_decl->module, used_public);
     if (!visible_match)
     {
         sema_error_at(symbol, "Symbol '%.*s' is not public", symbol->length, symbol->start);
         return NULL;
     }
 
-    if (ast->definition.module && ast->definition.module != scope->module)
+    if (symbol_decl->module && symbol_decl->module != scope->module)
     {
-        ast->definition.is_used_public = true;
+        symbol_decl->is_used_public = true;
     }
-    table_set_token(&scope->symbol_cache, symbol, ast);
-    return ast;
+    table_set_token(&scope->symbol_cache, symbol, symbol_decl);
+    return symbol_decl;
 }
 
 bool scope_had_errors(Scope *scope)
@@ -141,18 +163,54 @@ bool scope_had_errors(Scope *scope)
     return errors_at_scope_start < errors();
 }
 
-void scope_add_scoped_symbol(Scope *scope, Ast *var_decl)
+void scope_add_scoped_symbol(Scope *scope, Decl *var_decl)
 {
     assert(scope->cur_scope);
-    assert(var_decl->type == AST_DECL);
 
     vector_add(scope->cur_scope->local_decls, var_decl);
-    table_set_token(&scope->symbol_cache, &var_decl->decl.name, var_decl);
+    table_set_token(&scope->symbol_cache, &var_decl->name, var_decl);
 }
 
-Ast *scope_check_scoped_symbol(Scope *scope, Token *token)
+Module *scope_find_used_module(Scope *scope, Token *name, bool used_public)
 {
-    Ast *old = table_get_token(&scope->symbol_cache, token);
+    Decl *import_decl = table_get_token(&scope->imported_modules, name);
+    if (import_decl)
+    {
+        import_decl->is_used = true;
+        if (used_public) import_decl->is_used_public = true;
+        return import_decl->module;
+    }
+
+    // check if used with alias (then fullname is forbidden)
+    /* TODO when understood!
+    for ()
+    for (ImportsConstIter iter2 = importedModules.begin(); iter2 != importedModules.end(); ++iter2) {
+        ImportDecl* I = iter2->second;
+        I->setUsed();
+        if (usedPublic) {
+            // TODO refactor common code
+            // TODO check if using non-exported module from exported one
+            I->setUsedPublic();
+        }
+        const Module* p = I->getModule();
+        if (p->getName() == name) {
+            Diags.Report(loc, diag::err_module_has_alias) << name << iter2->first;
+            return 0;
+        }
+    }
+    const Module* P2 = findAnyModule(name.c_str());
+    if (P2) {
+        Diags.Report(loc, diag::err_module_not_used) << name;
+    } else {
+        Diags.Report(loc, diag::err_unknown_module) << name;
+    }
+    return 0;*/
+    return NULL;
+}
+
+Decl * scope_check_scoped_symbol(Scope *scope, Token *token)
+{
+    Decl *old = table_get_token(&scope->symbol_cache, token);
 
     if (old) return old;
 
@@ -233,11 +291,11 @@ void scope_exit(Scope *scope, Ast *stmt)
     bool had_errors = scope_had_errors(scope);
     for (unsigned i = 0; i < current->local_decls->size; i++)
     {
-        Ast *decl = current->local_decls->entries[i];
-        assert(decl->type == AST_DECL);
-        if (!decl->decl.is_used && !had_errors)
+        Decl *decl = current->local_decls->entries[i];
+        assert(decl->type_id == DECL_VAR);
+        if (!decl->is_used && !had_errors)
         {
-            if (decl->decl.is_parameter)
+            if (decl->var.kind == VARDECL_PARAM)
             {
                 sema_warn_at(DIAG_UNUSED_PARAMETER, &decl->span, "Unused parameter");
             }
@@ -247,7 +305,7 @@ void scope_exit(Scope *scope, Ast *stmt)
             }
         }
         // IMPROVE this assumes shadowing is disallowed.
-        table_delete_token(&scope->symbol_cache, &decl->decl.name);
+        table_delete_token(&scope->symbol_cache, &decl->name);
     }
 
     Ast *defer = scope_defer_top(scope);

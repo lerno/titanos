@@ -6,6 +6,7 @@
 #include "ast_types.h"
 #include "arena_allocator.h"
 #include <stdio.h>
+#include <types/type.h>
 #include "vector.h"
 #include "diagnostics.h"
 #include "printer.h"
@@ -29,20 +30,13 @@ Ast *new_ast_with_span(AstType type, Token *span)
     return ast;
 }
 
-Ast *new_decl(Ast *type)
-{
-    Ast *decl = new_ast_with_span(AST_DECL, &type->span);
-    decl->decl = (AstDecl) { .type = type };
-    return decl;
-}
-
 Ast *end_ast(Ast *ast, Token *end)
 {
     token_expand(&ast->span, end);
     return ast;
 }
 
-static void print_sub_ast(const char *header, int current_indent, Ast *ast)
+void print_sub_ast(const char *header, unsigned int current_indent, Ast *ast)
 {
     if (!ast) return;
     indent(current_indent);
@@ -70,7 +64,7 @@ static void print_sub_ast_list(const char *header, int current_indent, Vector *l
 }
 
 
-void print_ast(Ast *ast, int current_indent)
+void print_ast(Ast *ast, unsigned current_indent)
 {
     indent(current_indent++);
     if (!ast)
@@ -80,44 +74,6 @@ void print_ast(Ast *ast, int current_indent)
     }
     switch (ast->type)
     {
-        case AST_IMPORT:
-            printf("IMPORT ");
-            print_token(&ast->import.module_name);
-            switch (ast->import.type)
-            {
-                case IMPORT_TYPE_FULL:
-                    break;
-                case IMPORT_TYPE_ALIAS:
-                    printf(" alias ");
-                    print_token(&ast->import.alias);
-                    break;
-                case IMPORT_TYPE_LOCAL:
-                    printf(" local");
-                    break;
-            }
-            printf("\n");
-            return;
-        case AST_FUNC_DECL:
-            printf("FUNC_DECL_TYPE ");
-            print_token(&ast->func_decl.name->full_name);
-            printf("\n");
-            print_sub_ast("Type", current_indent, ast->func_decl.r_type);
-            print_sub_ast("Params", current_indent, ast->func_decl.params);
-            return;
-        case AST_FUNC_DEFINTION:
-            printf("FUNC_DEFINTION\n");
-            print_sub_ast("Decl", current_indent, ast->func_definition.func_decl);
-            print_sub_ast("Body", current_indent, ast->func_definition.body);
-            return;
-        case AST_PARAM_LIST:
-            printf("PARAM_LIST");
-            if (ast->param_list.variadic)
-            {
-                printf(" [VARIADIC]");
-            }
-            printf("\n");
-            print_sub_ast_list("Params", current_indent, ast->param_list.param_list);
-            return;
         case AST_COMPOUND_STMT:
             printf("COMPOUND_STMT\n");
             print_sub_ast_list("Lines", current_indent, ast->compound_stmt.stmts);
@@ -182,17 +138,6 @@ void print_ast(Ast *ast, int current_indent)
             print_sub_ast("Incr", current_indent, ast->for_stmt.incr);
             print_sub_ast("Body", current_indent, ast->for_stmt.body);
             return;
-        case AST_DECL:
-            printf("DECLARATION ");
-            print_token(&ast->decl.name);
-            if (ast->decl.is_parameter) printf(" parameter");
-            if (ast->decl.is_used) printf(" used");
-            if (ast->decl.is_public) printf(" public");
-            if (ast->decl.is_exported) printf(" exported");
-            printf("\n");
-            print_sub_ast("Type", current_indent, ast->decl.type);
-            print_sub_ast("Init", current_indent, ast->decl.init_expr);
-            return;
         case AST_LABEL:
             printf("LABEL [");
             print_token(&ast->label_stmt.label_name);
@@ -244,27 +189,6 @@ void print_ast(Ast *ast, int current_indent)
             print_sub_ast("Parent", current_indent, ast->access_expr.parent);
             print_sub_ast("Sub Element", current_indent, ast->access_expr.sub_element);
             return;
-        case AST_STRUCT_MEMBER:
-            printf("STRUCT_MEMBER ");
-            if (ast->struct_member.name.length) print_token(&ast->struct_member.name);
-            printf("\n");
-            switch (ast->struct_member.type)
-            {
-                case STRUCT_MEMBER_TYPE_NORMAL:
-                    print_sub_ast("Value", current_indent, ast->struct_member.value_type);
-                    break;
-                case STRUCT_MEMBER_TYPE_UNION:
-                    print_sub_ast_list("Union", current_indent, ast->struct_member.members);
-                    break;
-                case STRUCT_MEMBER_TYPE_STRUCT:
-                    print_sub_ast_list("Struct", current_indent, ast->struct_member.members);
-                    break;
-            }
-            return;
-        case AST_ATTRIBUTE_LIST:
-            printf("ATTRIBUTE_LIST\n");
-            print_sub_ast_list("Attrs", current_indent, ast->attribute_list.list);
-            return;
         case AST_ATTRIBUTE:
             printf("ATTRIBUTE ");
             print_token(&ast->attribute.name);
@@ -288,15 +212,7 @@ void print_ast(Ast *ast, int current_indent)
                 case TYPE_EXPR_ARRAY:
                     printf(" ARRAY\n");
                     print_sub_ast("Base", current_indent, ast->type_expr.array_type_expr.type);
-                    if (ast->type_expr.flags.resolved)
-                    {
-                        indent(current_indent);
-                        printf("Size: %llu\n", ast->type_expr.array_type_expr.fix_size);
-                    }
-                    else if (ast->type_expr.array_type_expr.size)
-                    {
-                        print_sub_ast("Size", current_indent, ast->type_expr.array_type_expr.size);
-                    }
+                    print_sub_ast("Size", current_indent, ast->type_expr.array_type_expr.size);
                     break;
                 case TYPE_EXPR_IDENTIFIER:
                     printf(" IDENTIFIER ");
@@ -327,75 +243,6 @@ void print_ast(Ast *ast, int current_indent)
             printf("\n");
             print_sub_ast("Value", current_indent, ast->designated_initializer_expr.expr);
             return;
-        case AST_TYPE_DEFINITION:
-            printf("TYPE_DEFINITION ");
-            print_token(&ast->definition.name);
-            if (ast->definition.is_public) printf(" public");
-            if (ast->definition.is_exported) printf(" exported");
-            switch (ast->definition.definition_type)
-            {
-                case STRUCT_TYPE:
-                    printf(ast->definition.is_struct ? " STRUCT" : " UNION");
-                    printf("\n");
-                    print_sub_ast_list("Members", current_indent, ast->definition.def_struct.members);
-                    break;
-                case ENUM_TYPE:
-                    printf(" enum");
-                    if (ast->definition.is_incremental) printf(" incr");
-                    printf("\n");
-                    print_sub_ast("Type", current_indent, ast->definition.def_enum.type);
-                    print_sub_ast_list("Entries", current_indent, ast->definition.def_enum.entries);
-                    break;
-                case ENUM_ENTRY_TYPE:
-                    printf(" enum entry");
-                    printf("\n");
-                    print_sub_ast("Value", current_indent, ast->definition.def_enum_entry.value);
-                    break;
-                case ALIAS_TYPE:
-                    printf(" alias\n");
-                    print_sub_ast("Type", current_indent, ast->definition.def_alias.type_definition);
-                    break;
-                case FUNC_TYPE:
-                    printf(" func\n");
-                    print_sub_ast("Declaration", current_indent, ast->definition.def_func.func_decl);
-                    printf("BUILTIN_TYPE ");
-                    break;
-                case BUILTIN_TYPE:
-                    switch (ast->definition.def_builtin.type)
-                    {
-                        case BUILTIN_BOOL:
-                            printf(" bool\n");
-                            break;
-                        case BUILTIN_FLOAT:
-                            printf(" float %d bits\n", ast->definition.def_builtin.bits);
-                            break;
-                        case BUILTIN_INT:
-                            printf(" int %d bits\n", ast->definition.def_builtin.bits);
-                            break;
-                        case BUILTIN_UINT:
-                            printf(" uint %d bits\n", ast->definition.def_builtin.bits);
-                            break;
-                    }
-                    break;
-
-            }
-            print_sub_ast("Attributes", current_indent, ast->definition.attributes);
-            return;
-        case AST_VAR_DEFINITION:
-            printf("VAR_DEFINITION ");
-            print_token(&ast->var_definition.name);
-            if (ast->var_definition.is_public) printf(" public");
-            if (ast->var_definition.is_exported) printf(" exported");
-            printf("\n");
-            print_sub_ast("Type", current_indent, ast->var_definition.type);
-            print_sub_ast("Value", current_indent, ast->var_definition.value);
-            print_sub_ast("Attributes", current_indent, ast->var_definition.attributes);
-            return;
-        case AST_INCREMENTAL_ARRAY:
-            printf("INCREMENTAL_ARRAY ");
-            print_token(&ast->incremental_array.name);
-            print_sub_ast("Value", current_indent, ast->incremental_array.value);
-            return;
         case AST_SIZEOF_EXPR:
             printf("SIZEOF_EXPR\n");
             print_sub_ast("Expr", current_indent, ast->sizeof_expr.expr);
@@ -405,6 +252,9 @@ void print_ast(Ast *ast, int current_indent)
             print_sub_ast("Expr", current_indent, ast->cast_expr.expr);
             print_sub_ast("Type", current_indent, ast->cast_expr.type);
             return;
+        case AST_DECLARE_STMT:
+            printf("DECLARE_STMT\n");
+            decl_print_sub("Decl", current_indent, ast->declare_stmt.decl);
         case AST_DEFER_RELASE:
             printf("DEFER_RELEASE\n");
             print_sub_ast("Inner", current_indent, ast->defer_release_stmt.inner);
@@ -412,7 +262,7 @@ void print_ast(Ast *ast, int current_indent)
             print_sub_ast("DeferEnd", current_indent, ast->defer_release_stmt.list.defer_end);
             return;
     }
-    printf("TODO\n");
+    printf("TODO %d\n", ast->type);
 }
 
 
@@ -428,20 +278,6 @@ Ast *new_type_expr(TypeExprType type_expr, Token *span)
     return ast;
 }
 
-Ast *new_type_definition(DefinitionType type, Token *name, bool public, Token *initial_token)
-{
-    Ast *ast = new_ast_with_span(AST_TYPE_DEFINITION, initial_token);
-    ast->definition.definition_type = type;
-    ast->definition.name = *name;
-    ast->definition.is_public = public;
-	ast->definition.is_exported = false;
-	ast->definition.is_incremental = false;
-	ast->definition.is_struct = false;
-	ast->definition.is_used_public = false;
-	ast->definition.module = NULL;
-	ast->definition.attributes = NULL;
-	return ast;
-}
 
 Ast *ast_compound_stmt_last(Ast *compound_stmt)
 {

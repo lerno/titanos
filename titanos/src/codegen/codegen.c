@@ -12,33 +12,29 @@
 #include "parser.h"
 #include "error.h"
 #include "ast_types.h"
+#include "types/type.h"
 
-static LLVMTypeRef codegen_convert_type_expr(Ast *type);
 
-static LLVMTypeRef codegen_convert_type(Ast *type)
+static LLVMTypeRef llvm_type(Type *type);
+
+static LLVMTypeRef codegen_convert_type(Type *type)
 {
-    assert(type->type == AST_TYPE_DEFINITION);
-    switch (type->definition.definition_type)
+    assert(!type->llvm_type && "Called even though the type is already set.");
+
+    switch (type->type_id)
     {
-        case STRUCT_TYPE:
-            FATAL_ERROR("TODO");
-        case FUNC_TYPE:
-            FATAL_ERROR("TODO");
-        case ENUM_TYPE:
-            return codegen_convert_type_expr(type->definition.def_enum.type);
-        case ALIAS_TYPE:
-            return codegen_convert_type(type->definition.def_alias.type_definition);
-        case BUILTIN_TYPE:
-            break;
-    }
-    unsigned bits = type->definition.def_builtin.bits;
-    switch (type->definition.def_builtin.type)
-    {
-        case BUILTIN_UINT:
-        case BUILTIN_INT:
-            return LLVMIntType(bits);
-        case BUILTIN_FLOAT:
-            switch (bits)
+        case TYPE_VOID:
+            return LLVMVoidType();
+        case TYPE_POINTER:
+            return LLVMPointerType(codegen_convert_type(type->pointer.base), 0);
+        case TYPE_BOOL:
+            return LLVMInt1Type();
+        case TYPE_INT:
+            return LLVMIntType(type->integer.bits);
+        case TYPE_ARRAY:
+            return LLVMArrayType(codegen_convert_type(type->array.base), type->array.len);
+        case TYPE_FLOAT:
+            switch (type->real.bits)
             {
                 case 16:
                     return LLVMHalfType();
@@ -49,49 +45,39 @@ static LLVMTypeRef codegen_convert_type(Ast *type)
                 case 128:
                     return LLVMFP128Type();
                 default:
-                    assert("Illegal bit size");
+                    FATAL_ERROR("Illegal floating point size %d", type->real.bits);
             }
-        case BUILTIN_BOOL:
-            return LLVMInt1Type();
+        case TYPE_NIL:
+            return LLVMPointerType(LLVMVoidType(), 0);
+        case TYPE_FUNC:
+            assert(type->func.rtype_resolved);
+//            return LLVMFunctionType(llvm_type(type->func.rtype), /* TODO */ NULL, type->func.params->size, type->func.params->param_list.variadic);
+        case TYPE_ENUM:
+            return llvm_type(type->enumeration.int_type);
+        case TYPE_STRUCT:
+        case TYPE_UNION:
+            FATAL_ERROR("TODO");
+//            return llvm_type(...)
+        case TYPE_INVALID:
+            FATAL_ERROR("Invalid type reached");
+        case TYPE_CONST_FLOAT:
+        case TYPE_CONST_INT:
+            FATAL_ERROR("Should never happen");
+        default:
+            FATAL_ERROR("Unknown type %d", type->type_id);
     }
-    print_ast(type, 0);
-    FATAL_ERROR("Illegal type found");
 }
 
-
-static LLVMTypeRef codegen_convert_type_expr(Ast *type)
+static LLVMTypeRef llvm_type(Type *type)
 {
-    assert(type->type == AST_TYPE_EXPR && "Expected a type");
-    switch (type->type_expr.type)
-    {
-        case TYPE_EXPR_VOID:
-            return LLVMVoidType();
-        case TYPE_EXPR_POINTER:
-            return LLVMPointerType(codegen_convert_type_expr(type->type_expr.pointer_type_expr.type), 0);
-        case TYPE_EXPR_ARRAY:
-            if (type->type_expr.array_type_expr.size == NULL)
-            {
-                return LLVMPointerType(codegen_convert_type_expr(type->type_expr.array_type_expr.type), 0);
-            }
-#ifdef TODO
-            assert(type->type_expr.array_type_expr.size->type == AST_UINT_EXPR
-                           || type->type_expr.array_type_expr.size->type == AST_INT_EXPR);
-            return LLVMArrayType(codegen_convert_type_expr(type->type_expr.array_type_expr.type),
-                                 type->type_expr.array_type_expr.size->type == AST_UINT_EXPR
-                                 ? (unsigned)type->type_expr.array_type_expr.size->uint_expr.u
-                                 : (unsigned)type->type_expr.array_type_expr.size->int_expr.i);
-#endif
-        case TYPE_EXPR_IDENTIFIER:
-            assert(type->type_expr.identifier_type_expr.resolved_type);
-            return codegen_convert_type(type->type_expr.identifier_type_expr.resolved_type);
-
-    }
-    FATAL_ERROR("Unknown type expression");
+    if (type->llvm_type) return type->llvm_type;
+    type->llvm_type = codegen_convert_type(type);
+    return type->llvm_type;
 }
 
 void codegen_function_proto(LLVMModuleRef llvm_module, Parser *parser, Ast *function)
 {
-    LLVMTypeRef return_type = codegen_convert_type_expr(function->func_definition.func_decl->func_decl.r_type);
+//    LLVMTypeRef return_type = codegen_convert_type_expr(function->func_definition.func_decl->func.rtype);
 
 
 /*

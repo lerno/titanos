@@ -18,10 +18,12 @@ typedef struct _Analyser
     Module *module;
     Parser *parser;
     Scope scope;
-    Ast *current_func;
+    Decl *current_func;
     Vector labels;
     Vector gotos;
     Vector defers;
+    Table temp_table;
+    Vector temp_vector;
     /*
      *   AST& ast;
          const Module& module;

@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include "ansi_color.h"
 #include "error.h"
-
+#include "lexer.h"
 
 static inline void indent(int indent)
 {

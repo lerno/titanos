@@ -7,12 +7,12 @@
 
 typedef enum _ValueType
 {
-    TYPE_FLOAT,
-    TYPE_INT,
-    TYPE_BOOL,
-    TYPE_NIL,
-    TYPE_STRING,
-    TYPE_ERROR,
+    VALUE_TYPE_FLOAT,
+    VALUE_TYPE_INT,
+    VALUE_TYPE_BOOL,
+    VALUE_TYPE_NIL,
+    VALUE_TYPE_STRING,
+    VALUE_TYPE_ERROR,
 } ValueType;
 
 typedef struct _BigInt BigInt;

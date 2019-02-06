@@ -23,3 +23,11 @@ int use_colors(void);
   } } while (0)
 
 
+#define DEBUG
+
+#ifdef DEBUG
+#define DEBUG_LOG(_string, ...) do { printf("%s:%d " _string, __func__, __LINE__, ##__VA_ARGS__); printf("\n"); } while(0)
+#else
+#define DEBUG_LOG(_string, ...)
+#endif
+#define LOG_FUNC DEBUG_LOG("<<");
