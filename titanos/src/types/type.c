@@ -4,13 +4,15 @@
 
 #include <string.h>
 #include <printer.h>
+#include <expr.h>
 #include "type.h"
 #include "arena_allocator.h"
 #include "ast_types.h"
+#include "decl.h"
 
-Type *new_unresolved_type(Ast *expr, bool public)
+Type *new_unresolved_type(Expr *expr, bool public)
 {
-    assert(expr->type == AST_TYPE_EXPR);
+    assert(expr->expr_id == EXPR_TYPE || expr->expr_id == EXPR_IDENTIFIER || expr->expr_id == EXPR_ACCESS);
     Type *type = new_type(TYPE_UNRESOLVED, public, &expr->span);
     type->unresolved.type_expr = expr;
     return type;
@@ -34,7 +36,13 @@ Type *end_type(Type *type, Token *end)
     return type;
 }
 
-void print_sub_type(const char *header, int current_indent, Type *type)
+Type *void_type()
+{
+    static Type type = { .type_id = TYPE_VOID, .is_public = true };
+    return &type;
+}
+
+void type_print_sub(const char *header, unsigned int current_indent, Type *type)
 {
     if (!type) return;
     indent(current_indent);
@@ -42,7 +50,20 @@ void print_sub_type(const char *header, int current_indent, Type *type)
     print_type(type, current_indent + 1);
 }
 
-void print_type(Type *type, int current_indent)
+static void print_unresolved_or_name(const char *name, Type *type)
+{
+    printf("%s ", name);
+    if (!type->decl)
+    {
+        printf("[UNRESOLVED]\n");
+    }
+    else
+    {
+        print_token(&type->decl->name);
+        printf("\n");
+    }
+}
+void print_type(Type *type, unsigned current_indent)
 {
     indent(current_indent++);
     if (!type)
@@ -53,74 +74,119 @@ void print_type(Type *type, int current_indent)
     switch (type->type_id)
     {
         case TYPE_FUNC:
-            printf("TYPE_FUNC ");
-            print_token(&type->func.name->full_name);
-            printf("\n");
-            if (type->func.rtype_resolved)
-            {
-                print_sub_type("Type", current_indent, type->func.rtype);
-            }
-            else
-            {
-                print_sub_ast("Type", current_indent, type->func.rtype_expr);
-            }
-            print_sub_ast("Params", current_indent, type->func.params);
+            print_unresolved_or_name("TYPE_FUNC", type);
             return;
-            /*
-             *             printf("TYPE_DEFINITION ");
-            print_token(&ast->definition.name);
-            if (ast->definition.is_public) printf(" public");
-            if (ast->definition.is_exported) printf(" exported");
-            switch (ast->definition.definition_type)
-            {
-                case STRUCT_TYPE:
-                    printf(ast->definition.is_struct ? " STRUCT" : " UNION");
-                    printf("\n");
-                    print_sub_ast_list("Members", current_indent, ast->definition.def_struct.members);
-                    break;
-                case ENUM_TYPE:
-                    printf(" enum");
-                    if (ast->definition.is_incremental) printf(" incr");
-                    printf("\n");
-                    print_sub_ast("Type", current_indent, ast->definition.def_enum.type);
-                    print_sub_ast_list("Entries", current_indent, ast->definition.def_enum.entries);
-                    break;
-                case ENUM_ENTRY_TYPE:
-                    printf(" enum entry");
-                    printf("\n");
-                    print_sub_ast("Value", current_indent, ast->definition.def_enum_entry.value);
-                    break;
-                case ALIAS_TYPE:
-                    printf(" alias\n");
-                    print_sub_ast("Type", current_indent, ast->definition.def_alias.type_definition);
-                    break;
-                case FUNC_TYPE:
-                    printf(" func\n");
-                    print_sub_ast("Declaration", current_indent, ast->definition.def_func.func_decl);
-                    printf("BUILTIN_TYPE ");
-                    break;
-                case BUILTIN_TYPE:
-                    switch (ast->definition.def_builtin.type)
-                    {
-                        case BUILTIN_BOOL:
-                            printf(" bool\n");
-                            break;
-                        case BUILTIN_FLOAT:
-                            printf(" float %d bits\n", ast->definition.def_builtin.bits);
-                            break;
-                        case BUILTIN_INT:
-                            printf(" int %d bits\n", ast->definition.def_builtin.bits);
-                            break;
-                        case BUILTIN_UINT:
-                            printf(" uint %d bits\n", ast->definition.def_builtin.bits);
-                            break;
-                    }
-                    break;
+        case TYPE_ENUM:
+            print_unresolved_or_name("TYPE_ENUM", type);
+            return;
+        case TYPE_VOID:
+            printf("TYPE_VOID\n");
+            return;
+        case TYPE_BOOL:
+            printf("TYPE_BOOL\n");
+            return;
+        case TYPE_INT:
+            printf("TYPE_INT %s-%d\n", type->integer.is_signed ? "signed" : "unsigned", type->integer.bits);
+            return;
+        case TYPE_FLOAT:
+            printf("TYPE_FLOAT [%d]\n", type->real.bits);
+            return;
+        case TYPE_POINTER:
+            print_unresolved_or_name("TYPE_POINTER", type);
+            type_print_sub("Opaque", current_indent, type->pointer.base);
+            return;
+        case TYPE_ARRAY:
+            print_unresolved_or_name("TYPE_ARRAY", type);
+            // Improve add length
+            return;
+        case TYPE_STRUCT:
+            print_unresolved_or_name("TYPE_STRUCT", type);
+            return;
+        case TYPE_CONST_FLOAT:
+            printf("TYPE_CONST_FLOAT\n");
+            return;
+        case TYPE_CONST_INT:
+            printf("TYPE_CONST_INT\n");
+            return;
+        case TYPE_NIL:
+            printf("TYPE_NIL\n");
+            return;
+        case TYPE_UNION:
+            print_unresolved_or_name("TYPE_UNION", type);
+            return;
+        case TYPE_OPAQUE:
+            print_unresolved_or_name("TYPE_OPAQUE", type);
+            type_print_sub("Opaque", current_indent, type->opaque.base);
+            return;
+        case TYPE_IMPORT:
+            print_unresolved_or_name("TYPE_IMPORT", type);
+            return;
+        case TYPE_UNRESOLVED:
+            printf("UNRESOLVED\n");
+            expr_print_sub("Ast", current_indent, type->unresolved.type_expr);
+            break;
+        case TYPE_INVALID:
+            printf("TYPE_INVALID\n");
+            return;
+    }
+    printf("TODO\n");
+}
 
-            }
-            print_sub_ast("Attributes", current_indent, ast->definition.attributes);
+/*
+ *             printf("TYPE_DEFINITION ");
+print_token(&ast->definition.name);
+if (ast->definition.is_public) printf(" public");
+if (ast->definition.is_exported) printf(" exported");
+switch (ast->definition.definition_type)
+{
+    case STRUCT_TYPE:
+        printf(ast->definition.is_struct ? " STRUCT" : " UNION");
+        printf("\n");
+        print_sub_ast_list("Members", current_indent, ast->definition.def_struct.members);
+        break;
+    case ENUM_TYPE:
+        printf(" enum");
+        if (ast->definition.is_incremental) printf(" incr");
+        printf("\n");
+        print_sub_ast("Type", current_indent, ast->definition.def_enum.type);
+        print_sub_ast_list("Entries", current_indent, ast->definition.def_enum.entries);
+        break;
+    case ENUM_ENTRY_TYPE:
+        printf(" enum entry");
+        printf("\n");
+        print_sub_ast("Value", current_indent, ast->definition.def_enum_entry.value);
+        break;
+    case ALIAS_TYPE:
+        printf(" alias\n");
+        print_sub_ast("Type", current_indent, ast->definition.def_alias.type_definition);
+        break;
+    case FUNC_TYPE:
+        printf(" func\n");
+        print_sub_ast("Declaration", current_indent, ast->definition.def_func.func_decl);
+        printf("BUILTIN_TYPE ");
+        break;
+    case BUILTIN_TYPE:
+        switch (ast->definition.def_builtin.type)
+        {
+            case BUILTIN_BOOL:
+                printf(" bool\n");
+                break;
+            case BUILTIN_FLOAT:
+                printf(" float %d bits\n", ast->definition.def_builtin.bits);
+                break;
+            case BUILTIN_INT:
+                printf(" int %d bits\n", ast->definition.def_builtin.bits);
+                break;
+            case BUILTIN_UINT:
+                printf(" uint %d bits\n", ast->definition.def_builtin.bits);
+                break;
+        }
+        break;
 
-             */
+}
+print_sub_ast("Attributes", current_indent, ast->definition.attributes);
+
+ */
 
 /*        case AST_DECL:
             printf("DECLARATION ");
@@ -300,7 +366,3 @@ void print_type(Type *type, int current_indent)
             print_sub_ast("DeferStart", current_indent, type->defer_release_stmt.list.defer_start);
             print_sub_ast("DeferEnd", current_indent, type->defer_release_stmt.list.defer_end);
             return;*/
-    }
-    printf("TODO\n");
-}
-

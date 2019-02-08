@@ -8,6 +8,7 @@
 #include "printer.h"
 #include "attributes.h"
 #include "ast_utils.h"
+#include "expr.h"
 
 void decl_init(Decl *decl, DeclType decl_type, Token *span, Token *name, bool public)
 {
@@ -98,19 +99,19 @@ void decl_print(Decl *decl, unsigned current_indent)
             printf("\n");
 
             // print_sub_ast("Type", current_indent, ast->decl.type);
-            print_sub_ast("Init", current_indent, decl->var.init_expr);
+            expr_print_sub("Init", current_indent, decl->var.init_expr);
             return;
         case DECL_ENUM_CONSTANT:
             printf("ENUM_CONSTANT ");
             decl_print_name_visibility(decl);
             printf("\n");
-            print_sub_ast("Value", current_indent, decl->enum_constant.init_value);
+            expr_print_sub("Value", current_indent, decl->enum_constant.init_value);
             return;
         case DECL_ALIAS_TYPE:
             printf("ALIAS_TYPE ");
             decl_print_name_visibility(decl);
             printf("\n");
-            print_sub_type("Alias", current_indent, decl->alias_decl.ref_type);
+            type_print_sub("Alias", current_indent, decl->alias_decl.type);
             return;
         case DECL_STRUCT_TYPE:
             printf("STRUCT_TYPE ");
@@ -137,11 +138,17 @@ void decl_print(Decl *decl, unsigned current_indent)
             printf("TODO\n");
             return;
         case DECL_LABEL:
-            printf("LABE_ ");
+            printf("LABEL ");
             decl_print_name_visibility(decl);
             printf("\n");
             printf("TODO\n");
             return;
+        case DECL_BUILTIN:
+            printf("BUILTIN");
+            decl_print_name_visibility(decl);
+            printf("\n");
+            type_print_sub("Def", current_indent, decl->builtin_decl.type);
+            break;
     }
     FATAL_ERROR("TODO %d", decl->type_id);
 }
@@ -159,6 +166,7 @@ bool decl_is_type(Decl *decl)
         case DECL_STRUCT_TYPE:
         case DECL_ENUM_TYPE:
         case DECL_FUNC_TYPE:
+        case DECL_BUILTIN:
             return true;
         case DECL_FUNC:
         case DECL_VAR:
@@ -177,7 +185,7 @@ bool decl_has_attribute(Decl *decl, AttributeType attribute_type)
     for (unsigned i = 0; i < decl->attributes->size; i++)
     {
         Ast *attribute = decl->attributes->entries[i];
-        assert(attribute->type == AST_ATTRIBUTE);
+        assert(attribute->ast_id == AST_ATTRIBUTE);
         if (token_compare_str(&attribute->attribute.name, info->name)) return true;
     }
     return false;

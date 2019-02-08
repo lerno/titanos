@@ -11,187 +11,252 @@
 
 const static uint64_t MAX_ARRAY_SIZE = UINT32_MAX;
 
-static Type *resolve_type_expr(Ast *type_expr, bool used_public)
+bool update_decl(Type *type, bool used_public)
 {
-    if (type_expr->type_expr.flags.resolved)
-    {
-        return NULL;
-    }
-    bool resolves = false;
-    switch (type_expr->type_expr.type)
-    {
-        case TYPE_EXPR_IDENTIFIER:
-        {
-            // TODO module symbol
-            Token *name = &type_expr->type_expr.identifier_type_expr.name;
-            Decl *symbol = scope_find_symbol(&analyser->scope, name, true, used_public);
-            if (!symbol)
-            {
-                sema_error_at(&type_expr->span, "Unknown type '%.*s'",
-                              SPLAT_TOK(type_expr->type_expr.identifier_type_expr.name));
-                return NULL;
-            }
-            if (!decl_is_type(symbol))
-            {
-                sema_error_at(&type_expr->span, "'%.*s' is not a type ",
-                              SPLAT_TOK(type_expr->type_expr.identifier_type_expr.name));
-                return NULL;
-            }
-            // TODO
-            return NULL;
-        }
-        case TYPE_EXPR_ARRAY:
-        {
-            Type *base_type = resolve_type_expr(type_expr->type_expr.array_type_expr.type, used_public);
-            Ast *size = type_expr->type_expr.array_type_expr.size;
-            if (CONST_FULL != evaluate_constant(type_expr->type_expr.array_type_expr.size))
-            {
-                sema_error_at(&type_expr->type_expr.array_type_expr.size->span, "Array size must be a constant");
-                return NULL;
-            }
-            if (size->const_expr.value.type != VALUE_TYPE_INT)
-            {
-                sema_error_at(&type_expr->type_expr.array_type_expr.size->span, "Array size must be an integer");
-                return NULL;
-            }
-            if (size->const_expr.value.big_int.is_negative)
-            {
-                sema_error_at(&type_expr->type_expr.array_type_expr.size->span,
-                              "Array size must be a positive integer");
-                return NULL;
-            }
-            uint64_t array_size = size->const_expr.value.big_int.digit_count > 1
-                                  ? MAX_ARRAY_SIZE + 1
-                                  : bigint_as_unsigned(&size->const_expr.value.big_int);
-            if (array_size > MAX_ARRAY_SIZE)
-            {
-                sema_error_at(&type_expr->type_expr.array_type_expr.size->span,
-                              "Array size cannot exceed %d", MAX_ARRAY_SIZE);
-                return NULL;
-            }
-            // TODO wrong
-            Type *type = new_type(TYPE_ARRAY, false, NULL);
-            type->array.base = base_type;
-            type->array.len = (uint32_t) array_size;
-            return type;
-        }
-        case TYPE_EXPR_POINTER:
-        {
-            Type *base_type = resolve_type_expr(type_expr->type_expr.array_type_expr.type, used_public);
-            if (!base_type) return NULL;
-            Type *type = new_type(TYPE_POINTER, false, NULL);
-            type->pointer.base = base_type;
-            return type;
-        }
-        case TYPE_EXPR_VOID:
-            // TODO
-            return new_type(TYPE_VOID, false, NULL);
-        default:
-            FATAL_ERROR("Unsupported type expr");
-    }
-}
+    Decl *decl = type->decl;
+    assert(decl && "Should only be used on type with decl!");
 
-bool analyse_unresolved_type(Type *type, bool used_public)
-{
-    assert(type->type_id == TYPE_UNRESOLVED);
-    //IdentifierExpr* moduleName = type->getModuleName();
-    //IdentifierExpr* typeName = type->getTypeName();
-    Decl* decl = NULL;
-    if (type->unresolved.module_name.length)
-    {
-        Module *module = scope_find_used_module(&analyser->scope, &type->module_name, used_public);
-        if (!module) return false;
-        decl = scope_find_symbol_in_module(&analyser->scope, &type->unresolved.identifier, module);
-    }
-    else
-    {
-        decl = scope_find_symbol(&analyser->scope, &type->unresolved.identifier, true, used_public);
-    }
-    if (!decl) return false;
-    if (!decl_is_type(decl))
-    {
-        sema_error_at(&type->span, "No type with that name found");
-        return false;
-    }
-    bool is_external = scope_is_external_module(&analyser->scope, decl->module);
-    if (used_public && !is_external && !decl->is_public)
+    decl->is_used = true;
+
+    if (!used_public) return true;
+
+    bool is_external = scope_is_external_module(decl->module);
+    if (!is_external && !decl->is_public)
     {
         sema_error_at(&type->span, "'%.*s' is not a public type", SPLAT_TOK(decl->name));
         return false;
     }
-    decl->is_used = true;
-    if (used_public || is_external) decl->is_used_public = true;
-    // TODO actually resolve!
-    return false;
+    if (is_external) decl->is_used_public = true;
+
+    return true;
 }
 
-static bool resolve_type(Type *type)
+bool resolve_array_size(Type *type)
 {
+    assert(type->type_id == TYPE_ARRAY);
+    if (type->array.is_len_resolved) return true;
+    assert (!type->array.is_empty && "Empty should always be pre-resolved!");
+    Expr *size = type->array.len_expr;
+    if (CONST_FULL != evaluate_constant(size))
+    {
+        sema_error_at(&size->span, "Array size must be a constant");
+        return false;
+    }
+    if (size->const_expr.value.type != VALUE_TYPE_INT)
+    {
+        sema_error_at(&size->span, "Array size must be an integer");
+        return false;
+    }
+    if (size->const_expr.value.big_int.is_negative)
+    {
+        sema_error_at(&size->span,
+                      "Array size must be a positive integer");
+        return false;
+    }
+    uint64_t array_size = size->const_expr.value.big_int.digit_count > 1
+                          ? MAX_ARRAY_SIZE + 1
+                          : bigint_as_unsigned(&size->const_expr.value.big_int);
+    if (array_size > MAX_ARRAY_SIZE)
+    {
+        sema_error_at(&size->span,
+                      "Array size cannot exceed %d", MAX_ARRAY_SIZE);
+        return false;
+    }
+    type->array.is_len_resolved = true;
+    type->array.len = (uint32_t)array_size;
+    return true;
+}
+
+static bool resolve_unresolved_type(Type *type, bool used_public)
+{
+    assert(type->type_id == TYPE_UNRESOLVED);
+    assert(!type->decl);
+    Decl* decl = NULL;
+    Expr *type_expr = type->unresolved.type_expr;
+    evaluate_constant(type_expr);
+    Token module_name = { .length = 0 };
+    Token name;
+    switch (type_expr->expr_id)
+    {
+        case EXPR_ACCESS:
+            if (type_expr->access_expr.parent->expr_id != EXPR_IDENTIFIER)
+            {
+                sema_error_at(&type_expr->access_expr.parent->span, "Expected a module name");
+                return false;
+            }
+            module_name = type_expr->access_expr.parent->identifier_expr.identifier;
+            if (type_expr->access_expr.sub_element->expr_id != EXPR_IDENTIFIER)
+            {
+                sema_error_at(&type_expr->access_expr.parent->span, "Expected a type name");
+                return false;
+            }
+            name = type_expr->access_expr.sub_element->identifier_expr.identifier;
+            break;
+        case EXPR_IDENTIFIER:
+            name = type_expr->identifier_expr.identifier;
+            break;
+        case EXPR_TYPE:
+            if (resolve_unresolved_type(type_expr->type_expr.type, used_public))
+            {
+                // Copy!
+                *type = *type_expr->type_expr.type;
+                return true;
+            }
+            return false;
+        default:
+            sema_error_at(&type_expr->span, "Expected a type");
+            return false;
+    }
+    if (module_name.length)
+    {
+        Module *module = scope_find_used_module(&module_name, used_public);
+        if (!module) return false;
+        decl = scope_find_symbol_in_module(&name, module);
+    }
+    else
+    {
+        decl = scope_find_symbol(&name, true, used_public);
+    }
+    if (!decl)
+    {
+        // Error message already written
+        type->type_id = TYPE_INVALID;
+        return false;
+    }
+    if (decl->type_id == DECL_ALIAS_TYPE)
+    {
+        if (!resolve_type(decl->alias_decl.type, used_public))
+        {
+            type->type_id = TYPE_INVALID;
+            return false;
+        }
+        // FOR NOW JUST COPY
+        decl = decl->alias_decl.type->decl;
+    }
+    if (!decl_is_type(decl))
+    {
+        sema_error_at(&type->span, "No type with that name found");
+        type->type_id = TYPE_INVALID;
+    }
+    type->decl = decl;
+    switch (decl->type_id)
+    {
+        case DECL_VAR:
+        case DECL_FUNC:
+        case DECL_ENUM_CONSTANT:
+        case DECL_ARRAY_VALUE:
+        case DECL_IMPORT:
+        case DECL_ALIAS_TYPE:
+        case DECL_LABEL:
+            FATAL_ERROR("Can't happen");
+            return false;
+        case DECL_BUILTIN:
+        {
+            Token span = type->span;
+            *type = *decl->builtin_decl.type;
+            type->span = span;
+            // Always resolved
+            return true;
+        }
+        case DECL_STRUCT_TYPE:
+            type->type_id = decl->struct_decl.struct_type == ST_UNION ? TYPE_UNION : TYPE_STRUCT;
+            break;
+        case DECL_ENUM_TYPE:
+            type->type_id = TYPE_ENUM;
+            break;
+        case DECL_FUNC_TYPE:
+            type->type_id = TYPE_FUNC;
+            break;
+    }
+
+    return update_decl(type, used_public);
+}
+
+bool resolve_type(Type *type, bool used_public)
+{
+    if (type->decl) return update_decl(type, used_public);
     switch (type->type_id)
     {
         case TYPE_UNRESOLVED:
-            // THIS is incorrect, resolve_type_expr should evaluate and update the type.
-            resolve_type_expr(type->unresolved.type_expr, type->is_public);
-            return false;
-            break;
+            return resolve_unresolved_type(type, used_public);
         case TYPE_INVALID:
             return false;
-        default:
+        case TYPE_OPAQUE:
+            return resolve_type(type->opaque.base, used_public);
+        case TYPE_VOID:
+        case TYPE_BOOL:
+        case TYPE_INT:
+        case TYPE_FLOAT:
+        case TYPE_CONST_FLOAT:
+        case TYPE_CONST_INT:
+        case TYPE_NIL:
+            return true;
+        case TYPE_POINTER:
+            return resolve_type(type->pointer.base, used_public);
+        case TYPE_ARRAY:
+            return resolve_type(type->array.base, used_public) && resolve_array_size(type);
+        case TYPE_STRUCT:
+        case TYPE_ENUM:
+        case TYPE_FUNC:
+        case TYPE_UNION:
+        case TYPE_IMPORT:
             return true;
     }
 }
 
-static inline bool check_enum_type(Decl *decl_enum)
+static inline bool analyse_enum_type(Decl *decl)
 {
-    if (!resolve_type(decl_enum->type)) return false;
+    if (!resolve_type(decl->enum_decl.type, decl)) return false;
 
-    if (decl_enum->type->type_id != TYPE_INT)
+    Type *type = decl->enum_decl.type;
+
+    if (type->type_id != TYPE_INT)
     {
-        sema_error_at(&decl_enum->span, "Expected an integer type");
+        sema_error_at(&type->span, "Expected an integer type");
         return false;
     }
 
     // TODO if this one is public but the alias used isn't, should we flag the enum as an error?
 
-    if (!decl_enum->enumeration.constants->size)
+    if (!decl->enum_decl.constants->size)
     {
-        sema_error_at(&decl_enum->name, "Enum '%.*s' is empty", SPLAT_TOK(decl_enum->name));
+        sema_error_at(&decl->name, "Enum '%.*s' is empty", SPLAT_TOK(decl->name));
         return false;
     }
 
     bool success = true;
 
     // TODO what about use of previous constants?
-    Table table;
-    table_init(&table, decl_enum->enumeration.constants->size * 2 + 2);
+    Table *table = push_scratch_table();
+    assert(table && "Should always work since enums aren't nested");
 
     bool is_first_value = true;
     BigInt current_value;
     bigint_init_signed(&current_value, 0);
-    for (unsigned i = 0; i < decl_enum->enumeration.constants->size; i++)
+    for (unsigned i = 0; i < decl->enum_decl.constants->size; i++)
     {
-        Decl *entry = decl_enum->enumeration.constants->entries[i];
+        Decl *entry = decl->enum_decl.constants->entries[i];
         assert(entry->type_id == DECL_ENUM_CONSTANT);
 
-        entry->module = decl_enum->module;
+        entry->module = decl->module;
         if (entry->is_public && entry->module->is_exported) entry->is_exported = true;
 
-        if (!is_upper(&entry->name) && !analyser->parser->is_interface)
+        if (!is_upper(&entry->name) && !active_analyser->parser->is_interface)
         {
             sema_error_at(&entry->name, "Enum values must start with upper case");
             success = false;
         }
-        Ast *previous_entry = table_set_token(&table, &entry->name, entry);
+        Decl *previous_entry = table_set_token(table, &entry->name, entry);
         if (previous_entry)
         {
             sema_error_at(&entry->span, "Duplicate definition of '%.*s'", SPLAT_TOK(entry->name));
             success = false;
         }
 
-        Ast *value = entry->enum_constant.init_value;
+        Expr *value = entry->enum_constant.init_value;
         if (!value)
         {
-            value = new_ast_with_span(AST_CONST_EXPR, &entry->span);
+            value = expr_new(EXPR_CONST, &entry->span);
             entry->enum_constant.init_value = value;
             bigint_init_bigint(&value->const_expr.value.big_int, &current_value);
             value->const_expr.value.type = VALUE_TYPE_INT;
@@ -215,43 +280,46 @@ static inline bool check_enum_type(Decl *decl_enum)
             continue;
         }
         BigInt *big_int = &value->const_expr.value.big_int;
-        if (big_int->is_negative && !decl_enum->type->integer.is_signed)
+        if (big_int->is_negative && !type->integer.is_signed)
         {
             sema_error_at(&value->span, "Negative enum value for '%.*s', must be unsigned", SPLAT_TOK(entry->name));
             success = false;
             is_first_value = false;
             continue;
         }
-        if (!bigint_fits_in_bits(big_int, decl_enum->type->integer.bits, decl_enum->type->integer.is_signed))
+        if (!bigint_fits_in_bits(big_int, type->integer.bits, type->integer.is_signed))
         {
             sema_error_at(&value->span, "Enum value '%.*s' exceeds the type size", SPLAT_TOK(entry->name));
             success = false;
             is_first_value = false;
             continue;
-
-            if (!is_first_value && bigint_cmp(&current_value, &value->const_expr.value.big_int) != INT_LT)
-            {
-                sema_error_at(&value->span, "Enum values must be placed in strictly ascending value order");
-                success = false;
-            }
-            bigint_init_bigint(&current_value, &value->const_expr.value.big_int);
-            bigint_incr(&current_value);
-            is_first_value = false;
         }
-        return success;
+
+        if (!is_first_value && bigint_cmp(&current_value, &value->const_expr.value.big_int) != INT_LT)
+        {
+            sema_error_at(&value->span, "Enum values must be placed in strictly ascending value order");
+            success = false;
+        }
+        bigint_init_bigint(&current_value, &value->const_expr.value.big_int);
+        bigint_incr(&current_value);
+        is_first_value = false;
     }
+    pop_scratch_table(table);
+    return success;
 }
 
-static bool analyse_struct_names(Decl *type, bool new_namespace)
+static bool analyse_struct_names(Decl *decl, Table *names)
 {
-    // Clear the table
-    if (new_namespace)
+    assert(names && decl);
+    bool success = true;
+    if (decl->struct_decl.is_global && active_analyser->parser->is_interface && decl->name.length &&
+        !is_lower(&decl->name))
     {
-        table_clear(&analyser->temp_table);
+        sema_error_at(&decl->name, "Struct name needs to start with lower case.");
+        success = false;
     }
 
-    bool success = true;
-    Vector *members = type->structure.members;
+    Vector *members = decl->struct_decl.members;
     for (unsigned  i = 0; i < members->size; i++)
     {
         Decl *member = members->entries[i];
@@ -259,10 +327,10 @@ static bool analyse_struct_names(Decl *type, bool new_namespace)
         if (name->length == 0)
         {
             assert(member->type_id == DECL_STRUCT_TYPE);
-            success = analyse_struct_names(member, false) && success;
+            success = analyse_struct_names(member, names) && success;
             continue;
         }
-        Decl *old_member = table_set_token(&analyser->temp_table, name, member);
+        Decl *old_member = table_set_token(names, name, member);
         if (old_member)
         {
             sema_error_at(name, "Duplicate member '%.*s'", SPLAT_TOK(*name));
@@ -270,72 +338,61 @@ static bool analyse_struct_names(Decl *type, bool new_namespace)
             success = false;
             continue;
         }
+        if (member->type_id == DECL_STRUCT_TYPE)
+        {
+            Table *sub_names = push_scratch_table();
+            if (sub_names == NULL)
+            {
+                sema_error_at(name, "Struct nesting is too deep");
+                success = false;
+                continue;
+            }
+            success = analyse_struct_names(member, sub_names) && success;
+            pop_scratch_table(sub_names);
+        }
     }
     if (!success) return false;
 
-    // Now we need to handle the substructs:
-    for (unsigned  i = 0; i < members->size; i++)
+    return success;
+}
+
+bool analyse_func_decl(Decl *decl, bool is_public)
+{
+    assert(decl->type_id == DECL_FUNC);
+    bool success = resolve_type(decl->func_decl.rtype, is_public);
+    if (decl->func_decl.rtype->type_id == TYPE_OPAQUE && is_public)
     {
-        Decl *member = members->entries[i];
-        if (member->name.length == 0) continue;
-        if (member->type_id != DECL_STRUCT_TYPE) continue;
-        success = analyse_struct_names(member, true) &success;
+        sema_error_at(&decl->func_decl.rtype->span, "Opaque type returned for public function");
+        success = false;
+    }
+    for (unsigned i = 0; i < decl->func_decl.args->size; i++)
+    {
+        Decl *param_decl = decl->func_decl.args->entries[i];
+        assert(param_decl->type_id == DECL_VAR && param_decl->var.kind == VARDECL_PARAM);
+        success = resolve_type(param_decl->var.type, is_public) && success;
+        if (param_decl->var.type->type_id == TYPE_INVALID) continue;
     }
     return success;
 }
 
-bool analyse_type(Type *type, bool is_public)
+static inline bool analyse_func_type(Decl *decl)
 {
-    switch (type->type_id)
-    {
-        case TYPE_INVALID:
-            return false;
-        case TYPE_VOID:
-        case TYPE_NIL:
-        case TYPE_BOOL:
-        case TYPE_INT:
-        case TYPE_FLOAT:
-        case TYPE_CONST_FLOAT:
-        case TYPE_CONST_INT:
-            return true;
-        case TYPE_POINTER:
-            return analyse_type(type->pointer.base, is_public);
-        case TYPE_ARRAY:
-            return analyse_type(type->array.base, is_public);
-        case TYPE_STRUCT:
-        case TYPE_ENUM:
-        case TYPE_FUNC:
-        case TYPE_UNION:
-            // Checked later
-            return true;
-        case TYPE_UNRESOLVED:
-            return analyse_unresolved_type(type, is_public);
-        case TYPE_OPAQUE:
-            return analyse_type(type->opaque.base, is_public);
-        case TYPE_IMPORT:
-            FATAL_ERROR("Should never occur");
-    }
-    FATAL_ERROR("Unreachable");
+    assert(decl->type_id == DECL_FUNC_TYPE);
+    assert(decl->is_public == decl->func_type.func_decl->is_public);
+    return analyse_func_decl(decl->func_type.func_decl, decl->is_public);
 }
-#ifdef TODO
-static bool decl_resolve_type(Decl *decl)
-{
-    assert(!decl->is_resolved);
-    Type *type = resolve_type(decl->type_expr, decl->is_public);
-    if (!type) return false;
-    decl->type = type;
-    decl->is_resolved = true;
-    return false;
-}
-#endif
 
+static inline bool analyse_struct_type(Decl *decl)
+{
+    Table *table = push_scratch_table();
+    assert(table && "Should always work");
+    bool success = analyse_struct_names(decl, table);
+    pop_scratch_table(table);
+    return success;
+}
 static inline bool analyse_type_decl(Decl *decl)
 {
     LOG_FUNC;
-
-    // check generic type
-
-    bool success = analyse_type(decl->type, decl->is_public);
 
     // check extra stuff depending on subclass
     switch (decl->type_id)
@@ -347,34 +404,19 @@ static inline bool analyse_type_decl(Decl *decl)
         case DECL_IMPORT:
         case DECL_LABEL:
             FATAL_ERROR("Does not have type");
+        case DECL_BUILTIN:
+            // Always resolved.
+            return true;
         case DECL_ALIAS_TYPE:
-            if (success)
-            {
-                // TODO investigate
-                /*
-                AliasType* A = cast<AliasType>(D->getType().getTypePtr());
-                QualType Q = TR->resolveUnresolved(A->getRefType());
-                A->updateRefType(Q);
-                */
-            }
-            break;
+            return resolve_type(decl->alias_decl.type, decl->is_public);
         case DECL_STRUCT_TYPE:
-            analyse_struct_names(decl, true);
-            break;
+            return analyse_struct_type(decl);
         case DECL_ENUM_TYPE:
-            if (!decl->enumeration.constants->size)
-            {
-                sema_error_at(&decl->name, "No empty enum '%.*s'", SPLAT_TOK(decl->name));
-                success = false;
-            }
-            break;
+            return analyse_enum_type(decl);
         case DECL_FUNC_TYPE:
-            // TODO investivate
-            decl->func_type.func_decl->module = decl->module;
-            // dont check return/argument types yet
-            break;
+            return analyse_func_type(decl);
     }
-    return success;
+    return false;
 }
 
 bool analyse_attributes(Decl* decl)
@@ -394,15 +436,16 @@ bool analyse_attributes(Decl* decl)
     if (!attributes) return true;
 
     // Clear our scratch table
-    table_clear(&analyser->temp_table);
+    Table *table = push_scratch_table();
+    assert(table && "Should never happen since we don't have nested use");
 
     bool success = true;
     for (unsigned a = 0; a < attributes->size; a++)
     {
         Ast *attribute = attributes->entries[a];
-        assert(attribute->type == AST_ATTRIBUTE);
+        assert(attribute->ast_id == AST_ATTRIBUTE);
         Token *name = &attribute->attribute.name;
-        Ast *old = table_set_token(&analyser->temp_table, &attribute->attribute.name, attribute);
+        Ast *old = table_set_token(table, &attribute->attribute.name, attribute);
         if (old)
         {
             sema_error_at(&attribute->span, "Attribute %.*s appears more than once in attribute list", SPLAT_TOK(*name));
@@ -499,7 +542,7 @@ bool analyse_attributes(Decl* decl)
                 }
                 break;
             case ATTRIBUTE_CNAME:
-                if (!analyser->parser->is_interface)
+                if (!active_analyser->parser->is_interface)
                 {
                     sema_error_at(&attribute->span, "@cname can only be used with interfaces");
                     success = false;
@@ -514,25 +557,27 @@ bool analyse_attributes(Decl* decl)
                     success = false;
                     break;
                 }
-                if (!analyser->parser->is_interface)
+                if (!active_analyser->parser->is_interface)
                 {
                     sema_error_at(&attribute->span, "@no_typedef can only be used with interfaces");
                     success = false;
                     break;
                 }
-                decl->structure.no_typedef = true;
+                decl->struct_decl.no_typedef = true;
                 break;
         }
     }
+    pop_scratch_table(table);
     return success;
 }
 
 void resolve_types(void)
 {
-    for (unsigned i = 0; i < analyser->parser->types->size; i++)
+    bool success = true;
+    for (unsigned i = 0; i < active_analyser->parser->types->size; i++)
     {
-        Decl *decl = analyser->parser->types->entries[i];
-        analyse_type_decl(decl);
-        analyse_attributes(decl);
+        Decl *decl = active_analyser->parser->types->entries[i];
+        success = (analyse_type_decl(decl) && analyse_attributes(decl)) && success;
+        decl_print(decl, 0);
     }
 }

@@ -9,9 +9,12 @@
 #include "vector.h"
 #include "attributes.h"
 
+typedef struct _Ast Ast;
+
 typedef enum _DeclType
 {
-    DECL_FUNC = 0,
+    DECL_BUILTIN = 0,
+    DECL_FUNC,
     DECL_VAR,
     DECL_ENUM_CONSTANT,
     DECL_ALIAS_TYPE,
@@ -34,8 +37,8 @@ typedef struct _VarDecl
 {
     VarDeclKind kind : 2;
     unsigned local : 1;
-    Type *original_type;
-    Ast *init_expr;
+    Type *type;
+    Expr *init_expr;
     LLVMValueRef ir_value;
 } VarDecl;
 
@@ -47,7 +50,7 @@ typedef struct _ArrayValueDecl
 
 typedef struct _EnumConstantDecl
 {
-    Ast *init_value;
+    Expr *init_value;
     LLVMValueRef llvm_value;
 } EnumConstantDecl;
 
@@ -56,6 +59,7 @@ typedef struct _EnumDecl
     bool incremental : 1;
     struct _Vector *constants;
     LLVMValueRef llvm_value;
+    Type *type;
 } EnumDecl;
 
 typedef enum _StructType
@@ -73,10 +77,6 @@ typedef struct _StructDecl
     Vector *struct_functions;
 } StructDecl;
 
-typedef struct _AliasDecl
-{
-    Type *ref_type;
-} AliasDecl;
 
 typedef struct _FuncDecl
 {
@@ -96,6 +96,11 @@ typedef struct _FunTypeDecl
     struct _Decl *func_decl;
 } FuncTypeDecl;
 
+typedef struct _BuiltinTypeDecl
+{
+    Type *type;
+} BuiltinTypeDecl;
+
 typedef enum
 {
     IMPORT_TYPE_FULL,
@@ -110,6 +115,10 @@ typedef struct _ImportDecl
 } ImportDecl;
 
 
+typedef struct _AliasDecl
+{
+    Type *type;
+} AliasDecl;
 typedef struct _LabelDecl
 {
     Ast *label_stmt;
@@ -118,7 +127,7 @@ typedef struct _LabelDecl
 
 typedef struct _ArrayDecl
 {
-    Ast *value;
+    Expr *value;
 } ArrayDecl;
 
 typedef struct _Decl
@@ -133,18 +142,18 @@ typedef struct _Decl
     Token name;
     struct _Module *module;
     struct _Vector *attributes;
-    Type *type;
     union
     {
-        StructDecl structure;
+        StructDecl struct_decl;
         VarDecl var;
-        EnumDecl enumeration;
+        EnumDecl enum_decl;
         EnumConstantDecl enum_constant;
-        AliasDecl alias_decl;
         FuncDecl func_decl;
         FuncTypeDecl func_type;
         ImportDecl import;
         ArrayDecl array_decl;
+        AliasDecl alias_decl;
+        BuiltinTypeDecl builtin_decl;
     };
 } Decl;
 

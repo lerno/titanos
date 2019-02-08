@@ -7,6 +7,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <dirent.h>
+#include "expr.h"
 #include "diagnostics.h"
 #include "parsing.h"
 #include "arena_allocator.h"
@@ -573,17 +574,16 @@ static void register_c2_constant(const char *name, const char *type, Value value
     Token token = token_wrap(name);
     Token type_token = token_wrap(type);
     Decl *decl = decl_new(DECL_VAR, &token, &token, true);
-    Ast *ast_value = new_ast_with_span(AST_CONST_EXPR, &token);
-    ast_value->const_expr.value = value;
-    Ast *type_ast = new_type_expr(TYPE_EXPR_IDENTIFIER, &type_token);
-    type_ast->type_expr.identifier_type_expr.name = token;
-    type_ast->type_expr.identifier_type_expr.module_name.length = 0;
-    type_ast->type_expr.identifier_type_expr.resolved_type = NULL;
-    decl->var.init_expr = ast_value;
+    Expr *expr_value = expr_new(EXPR_CONST, &token);
+    expr_value->const_expr.value = value;
+    Expr *type_expr = expr_new(EXPR_IDENTIFIER, &type_token);
+    type_expr->identifier_expr.identifier = type_token;
+    decl->var.type = new_unresolved_type(type_expr, true);
+    decl->var.init_expr = expr_value;
     decl->var.kind = VARDECL_GLOBAL;
     decl->is_exported = true;
-    decl->type = new_type(TYPE_UNRESOLVED, true, &type_token);
-    decl->type->unresolved.type_expr = type_ast;
+    decl->var.type = new_type(TYPE_UNRESOLVED, true, &type_token);
+    decl->var.type->unresolved.type_expr = type_expr;
     Parser *parser = c2_module->files->entries[0];
     vector_add(parser->variables, decl);
 }
@@ -599,7 +599,7 @@ static void register_c2_signed_constant(const char *type, const char *name, int6
 static void register_c2_builtin(const char *name, TypeId family, unsigned bits, bool is_signed)
 {
     Token token = token_wrap(name);
-    Decl *alias = decl_new(DECL_ALIAS_TYPE, &token, &token, true);
+    Decl *decl = decl_new(DECL_BUILTIN, &token, &token, true);
     Type *builtin = new_type(family, true, &token);
     switch (family)
     {
@@ -615,10 +615,10 @@ static void register_c2_builtin(const char *name, TypeId family, unsigned bits, 
         default:
             FATAL_ERROR("Unsupported builtin");
     }
-    alias->module = c2_module;
-    alias->type = builtin;
+    decl->module = c2_module;
+    decl->builtin_decl.type = builtin;
     builtin->module = c2_module;
-    module_add_symbol(c2_module, &token, alias);
+    module_add_symbol(c2_module, &token, decl);
 }
 
 static void create_c2_module()
@@ -733,12 +733,12 @@ static bool check_module_imports_and_parse(Component *component, Module *module,
 
 static bool check_main_function()
 {
-    Ast *main_decl = NULL;
+    Decl *main_decl = NULL;
     Token main_name = token_wrap("main");
     for (unsigned i = 0; i < builder.main_component->modules.size; i++)
     {
         Module *module = builder.main_component->modules.entries[i];
-        Ast *main = module_find_symbol(module, &main_name);
+        Decl *main = module_find_symbol(module, &main_name);
         if (!main) continue;
         if (main_decl)
         {

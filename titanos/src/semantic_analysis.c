@@ -18,11 +18,6 @@
 
 const static uint64_t MAX_ARRAY_SIZE = UINT32_MAX;
 
-static Decl *get_symbol(Analyser *analyser, Token *token, bool is_type, bool used_public)
-{
-    return scope_find_symbol(&analyser->scope, token, is_type, used_public);
-}
-
 
 
 
@@ -30,9 +25,9 @@ static Decl *get_symbol(Analyser *analyser, Token *token, bool is_type, bool use
 static inline void add_imports()
 {
     LOG_FUNC;
-    for (unsigned i = 0; i < analyser->parser->imports->size; i++)
+    for (unsigned i = 0; i < active_analyser->parser->imports->size; i++)
     {
-        scope_add_import_declaration(&analyser->scope, analyser->parser->imports->entries[i]);
+        scope_add_import_declaration(active_analyser->parser->imports->entries[i]);
     }
 }
 
@@ -47,7 +42,7 @@ unsigned check_attributes(Ast *ast_attribute_list)
     {
         // Improve: check that same attribute does not appear more than once?
         Ast *attribute = attributes->entries[a];
-        assert(attribute->type == AST_ATTRIBUTE);
+        assert(attribute->ast_id == AST_ATTRIBUTE);
         Token *name = &attribute->attribute.name;
         AttributeType attribute_type = attribute_type_from_token(name);
         if (attribute_type == ATTRIBUTE_UNKNOWN)
@@ -57,7 +52,7 @@ unsigned check_attributes(Ast *ast_attribute_list)
             continue;
         }
         const AttributeInfo *info = attribute_info_from_type(attribute_type);
-        Ast *value = attribute->attribute.value;
+        Expr *value = attribute->attribute.value;
         if (value)
         {
             if (evaluate_constant(attribute->attribute.value) == CONST_FULL)
@@ -84,37 +79,37 @@ unsigned check_attributes(Ast *ast_attribute_list)
                 errors++;
                 break;
             case ATTR_ARG_STRING:
-                if (value->type != AST_CONST_EXPR || value->const_expr.value.type != VALUE_TYPE_STRING)
+//                if (value->ast_id != AST_CONST_EXPR || value->const_expr.value.type != VALUE_TYPE_STRING)
                 {
                     sema_error_at(&value->span, "Expected a string argument");
                     errors++;
                 }
                 break;
             case ATTR_ARG_UINT:
-                if (value->type != AST_CONST_EXPR
-                    || value->const_expr.value.type != VALUE_TYPE_INT
-                    || value->const_expr.value.big_int.is_negative)
+  //              if (value->ast_id != AST_CONST_EXPR
+    //                || value->const_expr.value.type != VALUE_TYPE_INT
+      //              || value->const_expr.value.big_int.is_negative)
                 {
                     sema_error_at(&value->span, "Expected a unsigned int value");
                     errors++;
                 }
                 break;
             case ATTR_ARG_INT:
-                if (value->type != AST_CONST_EXPR || value->const_expr.value.type != VALUE_TYPE_INT)
+        //        if (value->ast_id != AST_CONST_EXPR || value->const_expr.value.type != VALUE_TYPE_INT)
                 {
                     sema_error_at(&value->span, "Expected an integer value");
                     errors++;
                 }
                 break;
             case ATTR_ARG_NUMBER:
-                if (value->type != AST_CONST_EXPR || !value_is_number(&value->const_expr.value))
+          //      if (value->ast_id != AST_CONST_EXPR || !value_is_number(&value->const_expr.value))
                 {
                     sema_error_at(&value->span, "Expected a numeric value");
                     errors++;
                 }
                 break;
             case ATTR_ARG_BOOL:
-                if (value->type != AST_CONST_EXPR || value->const_expr.value.type != VALUE_TYPE_INT)
+            //    if (value->ast_id != AST_CONST_EXPR || value->const_expr.value.type != VALUE_TYPE_INT)
                 {
                     sema_error_at(&value->span, "Expected a boolean value");
                     errors++;
@@ -127,181 +122,6 @@ unsigned check_attributes(Ast *ast_attribute_list)
     return errors;
 }
 
-static bool analyse_struct_members(Decl *type, bool used_public)
-{
-    bool success = true;
-    if (type->structure.is_global && analyser->parser->is_interface && type->name.length && !is_lower(&type->name))
-    {
-        sema_error_at(&type->name, "Struct name needs to start with lower case.");
-        success = false;
-    }
-    for (unsigned  i = 0; i < type->structure.members->size; i++)
-    {
-        Decl *member = type->structure.members->entries[i];
-        Token *name = &member->name;
-        switch (member->type_id)
-        {
-            case DECL_STRUCT_TYPE:
-                success = analyse_struct_members(member, used_public) && success;
-                break;
-            case DECL_VAR:
-                return false;
-                FATAL_ERROR("TODO");
-                // success = decl_resolve_type(member);
-                break;
-            case DECL_FUNC:
-            case DECL_ENUM_CONSTANT:
-            case DECL_ALIAS_TYPE:
-            case DECL_ENUM_TYPE:
-            case DECL_FUNC_TYPE:
-            case DECL_ARRAY_VALUE:
-            case DECL_IMPORT:
-            case DECL_LABEL:
-                FATAL_ERROR("Cannot occur here.");
-                break;
-        }
-    }
-    return success;
-}
-
-
-
-
-unsigned resolve_variable_decl(Ast *decl)
-{
-    /*
-    // TODO duplicate code with FileAnalyser::analyseDeclExpr()
-    QualType Q = TR->resolveType(D->getType(), D->isPublic());
-    if (!Q.isValid()) return 1;
-
-    D->setType(Q);
-
-    // TODO move to after checkVarInits() (to allow constants in array size)
-    if (Q.isArrayType()) {
-        functionAnalyser.checkArraySizeExpr(D);
-
-        const ArrayType* AT = cast<ArrayType>(Q.getCanonicalType());
-        if (AT->isIncremental()) {
-            if (D->getInitValue()) {
-                Diags.Report(D->getInitValue()->getLocation(),  diag::err_incremental_array_initlist);
-                return 1;
-            }
-            InitListExpr* ILE = new (ast.getASTContext()) InitListExpr(D->getLocation(), D->getLocation());
-            D->setInitValue(ILE);
-        }
-    }
-
-    TR->checkOpaqueType(D->getLocation(), D->isPublic(), Q);
-
-    if (!ast.isInterface() && !D->hasEmptyName()) {
-        if (Q.isConstant()) {
-            if (!isupper(D->getName()[0])) {
-                Diags.Report(D->getLocation(), diag::err_const_casing);
-            }
-        } else {
-            if (!islower(D->getName()[0])) {
-                Diags.Report(D->getLocation(), diag::err_var_casing);
-            }
-        }
-    }
-
-    // NOTE: dont check initValue here (doesn't have canonical type yet)
-     */
-    return 0;
-}
-
-
-static bool check_function_decl(Decl *func_decl, bool public)
-{
-    assert(func_decl->type_id == DECL_FUNC);
-    assert(func_decl->type->type_id != TYPE_UNRESOLVED);
-
-    bool had_errors = false;
-
-    Type *rtype = func_decl->func_decl.rtype;
-    if (rtype)
-    {
-        func_decl->func_decl.rtype = rtype;
-        if (rtype->type_id == TYPE_OPAQUE && public)
-        {
-            sema_error_at(&rtype->span, "Opaque type returned for public function");
-            had_errors = true;
-        }
-    }
-    else
-    {
-        had_errors = true;
-    }
-
-    // Arguments
-    Vector *list = func_decl->func_decl.args;
-    for (unsigned i = 0; i < list->size; i++)
-    {
-        Decl *param_decl = list->entries[i];
-        assert(param_decl->type_id == DECL_VAR && param_decl->var.kind == VARDECL_PARAM);
-        //assert(!param_decl->is_resolved);
-        //Type *type = resolve_type(param_decl->type_expr, public);
-        //if (!type)
-        {
-            had_errors = true;
-            continue;
-        }
-        //param_decl->type = type;
-        //param_decl->is_resolved = true;
-        if (param_decl->var.init_expr)
-        {
-            if (evaluate_constant(param_decl->var.init_expr) != CONST_FULL)
-            {
-                sema_error_at(&param_decl->var.init_expr->span,
-                              "Default value must be a compile time constant");
-                had_errors = true;
-            }
-        }
-    }
-//    func_decl->is_resolved = true;
-    return had_errors;
-}
-
-bool check_type(Decl *decl_type)
-{
-    assert(decl_is_type(decl_type));
-  //  assert(!decl_type->is_resolved);
-    switch (decl_type->type_id)
-    {
-        case DECL_STRUCT_TYPE:
-        {
-            Table names;
-            table_init(&names, 4);
-//            return analyse_struct_members(decl_type, &names, decl_type->definition.def_struct.members, decl_type->definition.is_public);
-        }
-        case DECL_ALIAS_TYPE:
-  //          return decl_resolve_type(decl_type);
-        case DECL_ENUM_TYPE:
-    //        return check_enum_type(decl_type);
-        case DECL_FUNC_TYPE:
-            return check_function_decl(decl_type->func_type.func_decl, decl_type->is_public);
-
-    }
-    return false;
-}
-unsigned check_types()
-{
-    unsigned errors = 0;
-    // Then add all types
-    for (unsigned i = 0; i < analyser->parser->types->size; i++)
-    {
-        Ast *type = analyser->parser->types->entries[i];
-//        assert(type->definition.module);
-        errors += check_type(type);
-  //      check_attributes(type->var_definition.attributes);
-        print_ast(type, 0);
-    }
-    // resolveTypes
-    //         errors += analysers[i]->resolveStructMembers();
-    return errors;
-}
-
-
 
 
 static inline bool analyse_body(Decl *func)
@@ -310,7 +130,7 @@ static inline bool analyse_body(Decl *func)
 
     //assert(func->is_resolved);
 
-    if (analyser->parser->is_interface) skip_unused_params_check = true;
+    if (active_analyser->parser->is_interface) skip_unused_params_check = true;
 
     FuncDecl *func_decl = &func->func_decl;
 
@@ -318,31 +138,32 @@ static inline bool analyse_body(Decl *func)
     for (unsigned i = 0; i < func_decl->args->size; i++)
     {
         Decl *param_decl = func_decl->args->entries[i];
-  //      assert(param_decl->is_resolved);
+
+        assert(param_decl->var.type->type_id != TYPE_UNRESOLVED && param_decl->var.type->type_id != TYPE_INVALID);
         if (skip_unused_params_check)
         {
             param_decl->is_used = true;
         }
         if (param_decl->name.length)
         {
-            Decl *old = scope_check_scoped_symbol(&analyser->scope, &param_decl->name);
+            Decl *old = scope_check_scoped_symbol(&param_decl->name);
             if (old)
             {
                 sema_error_at(&param_decl->name, "Parameter %.*s shadows global identifier", SPLAT_TOK(param_decl->name));
                 prev_at(&old->span, "Previous declaration was here");
                 continue;
             }
-            scope_add_scoped_symbol(&analyser->scope, param_decl);
+            scope_add_scoped_symbol(param_decl);
         }
     }
 
-    if (scope_had_errors(&analyser->scope)) return false;
+    if (scope_had_errors()) return false;
 
     if (func->func_decl.body)
     {
         analyse_compound_stmt(func->func_decl.body);
     }
-    if (scope_had_errors(&analyser->scope)) return false;
+    if (scope_had_errors()) return false;
 
     // check for return statement of return value is required
     bool needs_return = func_decl->rtype->type_id == TYPE_VOID;
@@ -350,7 +171,7 @@ static inline bool analyse_body(Decl *func)
     if (needs_return && func_decl->body)
     {
         Ast *last_stmt = ast_compound_stmt_last(func_decl->body);
-        if (!last_stmt || last_stmt->type != AST_RETURN_STMT)
+        if (!last_stmt || last_stmt->ast_id != AST_RETURN_STMT)
         {
             sema_error_at(last_stmt ? &last_stmt->span : &func_decl->body->span, "Expected a return at the end of a non void function");
             return false;
@@ -370,11 +191,11 @@ static inline unsigned defer_depth(Ast *stmt)
     return depth;
 }
 
-static bool analyse_defer_goto(Analyser *analyser)
+static bool analyse_defer_goto()
 {
-    for (unsigned i = 0; i < analyser->gotos.size; i++)
+    for (unsigned i = 0; i < active_analyser->gotos.size; i++)
     {
-        Ast *goto_stmt = analyser->gotos.entries[i];
+        Ast *goto_stmt = active_analyser->gotos.entries[i];
         Ast *label_defer_top = goto_stmt->goto_stmt.label_stmt->label_stmt.defer_top;;
         Ast *goto_defer_top = goto_stmt->goto_stmt.defer_list.defer_start;
 
@@ -444,29 +265,36 @@ Make sure this is set!
 
 static bool analyse_func_body(Decl *func)
 {
-    // func_def->func_definition.func_decl?
-    /* Done?
-     *         // check argument inits
-        for (unsigned i=0; i<func->numArgs(); i++) {
-            VarDecl* Arg = func->getArg(i);
-            if (Arg->getInitValue()) {
-                checkVarInit(Arg);
+    LOG_FUNC
+    assert(func->type_id == DECL_FUNC);
+    bool success = true;
+    for (unsigned i = 0; i < func->func_decl.args->size; i++)
+    {
+        Decl *param_decl = func->func_decl.args->entries[i];
+        assert(param_decl->type_id == DECL_VAR && param_decl->var.kind == VARDECL_PARAM);
+        if (param_decl->var.type->type_id == TYPE_INVALID) continue;
+        if (param_decl->var.init_expr)
+        {
+            if (evaluate_constant(param_decl->var.init_expr) != CONST_FULL)
+            {
+                sema_error_at(&param_decl->var.init_expr->span,
+                              "Default value must be a compile time constant");
+                success = false;
             }
         }
-
-     */
+    }
     // Clear labels
-    analyser->labels.size = 0;
-    analyser->gotos.size = 0;
-    analyser->defers.size = 0;
-    analyser->current_func = func;
-    scope_enter(&analyser->scope, SCOPE_FUNC | SCOPE_DECL);
-    bool success = analyse_body(func);
-    scope_exit(&analyser->scope, func->func_decl.body);
+    active_analyser->labels.size = 0;
+    active_analyser->gotos.size = 0;
+    active_analyser->defers.size = 0;
+    active_analyser->current_func = func;
+    scope_enter(SCOPE_FUNC | SCOPE_DECL);
+    success = analyse_body(func) && success;
+    scope_exit(func->func_decl.body);
 
-    for (unsigned i = 0; i < analyser->labels.size; i++)
+    for (unsigned i = 0; i < active_analyser->labels.size; i++)
     {
-        Label *label = analyser->labels.entries[i];
+        Label *label = active_analyser->labels.entries[i];
         if (label->labelAst)
         {
             if (!label->gotoAst)
@@ -477,31 +305,30 @@ static bool analyse_func_body(Decl *func)
         }
         else
         {
-            assert(label->gotoAst->goto_stmt.label->type == AST_CONST_EXPR);
-            assert(label->gotoAst->goto_stmt.label->const_expr.value.type == VALUE_TYPE_STRING);
+            FATAL_ERROR("TODO");
+/*            //assert(label->gotoAst->goto_stmt.label->ast_id == AST_CONST_EXPR);
+            //assert(label->gotoAst->goto_stmt.label->const_expr.value.type == VALUE_TYPE_STRING);
             Value *goto_label = &label->gotoAst->goto_stmt.label->const_expr.value;
-            sema_error_at(&label->gotoAst->span, "Unknown label '%.*s", goto_label->str_len, goto_label->str);
+            sema_error_at(&label->gotoAst->span, "Unknown label '%.*s", goto_label->str_len, goto_label->str);*/
             success = false;
         }
     }
 
-    return analyse_defer_goto(analyser) && success;
-}
-
-static bool check_function(Decl *func_def)
-{
-    assert(func_def->type == AST_FUNC_DEFINTION);
-    // check_attributes(type->var_definition.attributes);
-    return check_function_decl(func_def, func_def->is_public) && analyse_func_body(func_def);
+    return analyse_defer_goto() && success;
 }
 
 bool check_functions()
 {
     bool success = true;
-    for (unsigned i = 0; i < analyser->parser->functions->size; i++)
+    for (unsigned i = 0; i < active_analyser->parser->functions->size; i++)
     {
-        Ast *type = analyser->parser->functions->entries[i];
-        success &= check_function(type);
+        Decl *type = active_analyser->parser->functions->entries[i];
+        success &= analyse_func_decl(type, type->is_public);
+    }
+    for (unsigned i = 0; i < active_analyser->parser->functions->size; i++)
+    {
+        Decl *type = active_analyser->parser->functions->entries[i];
+        success &= analyse_func_body(type);
     }
     return success;
 }
@@ -510,9 +337,9 @@ bool check_functions()
 static inline void add_symbols()
 {
     // First, register imports
-    for (unsigned i = 0; i < analyser->parser->imports->size; i++)
+    for (unsigned i = 0; i < active_analyser->parser->imports->size; i++)
     {
-        Decl *import = analyser->parser->imports->entries[i];
+        Decl *import = active_analyser->parser->imports->entries[i];
         assert(import->type_id == DECL_IMPORT);
         Token *name;
         switch (import->import.type)
@@ -527,7 +354,7 @@ static inline void add_symbols()
             default:
                 FATAL_ERROR("Unknown type");
         }
-        Decl *old = module_add_symbol(analyser->module, name, import);
+        Decl *old = module_add_symbol(active_analyser->module, name, import);
         if (old)
         {
             sema_error_at(name, "Identifier '%.*s' already in use", name->length, name->start);
@@ -536,47 +363,47 @@ static inline void add_symbols()
     }
 
     // Then add all types
-    for (unsigned i = 0; i < analyser->parser->types->size; i++)
+    for (unsigned i = 0; i < active_analyser->parser->types->size; i++)
     {
-        Decl *type = analyser->parser->types->entries[i];
-        type->module = analyser->module;
-        Decl *old = module_add_symbol(analyser->module, &type->name, type);
+        Decl *type = active_analyser->parser->types->entries[i];
+        type->module = active_analyser->module;
+        Decl *old = module_add_symbol(active_analyser->module, &type->name, type);
         if (old)
         {
             sema_error_at(&type->span, "Type '%.*s' redefines identifier", SPLAT_TOK(type->name));
             prev_at(&old->span, "Old definition was here");
         }
-        if (type->is_public && analyser->module->is_exported)
+        if (type->is_public && active_analyser->module->is_exported)
         {
             type->is_exported = true;
         }
     }
 
     // Then add global variables types
-    for (unsigned i = 0; i < analyser->parser->variables->size; i++)
+    for (unsigned i = 0; i < active_analyser->parser->variables->size; i++)
     {
-        Decl *var = analyser->parser->variables->entries[i];
+        Decl *var = active_analyser->parser->variables->entries[i];
         assert(var->type_id == DECL_VAR);
-        Decl *old = module_add_symbol(analyser->module, &var->name, var);
+        Decl *old = module_add_symbol(active_analyser->module, &var->name, var);
         if (old)
         {
             sema_error_at(&var->name, "Global variable '%.*s' redefines identifier", SPLAT_TOK(var->name));
             prev_at(&old->span, "Old definition was here");
         }
-        if (var->is_public && analyser->module->is_exported)
+        if (var->is_public && active_analyser->module->is_exported)
         {
             var->is_exported = true;
         }
     }
 
     // Then functions
-    for (unsigned i = 0; i < analyser->parser->functions->size; i++)
+    for (unsigned i = 0; i < active_analyser->parser->functions->size; i++)
     {
-        Decl *type = analyser->parser->functions->entries[i];
+        Decl *type = active_analyser->parser->functions->entries[i];
 
         if (type->func_decl.is_static_struct_func)
         {
-            Decl *old = module_add_struct_function(analyser->module, &type->func_decl.full_name, type);
+            Decl *old = module_add_struct_function(active_analyser->module, &type->func_decl.full_name, type);
             if (old)
             {
                 sema_error_at(&type->span, "Function '%.*s' redefines identifier", SPLAT_TOK(type->func_decl.full_name));
@@ -585,7 +412,7 @@ static inline void add_symbols()
         }
         else
         {
-            Decl *old = module_add_symbol(analyser->module, &type->name, type);
+            Decl *old = module_add_symbol(active_analyser->module, &type->name, type);
             if (old)
             {
                 sema_error_at(&type->span, "Function '%.*s' redefines identifier", SPLAT_TOK(type->name));
@@ -593,7 +420,7 @@ static inline void add_symbols()
             }
         }
 
-        if (type->is_public && analyser->module->is_exported)
+        if (type->is_public && active_analyser->module->is_exported)
         {
             type->is_exported = true;
         }
@@ -608,14 +435,8 @@ static inline void init_analyser(Analyser *analyser, Module *module, Table *modu
     vector_init(&analyser->labels, 16);
     vector_init(&analyser->gotos, 16);
     vector_init(&analyser->defers, 16);
-    table_init(&analyser->temp_table, 128);
-    vector_init(&analyser->temp_vector, 16);
 }
 
-static void select_analyser(Analyser *current_analyser)
-{
-    analyser = current_analyser;
-}
 
 bool analyse(Component *component, Table *modules)
 {
@@ -652,18 +473,6 @@ bool analyse(Component *component, Table *modules)
     {
         select_analyser(analysers->entries[i]);
         resolve_types();
-    }
-
-    for (unsigned i = 0; i < analyser_count; i++)
-    {
-        select_analyser(analysers->entries[i]);
-//        resolve_type_canonicals();
-    }
-
-    for (unsigned i = 0; i < analyser_count; i++)
-    {
-        select_analyser(analysers->entries[i]);
-        errors += check_types();
     }
 
     if (error_found()) return errors;

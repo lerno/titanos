@@ -15,6 +15,8 @@
 #include <stdarg.h>
 #include "types/type.h"
 #include "decl.h"
+#include "expr.h"
+
 Parser *current_parser;
 Token tok;
 Token prev_tok;
@@ -22,9 +24,9 @@ Token prev_tok;
 #define CONSUME_EOS_OR_EXIT if (!consume(TOKEN_EOS, "Expected ';'")) return NULL
 #define CONSUME_START_BRACE_OR_EXIT if (!consume(TOKEN_LBRACE, "Expected '{'")) return NULL
 #define CONSUME_END_BRACE_OR_EXIT if (!consume(TOKEN_RBRACE, "Expected '}'")) return NULL
-#define UPDATE_AND_RETURN(__X) do { token_expand(&__X->span, &prev_tok); return __X; } while (0)
-#define UPDATE_AND_RETURN_AST(__AST) return end_ast(__AST, &prev_tok)
-#define UPDATE_AND_RETURN_TYPE(__TYPE) return end_type(__TYPE, &prev_tok)
+#define UPDATE(__X) do { token_expand(&__X->span, &prev_tok); } while (0)
+#define UPDATE_AND_RETURN(__X) do { UPDATE(__X); return __X; } while (0)
+#define CONSUME_REQ_EOS_AND_RETURN(__X) do { UPDATE(__X); CONSUME_EOS_OR_EXIT; return __X; } while(0)
 
 static inline bool has_attributes()
 {
@@ -33,7 +35,7 @@ static inline bool has_attributes()
 
 static Ast *stmt_to_compound(Ast *inner_ast)
 {
-	if (!inner_ast || inner_ast->type == AST_COMPOUND_STMT) return inner_ast;
+	if (!inner_ast || inner_ast->ast_id == AST_COMPOUND_STMT) return inner_ast;
 	Ast *ast = new_ast_with_span(AST_COMPOUND_STMT, &inner_ast->span);
 	Vector *stmts = new_vector(1);
 	vector_add(stmts, inner_ast);
@@ -47,9 +49,9 @@ static inline bool current_is(token_type type)
 }
 
 
-typedef Ast *(*ParseFn)(Ast *);
+typedef Expr *(*ParseFn)(Expr *);
 
-typedef enum
+typedef enum _Precedence
 {
 	PREC_NONE,
 	PREC_COMMA,
@@ -64,22 +66,22 @@ typedef enum
 	PREC_POW,         // **
 	PREC_UNARY,       // ! - + ~ * & prefix ++ prefix --
 	PREC_CALL,        // . () [] postfix ++ postfix --
-} precedence;
+} Precedence;
 
 typedef struct
 {
 	ParseFn prefix;
 	ParseFn infix;
-	precedence precedence;
+	Precedence precedence;
 } ParseRule;
 
 
 static ParseRule rules[TOKEN_EOF + 1];
 
 
-static Ast *parse_expression(void);
+static Expr *parse_expression(void);
 static Ast *parse_stmt(void);
-static Ast *parse_init_value(void);
+static Expr *parse_init_value(void);
 
 
 void error_at_current(const char *message)
@@ -239,10 +241,10 @@ Decl *parse_module()
 }
 
 
-static Ast *parse_string_literal(Ast *left)
+static Expr *parse_string_literal(Expr *left)
 {
 	assert(!left && "Had left hand side");
-	Ast *ast_string = new_ast_with_span(AST_CONST_EXPR, &prev_tok);
+	Expr *expr_string = expr_new(EXPR_CONST, &prev_tok);
 
 	const char *str = prev_tok.start;
 	uint32_t len = prev_tok.length;
@@ -257,25 +259,25 @@ static Ast *parse_string_literal(Ast *left)
 		str = new_string;
 		len += prev_tok.length;
 	}
-	ast_string->const_expr.value = value_new_string(str, len);
-	ast_string->const_state = CONST_FULL;
-	UPDATE_AND_RETURN_AST(ast_string);
+	expr_string->const_expr.value = value_new_string(str, len);
+	expr_string->const_state = CONST_FULL;
+	UPDATE_AND_RETURN(expr_string);
 }
 
-static Ast *parse_integer(Ast *left)
+static Expr *parse_integer(Expr *left)
 {
 	assert(!left && "Had left hand side");
-	Ast *number = new_ast_with_span(AST_CONST_EXPR, &tok);
+	Expr *number = expr_new(EXPR_CONST, &prev_tok);
 	number->const_expr.value = parse_int(prev_tok.start, prev_tok.length);
 	number->const_state = CONST_FULL;
 	return number;
 }
 
 
-static Ast *parse_double(Ast *left)
+static Expr *parse_double(Expr *left)
 {
 	assert(!left && "Had left hand side");
-	Ast *number = new_ast_with_span(AST_CONST_EXPR, &tok);
+	Expr *number = expr_new(EXPR_CONST, &prev_tok);
 	number->const_state = CONST_FULL;
 	char *end = NULL;
 	long double fval = strtold(prev_tok.start, &end);
@@ -288,19 +290,19 @@ static Ast *parse_double(Ast *left)
 	return number;
 }
 
-static Ast *parse_bool(Ast *left)
+static Expr *parse_bool(Expr *left)
 {
 	assert(!left && "Had left hand side");
-	Ast *number = new_ast_with_span(AST_CONST_EXPR, &tok);
+	Expr *number = expr_new(EXPR_CONST, &prev_tok);
 	number->const_state = CONST_FULL;
 	number->const_expr.value = value_new_bool(tok.type == TOKEN_TRUE);
 	return number;
 }
 
-static Ast *parse_nil(Ast *left)
+static Expr *parse_nil(Expr *left)
 {
 	assert(!left && "Had left hand side");
-	Ast *value = new_ast_with_span(AST_CONST_EXPR, &tok);;
+	Expr *value = expr_new(EXPR_CONST, &prev_tok);
 	value->const_expr.value = value_nil();
 	value->const_state = CONST_FULL;
 	return value;
@@ -329,7 +331,7 @@ Vector *parse_attributes()
 		if (!consume(TOKEN_IDENTIFIER, "Expected identifier")) return NULL;
         Ast *attribute = new_ast_with_span(AST_ATTRIBUTE, &prev_tok);
         attribute->attribute.name = prev_tok;
-        Ast *arg = NULL;
+        Expr *arg = NULL;
 		if (try_consume(TOKEN_EQ))
 		{
 			arg = parse_expression();
@@ -366,13 +368,13 @@ static inline ParseRule *get_rule(token_type type)
  * @param left (must be null)
  * @return The identifier node
  */
-static Ast *parse_identifier(Ast *left)
+static Expr *parse_identifier(Expr *left)
 {
 	assert(!left && "Unexpected left hand side");
 
-	Ast *ast = new_ast_with_span(AST_IDENTIFIER_EXPR, &prev_tok);
-	ast->identifier_expr.identifier = prev_tok;
-	return ast;
+	Expr *expr = expr_new(EXPR_IDENTIFIER, &prev_tok);
+	expr->identifier_expr.identifier = prev_tok;
+	return expr;
 }
 
 /**
@@ -380,30 +382,29 @@ static Ast *parse_identifier(Ast *left)
  *                     IDENTIFIER '.' IDENTIFIER
  * @return the resulting identifier or NULL if an error occurs.
  */
-Ast *parse_full_identifier()
+Expr *parse_full_identifier()
 {
 	if (!consume(TOKEN_IDENTIFIER, "Expected identifier")) return NULL;
-	Ast *ast = new_type_expr(TYPE_EXPR_IDENTIFIER, &prev_tok);
+	Expr *expr = expr_new(EXPR_IDENTIFIER, &prev_tok);
 
-	ast->type_expr.identifier_type_expr.resolved_type = NULL;
-	Token first_name = prev_tok;
+	expr->identifier_expr.identifier = prev_tok;
+
 	if (try_consume(TOKEN_DOT))
 	{
 		if (!consume(TOKEN_IDENTIFIER, "Expected identifier after ','")) return NULL;
-		ast->type_expr.identifier_type_expr.module_name = first_name;
-		ast->type_expr.identifier_type_expr.name = prev_tok;
+		Expr *sub = expr_new(EXPR_IDENTIFIER, &prev_tok);
+		sub->identifier_expr.identifier = prev_tok;
+		Expr *result = expr_new(EXPR_ACCESS, &expr->span);
+		result->access_expr.parent = expr;
+		result->access_expr.sub_element = sub;
+		UPDATE_AND_RETURN(result);
 	}
-	else
-	{
-		ast->type_expr.identifier_type_expr.module_name.length = 0;
-		ast->type_expr.identifier_type_expr.name = first_name;
-	}
-	UPDATE_AND_RETURN_AST(ast);
+	UPDATE_AND_RETURN(expr);
 }
 
 
 
-static Ast *parse_precedence_after_advance(precedence precedence)
+static Expr *parse_precedence_after_advance(Precedence precedence)
 {
 	// Get the rule for the previous token.
 	ParseFn prefix_rule = get_rule(prev_tok.type)->prefix;
@@ -413,7 +414,7 @@ static Ast *parse_precedence_after_advance(precedence precedence)
 		return NULL;
 	}
 
-	Ast *left_side = prefix_rule(NULL);
+	Expr *left_side = prefix_rule(NULL);
 	while (precedence <= get_rule(tok.type)->precedence)
 	{
 		advance();
@@ -455,29 +456,28 @@ TypeQualifier read_optional_type_specifiers()
 	}
 }
 
-static void add_type_specifier(Ast *ast, TypeQualifier type_specifier)
+static void add_type_specifier(Type *type, TypeQualifier type_specifier)
 {
-	assert(ast->type == AST_TYPE_EXPR && "Expected type expression");
 	if (!type_specifier) return;
 	if (type_specifier & TYPE_QUALIFIER_CONST)
 	{
-		ast->type_expr.flags.const_ref = true;
+		type->is_const = true;
 	}
 	if (type_specifier & TYPE_QUALIFIER_VOLATILE)
 	{
-		ast->type_expr.flags.volatile_ref = true;
+		type->is_volatile = true;
 	}
 	if (type_specifier & TYPE_QUALIFIER_ALIAS)
 	{
-		ast->type_expr.flags.alias_ref = true;
+		type->is_aliased = true;
 	}
 }
 
-static Ast *create_pointer_type(Ast *base)
+static Type *create_pointer_type(Type *base)
 {
-	Ast *array = new_type_expr(TYPE_EXPR_POINTER, &base->span);
-	array->type_expr.pointer_type_expr.type = base;
-	UPDATE_AND_RETURN_AST(array);
+	Type *pointer = new_type(TYPE_POINTER, base->is_public, &base->span);
+	pointer->pointer.base = base;
+	UPDATE_AND_RETURN(pointer);
 }
 
 /**
@@ -486,22 +486,22 @@ static Ast *create_pointer_type(Ast *base)
  * @param base the base type
  * @return the resulting type or NULL if parsing failed.
  */
-Ast *parse_array_type(Ast *base)
+Type *parse_array_type(Type *base)
 {
 	assert(base && "Cannot have null expression");
 	advance_and_verify(TOKEN_LBRACKET);
-	Ast *array = new_type_expr(TYPE_EXPR_ARRAY, &base->span);
-	array->type_expr.array_type_expr.type = base;
+	Type *type = new_type(TYPE_ARRAY, base->is_public, &base->span);
+	type->array.base = base;
 	if (try_consume(TOKEN_RBRACKET))
 	{
-		array->type_expr.array_type_expr.size = NULL;
-		return array;
+		type->array.is_empty = true;
+		UPDATE_AND_RETURN(type);
 	}
-	Ast *expression = parse_expression();
+	Expr *expression = parse_expression();
 	if (!expression) return NULL;
 	if (!consume(TOKEN_RBRACKET, "Missing ']'")) return NULL;
-	array->type_expr.array_type_expr.size = expression;
-	UPDATE_AND_RETURN_AST(array);
+	type->array.len_expr = expression;
+	UPDATE_AND_RETURN(type);
 }
 
 /**
@@ -510,23 +510,30 @@ Ast *parse_array_type(Ast *base)
  *                  | type_qualifier '*' const?
  *                  |
  * @param accept_qualifiers read optional type specifiers (volatile, const etc)
+ * @param public is this public
  * @return type
  */
-Type *parse_type(bool accept_qualifiers)
+Type *parse_type(bool accept_qualifiers, bool public)
 {
 	// IMPROVE AST span.
 	TypeQualifier type_qualifier = accept_qualifiers ? read_optional_type_specifiers() : TYPE_QUALIFIER_NONE;
-	Ast *base;
+	Type *base;
 	if (try_consume(TOKEN_VOID))
 	{
-		base = new_type_expr(TYPE_EXPR_VOID, &prev_tok);
+		base = void_type();
+		if (type_qualifier)
+		{
+			error_at(&prev_tok, "Can't add type specifiers to void");
+			return NULL;
+		}
 	}
 	else
 	{
-		base = parse_full_identifier();
-		if (!base) return NULL;
+		Expr *expr = parse_full_identifier();
+		if (!expr) return NULL;
+		base = new_unresolved_type(expr, public);
+		add_type_specifier(base, type_qualifier);
 	}
-	add_type_specifier(base, type_qualifier);
 	while (true)
 	{
 		Token first_specifier = tok;
@@ -551,13 +558,13 @@ Type *parse_type(bool accept_qualifiers)
 	}
 }
 
-static Ast *parse_expression(void)
+static Expr *parse_expression(void)
 {
 	advance();
 	return parse_precedence_after_advance(PREC_ASSIGNMENT);
 }
 
-static Ast *parse_precedence(precedence precedence)
+static Expr *parse_precedence(Precedence precedence)
 {
 	advance();
 	return parse_precedence_after_advance(precedence);
@@ -572,12 +579,12 @@ static Ast *parse_precedence(precedence precedence)
  */
 static inline Decl *parse_param_decl(bool public, bool has_default_args)
 {
-	Type *type = parse_type(true);
+	Type *type = parse_type(true, public);
 	if (!type) return NULL;
 
     Decl *param_decl = decl_new(DECL_VAR, &type->span, &type->span, public);
     param_decl->var.kind = VARDECL_PARAM;
-    param_decl->type = type;
+    param_decl->var.type = type;
 	if (!try_consume(TOKEN_IDENTIFIER))
 	{
 		param_decl->name.length = 0;
@@ -662,7 +669,7 @@ static inline Decl *parse_func_decl(bool public, bool type_only)
 {
 	advance_and_verify(TOKEN_FUNC);
 
-    Type *return_type = parse_type(true);
+    Type *return_type = parse_type(true, public);
 	if (!return_type) return NULL;
 
 	if (!consume(TOKEN_IDENTIFIER, "Expected function name but got '%.*s'", SPLAT_TOK(tok))) return NULL;
@@ -724,14 +731,14 @@ static Ast *parse_if_stmt()
 
 	if (!consume(TOKEN_LPAREN, "Expected (")) return NULL;
 
-	Ast *expr = parse_expression();
+	Expr *expr = parse_expression();
 
 	if (!consume(TOKEN_RPAREN, "Expected )")) return NULL;
 
 	// Prefer it in compound form.
 	Ast *if_body = parse_stmt();
 	if (!if_body) return NULL;
-	if (if_body->type != AST_COMPOUND_STMT && current_is(TOKEN_ELSE))
+	if (if_body->ast_id != AST_COMPOUND_STMT && current_is(TOKEN_ELSE))
 	{
 		error_at_current("if-else requires the format if {  } else {  }");
 		return NULL;
@@ -745,7 +752,7 @@ static Ast *parse_if_stmt()
 	if_ast->if_stmt.else_body = stmt_to_compound(else_body);
 	if_ast->if_stmt.if_body = stmt_to_compound(if_body);
 	if_ast->if_stmt.expr = expr;
-	UPDATE_AND_RETURN_AST(if_ast);
+	UPDATE_AND_RETURN(if_ast);
 }
 
 /**
@@ -758,14 +765,14 @@ static Ast *parse_while_stmt()
 	advance_and_verify(TOKEN_WHILE);
 	Ast *while_ast = new_ast_with_span(AST_WHILE_STMT, &prev_tok);
 	if (!consume(TOKEN_LPAREN, "Expected (")) return NULL;
-	Ast *expr = parse_expression();
+	Expr *expr = parse_expression();
 	if (!expr) return NULL;
 	if (!consume(TOKEN_RPAREN, "Expected )")) return NULL;
 	Ast *body = parse_stmt();
 	if (!body) return NULL;
 	while_ast->while_stmt.body = stmt_to_compound(body);
 	while_ast->while_stmt.expr = expr;
-	UPDATE_AND_RETURN_AST(while_ast);
+	UPDATE_AND_RETURN(while_ast);
 }
 
 /**
@@ -784,14 +791,14 @@ static Ast *parse_do_stmt()
 	if (!body) return NULL;
 	if (!consume(TOKEN_WHILE, "Expected 'while'")) return NULL;
 	if (!consume(TOKEN_LPAREN, "Expected (")) return NULL;
-	Ast *expr = parse_expression();
+	Expr *expr = parse_expression();
 	if (!expr) return NULL;
 	if (!consume(TOKEN_RPAREN, "Expected )")) return NULL;
 	if (!consume(TOKEN_EOS, "Expected ';'")) return NULL;
-	do_ast->type = AST_DO_STMT;
+	do_ast->ast_id = AST_DO_STMT;
 	do_ast->do_stmt.body = body;
 	do_ast->do_stmt.expr = expr;
-	UPDATE_AND_RETURN_AST(do_ast);
+	UPDATE_AND_RETURN(do_ast);
 }
 
 /**
@@ -807,7 +814,7 @@ static Ast *parse_defer_stmt()
 	defer_stmt->defer_stmt.body = defer_body;
 	defer_stmt->defer_stmt.emit_boolean = false;
 	defer_stmt->defer_stmt.prev_defer = NULL;
-	UPDATE_AND_RETURN_AST(defer_stmt);
+	UPDATE_AND_RETURN(defer_stmt);
 }
 
 /**
@@ -819,7 +826,7 @@ static Ast *parse_case_stmt()
 {
 	advance_and_verify(TOKEN_CASE);
 	Ast *ast = new_ast_with_span(AST_CASE_STMT, &prev_tok);
-	Ast *expression = parse_expression();
+	Expr *expression = parse_expression();
 	if (!expression) return NULL;
 	if (!consume(TOKEN_COLON, "Missing ':' after case")) return NULL;
 	Vector *stmts = new_vector(4);
@@ -831,7 +838,7 @@ static Ast *parse_case_stmt()
 	}
 	ast->case_stmt.expr = expression;
 	ast->case_stmt.stmts = stmts;
-	UPDATE_AND_RETURN_AST(ast);
+	UPDATE_AND_RETURN(ast);
 }
 
 /**
@@ -852,7 +859,7 @@ static Ast *parse_default_stmt()
 		vector_add(stmts, stmt);
 	}
 	ast->default_stmt.stmts = stmts;
-	UPDATE_AND_RETURN_AST(ast);
+	UPDATE_AND_RETURN(ast);
 }
 
 /**
@@ -872,7 +879,7 @@ static Ast *parse_switch_stmt()
 	Ast *ast = new_ast_with_span(AST_SWITCH_STMT, &prev_tok);
 	if (!consume(TOKEN_LPAREN, "Expected '('")) return NULL;
 
-	Ast *expr = parse_expression();
+	Expr *expr = parse_expression();
 	if (!expr) return NULL;
 
 	if (!consume(TOKEN_RPAREN, "Expected ')'")) return NULL;
@@ -915,7 +922,7 @@ static Ast *parse_switch_stmt()
 	done:
 	advance_and_verify(TOKEN_RBRACE);
 	ast->switch_stmt.case_list = cases;
-	UPDATE_AND_RETURN_AST(ast);
+	UPDATE_AND_RETURN(ast);
 }
 
 /**
@@ -926,8 +933,7 @@ static Ast *parse_break_stmt()
 {
 	advance_and_verify(TOKEN_BREAK);
 	Ast *ast = new_ast_with_span(AST_BREAK_STMT, &prev_tok);
-	CONSUME_EOS_OR_EXIT;
-	UPDATE_AND_RETURN_AST(ast);
+	CONSUME_REQ_EOS_AND_RETURN(ast);
 }
 
 /**
@@ -941,13 +947,12 @@ static Ast *parse_return_stmt()
 	if (try_consume(TOKEN_EOS))
 	{
 		ast->return_stmt.expr = NULL;
-		UPDATE_AND_RETURN_AST(ast);
+		UPDATE_AND_RETURN(ast);
 	}
-	Ast *expression = parse_expression();
+	Expr *expression = parse_expression();
 	if (!expression) return NULL;
 	ast->return_stmt.expr = expression;
-	CONSUME_EOS_OR_EXIT;
-	UPDATE_AND_RETURN_AST(ast);
+	CONSUME_REQ_EOS_AND_RETURN(ast);
 }
 
 /**
@@ -959,12 +964,11 @@ static Ast *parse_goto_stmt()
 	advance_and_verify(TOKEN_GOTO);
 	Ast *ast = new_ast_with_span(AST_GOTO_STMT, &prev_tok);
 
-	Ast *expression = parse_expression();
+	Expr *expression = parse_expression();
 	if (!expression) return NULL;
 	ast->goto_stmt.label = expression;
 
-	CONSUME_EOS_OR_EXIT;
-	UPDATE_AND_RETURN_AST(ast);
+	CONSUME_REQ_EOS_AND_RETURN(ast);
 }
 
 /**
@@ -975,8 +979,7 @@ static Ast *parse_continue_stmt()
 {
 	advance_and_verify(TOKEN_CONTINUE);
 	Ast *ast = new_ast_with_span(AST_CONTINUE_STMT, &prev_tok);
-	CONSUME_EOS_OR_EXIT;
-	UPDATE_AND_RETURN_AST(ast);
+	CONSUME_REQ_EOS_AND_RETURN(ast);
 }
 
 /* Syntax (GNU extended asm statement)
@@ -1008,10 +1011,11 @@ static Ast *parse_asm_stmt()
  */
 static Ast *parse_expr_stmt()
 {
-	Ast *expression = parse_expression();
+	Expr *expression = parse_expression();
 	if (!expression) return NULL;
-	CONSUME_EOS_OR_EXIT;
-	UPDATE_AND_RETURN_AST(expression);
+	Ast *stmt = new_ast_with_span(AST_EXPR_STMT, &expression->span);
+	stmt->expr_stmt.expr = expression;
+	CONSUME_REQ_EOS_AND_RETURN(stmt);
 }
 
 
@@ -1020,20 +1024,20 @@ static Ast *parse_expr_stmt()
  *
  * @return Ast * if successfull, NULL on error.
  */
-static Ast *parse_field_designator()
+static Expr *parse_field_designator()
 {
 	advance_and_verify(TOKEN_DOT);
-	Ast *ast = new_ast_with_span(AST_DESIGNATED_INITIALIZED_EXPR, &prev_tok);
+	Expr *expr = expr_new(EXPR_DESIGNATED_INITIALIZER, &prev_tok);
 
 	if (!consume(TOKEN_IDENTIFIER, "Expected identifier")) return NULL;
 
 	if (!consume(TOKEN_EQ, "Expected '=' after identifier")) return NULL;
 
-	Ast *init_value = parse_init_value();
+	Expr *init_value = parse_init_value();
 	if (!init_value) return NULL;
 
-	ast->designated_initializer_expr.expr = init_value;
-	UPDATE_AND_RETURN_AST(ast);
+	expr->designated_initializer_expr.expr = init_value;
+	UPDATE_AND_RETURN(expr);
 }
 
 /**
@@ -1042,50 +1046,48 @@ static Ast *parse_field_designator()
  *               | init_values ',' expression
  *               | init_values ',' field_designator
  *
- * @return Ast* or NULL if parsing fails.
+ * @return Expr* or NULL if parsing fails.
  */
-static Ast *parse_init_values()
+static Expr *parse_init_values()
 {
 	advance_and_verify(TOKEN_LBRACE);
 
-	Ast *ast = new_ast_with_span(AST_STRUCT_INIT_VALUES_EXPR, &tok);
+	Expr *expr = expr_new(EXPR_STRUCT_INIT_VALUES, &tok);
 	if (try_consume(TOKEN_RBRACE))
 	{
-		ast->struct_init_values_expr.values = new_vector(0);
-		UPDATE_AND_RETURN_AST(ast);
+		expr->struct_init_values_expr.values = new_vector(0);
+		UPDATE_AND_RETURN(expr);
 	}
 	Vector *values = new_vector(4);
-	ast->struct_init_values_expr.values = values;
+	expr->struct_init_values_expr.values = values;
 	do
 	{
-		Ast *value = current_is(TOKEN_DOT) ? parse_field_designator() : parse_expression();
+		Expr *value = current_is(TOKEN_DOT) ? parse_field_designator() : parse_expression();
 		if (!value) return NULL;
 		vector_add(values, value);
 
 	} while (try_consume(TOKEN_COMMA));
 	CONSUME_END_BRACE_OR_EXIT;
-	UPDATE_AND_RETURN_AST(ast);
+	UPDATE_AND_RETURN(expr);
 }
 
 /**
  * init_value ::= expression
  *              | init_values
- * @return Ast* or NULL if an error occurs.
+ * @return Expr* or NULL if an error occurs.
  */
-static Ast *parse_init_value(void)
+static Expr *parse_init_value(void)
 {
 	return tok.type == TOKEN_LBRACE ? parse_init_values() : parse_expression();
 }
 
-static Ast *parse_init_value_and_optional_eos()
+static Expr *parse_init_value_and_optional_eos()
 {
     if (tok.type == TOKEN_LBRACE) return parse_init_values();
 
-    Ast *value = parse_expression();
+    Expr *value = parse_expression();
 
-    CONSUME_EOS_OR_EXIT;
-
-    UPDATE_AND_RETURN_AST(value);
+	CONSUME_REQ_EOS_AND_RETURN(value);
 }
 
 /**
@@ -1095,20 +1097,20 @@ static Ast *parse_init_value_and_optional_eos()
  */
 static Decl *parse_declaration()
 {
-	Type *type_expr = parse_type(true);
+	Type *type_expr = parse_type(true, false);
 	if (!type_expr) return NULL;
 
 
     Decl *declaration = decl_new(DECL_VAR, &type_expr->span, &tok, false);
     // TODO check
     declaration->var.kind = VARDECL_LOCAL;
-    declaration->type = type_expr;
+    declaration->var.type = type_expr;
 
 	if (!consume(TOKEN_IDENTIFIER, "Expected variable name")) return NULL;
 
     declaration->name = prev_tok;
 
-    Ast *init_expr = try_consume(TOKEN_EQ) ? parse_init_value() : NULL;
+    Expr *init_expr = try_consume(TOKEN_EQ) ? parse_init_value() : NULL;
 
 	declaration->var.init_expr = init_expr;
 
@@ -1129,7 +1131,7 @@ static Ast *parse_label_stmt()
 	// Already checked!
 	advance_and_verify(TOKEN_COLON);
 
-	UPDATE_AND_RETURN_AST(ast);
+	UPDATE_AND_RETURN(ast);
 }
 
 /**
@@ -1141,7 +1143,7 @@ static Ast *parse_declaration_stmt()
 	Decl *declaration = parse_declaration();
 	if (!declaration) return NULL;
 	if (!declaration->var.init_expr
-	    || declaration->var.init_expr->type != AST_STRUCT_INIT_VALUES_EXPR)
+	    || declaration->var.init_expr->expr_id != EXPR_STRUCT_INIT_VALUES)
 	{
 		CONSUME_EOS_OR_EXIT;
 	}
@@ -1273,14 +1275,15 @@ static Ast *parse_for_stmt()
 		if (!init) return NULL;
 	}
 
-	Ast *cond = NULL;
+	Expr *cond = NULL;
 	if (!try_consume(TOKEN_EOS))
 	{
-		cond = parse_expr_stmt();
-		if (!cond) return NULL;
+		Ast *cond_stmt = parse_expr_stmt();
+		if (!cond_stmt) return NULL;
+		cond = cond_stmt->expr_stmt.expr;
 	}
 
-	Ast *incr = NULL;
+	Expr *incr = NULL;
 	if (!try_consume(TOKEN_RPAREN))
 	{
 		incr = parse_expression();
@@ -1292,7 +1295,7 @@ static Ast *parse_for_stmt()
 	for_ast->for_stmt.cond = cond;
 	for_ast->for_stmt.incr = incr;
 	for_ast->for_stmt.body = body;
-	UPDATE_AND_RETURN_AST(for_ast);
+	UPDATE_AND_RETURN(for_ast);
 }
 
 
@@ -1370,17 +1373,17 @@ bool parse_struct_block(Decl *struct_members)
 {
 	if (!consume(TOKEN_LBRACE, "Expected '{' to begin definition")) return false;
 
-	struct_members->structure.members = new_vector(4);
+	struct_members->struct_decl.members = new_vector(4);
 
 	while (true)
 	{
 		if (tok.type == TOKEN_RBRACE) break;
 
 		Decl *member = decl_new(DECL_STRUCT_TYPE, &tok, &tok, struct_members->is_public);
-		vector_add(struct_members->structure.members, member);
+		vector_add(struct_members->struct_decl.members, member);
 		if (tok.type == TOKEN_STRUCT || tok.type == TOKEN_UNION)
 		{
-			member->structure.struct_type = tok.type == TOKEN_STRUCT ? ST_STRUCT : ST_UNION;
+			member->struct_decl.struct_type = tok.type == TOKEN_STRUCT ? ST_STRUCT : ST_UNION;
 			advance();
 			if (try_consume(TOKEN_IDENTIFIER))
 			{
@@ -1396,9 +1399,9 @@ bool parse_struct_block(Decl *struct_members)
 		}
 		member->type_id = DECL_VAR;
 		member->var.kind = VARDECL_MEMBER;
-		Type *type = parse_type(true);
+		Type *type = parse_type(true, struct_members->is_public);
 		if (!type) return false;
-		member->type = type;
+		member->var.type = type;
 		if (!consume(TOKEN_IDENTIFIER, "Expected identifier")) return false;
 		member->name = prev_tok;
 		token_expand(&member->span, &prev_tok);
@@ -1420,10 +1423,10 @@ static Decl *parse_struct_or_union_type(bool public, Token *initial_token)
 {
 	Decl *struct_decl = decl_new(DECL_STRUCT_TYPE, initial_token, &prev_tok, public);
 
-	struct_decl->structure.struct_type = tok.type == TOKEN_STRUCT ? ST_STRUCT : ST_UNION;
+	struct_decl->struct_decl.struct_type = tok.type == TOKEN_STRUCT ? ST_STRUCT : ST_UNION;
     advance();
 
-    struct_decl->structure.members = new_vector(8);
+    struct_decl->struct_decl.members = new_vector(8);
 	if (!parse_struct_block(struct_decl)) return NULL;
 	if (!optional_add_attributes(&struct_decl->attributes)) return NULL;
 
@@ -1438,18 +1441,16 @@ static Decl *parse_struct_or_union_type(bool public, Token *initial_token)
  * @param initial_token the first token belonging to the parse.
  * @return the created Ast* or NULL in case of error
  */
-static Ast *parse_alias_type(bool public, Token *initial_token)
+static Decl *parse_alias_type(bool public, Token *initial_token)
 {
 	Decl *alias = decl_new(DECL_ALIAS_TYPE, initial_token, &prev_tok, public);
 
-	Type *type = parse_type(true);
+	Type *type = parse_type(true, public);
 	if (!type) return NULL;
-	alias->alias_decl.ref_type = type;
+	alias->alias_decl.type = type;
 
     // TODO parse attributes?
-    CONSUME_EOS_OR_EXIT;
-
-    UPDATE_AND_RETURN(alias);
+	CONSUME_REQ_EOS_AND_RETURN(alias);
 }
 
 /**
@@ -1468,9 +1469,7 @@ static Decl *parse_function_type(bool public, Token *initial_token)
 
 	type->func_type.func_decl = func_decl;
 
-	CONSUME_EOS_OR_EXIT;
-
-    UPDATE_AND_RETURN(type);
+	CONSUME_REQ_EOS_AND_RETURN(type);
 }
 
 /**
@@ -1493,18 +1492,18 @@ static Decl *parse_enum_type(bool public, Token *initial_token)
 
 	advance_and_verify(TOKEN_ENUM);
 
-	Ast *type = parse_full_identifier();
+	Expr *type = parse_full_identifier();
 
 	if (!type) return NULL;
 
-	enum_decl->type = new_unresolved_type(type, public);
+	enum_decl->enum_decl.type = new_unresolved_type(type, public);
 
     CONSUME_START_BRACE_OR_EXIT;
 
-    enum_decl->enumeration.incremental = try_consume(TOKEN_PLUS);
+    enum_decl->enum_decl.incremental = try_consume(TOKEN_PLUS);
 
     Vector *entries = new_vector(8);
-    enum_decl->enumeration.constants = entries;
+    enum_decl->enum_decl.constants = entries;
 
 	while (1)
     {
@@ -1515,7 +1514,7 @@ static Decl *parse_enum_type(bool public, Token *initial_token)
         vector_add(current_parser->enum_values, enum_constant);
         if (try_consume(TOKEN_EQ))
         {
-            Ast *value = parse_expression();
+            Expr *value = parse_expression();
             if (!value) return NULL;
             enum_constant->enum_constant.init_value = value;
         }
@@ -1544,7 +1543,7 @@ static Decl *parse_enum_type(bool public, Token *initial_token)
  * @param public if the type is public or not.
  * @return Ast * or NULL if parsing fails.
  */
-static Ast *parse_type_definition(bool public)
+static Decl *parse_type_definition(bool public)
 {
     Token initial_token = public ? prev_tok : tok;
 
@@ -1602,20 +1601,20 @@ static Decl *parse_var_definition(bool public)
 {
 	Token start = public ? prev_tok : tok;
 
-    Type *type = parse_type(true);
+    Type *type = parse_type(true, public);
     if (!type) return NULL;
 
     if (!consume(TOKEN_IDENTIFIER, "Expected variable name")) return NULL;
 
 	Decl *decl = decl_new(DECL_VAR, &start, &prev_tok, public);
 	decl->is_public = public;
-	decl->type = type;
+	decl->var.type = type;
 
 	if (!optional_add_attributes(&decl->attributes)) return NULL;
 
     if (try_consume(TOKEN_EQ))
     {
-        Ast *init_expr = parse_init_value_and_optional_eos();
+        Expr *init_expr = parse_init_value_and_optional_eos();
         if (!init_expr) return NULL;
         decl->var.init_expr = init_expr;
     }
@@ -1640,13 +1639,13 @@ Decl *parse_array_entry()
 
 	advance_and_verify(TOKEN_PLUS_ASSIGN);
 
-	Ast *result = parse_init_value();
+	Expr *result = parse_init_value();
 
 	if (!result) return NULL;
 
 	array->array_decl.value = result;
 
-	if (result->type != AST_STRUCT_INIT_VALUES_EXPR)
+	if (result->expr_id != EXPR_STRUCT_INIT_VALUES)
 	{
 	    CONSUME_EOS_OR_EXIT;
 	}
@@ -1727,9 +1726,9 @@ bool parse_source()
  * @param left_side
  * @return true if this should be a type expression.
  */
-static bool is_type_expr_after_star(Ast *left_side)
+static bool is_type_expr_after_star(Expr *left_side)
 {
-	if (left_side->type == AST_TYPE_EXPR) return true;
+	if (left_side->expr_id == EXPR_TYPE) return true;
 	switch (tok.type)
 	{
 		case TOKEN_RPAREN:
@@ -1741,7 +1740,7 @@ static bool is_type_expr_after_star(Ast *left_side)
 			return false;
 	}
 }
-static Ast *parse_binary(Ast *left_side)
+static Expr *parse_binary(Expr *left_side)
 {
 
 	// Remember the operator.
@@ -1750,96 +1749,99 @@ static Ast *parse_binary(Ast *left_side)
 	// There is a possibility that we actually have a type here.
 	if (operator_type == TOKEN_STAR && is_type_expr_after_star(left_side))
 	{
-		return create_pointer_type(left_side);
+		Type *type = new_type(TYPE_POINTER, false, &left_side->span);
+		type->pointer.base = new_unresolved_type(left_side, false);
+		UPDATE(type);
+		Expr *expr = expr_new_type_expr(type);
+		UPDATE_AND_RETURN(expr);
 	}
 	ParseRule *rule = get_rule(operator_type);
-	Ast *right_side = parse_precedence((precedence)(rule->precedence + 1));
+	Expr *right_side = parse_precedence(rule->precedence + 1);
 
-	Ast *binary = new_ast_with_span(AST_BINARY_EXPR, &left_side->span);
+	Expr *binary = expr_new(EXPR_BINARY, &left_side->span);
 
 	binary->binary_expr.left = left_side;
 	binary->binary_expr.right = right_side;
 	binary->binary_expr.operator = operator_type;
 
-	UPDATE_AND_RETURN_AST(binary);
+	UPDATE_AND_RETURN(binary);
 
 }
 
-static Ast *parse_ternary(Ast *left_side)
+static Expr *parse_ternary(Expr *left_side)
 {
 
-	Ast *ast_ternary = new_ast_with_span(AST_TERNARY_EXPR, &left_side->span);
-	ast_ternary->ternary_expr.expr = left_side;
+	Expr *expr_ternary = expr_new(EXPR_TERNARY, &left_side->span);
+	expr_ternary->ternary_expr.expr = left_side;
 
 	// Check for elvis
 	if (tok.type == TOKEN_COLON)
 	{
-		ast_ternary->ternary_expr.true_expr = NULL;
+		expr_ternary->ternary_expr.true_expr = NULL;
 	}
 	else
 	{
-		Ast *true_expr = parse_precedence(PREC_TERNARY + 1);
+		Expr *true_expr = parse_precedence(PREC_TERNARY + 1);
 		if (!true_expr) return NULL;
-		ast_ternary->ternary_expr.true_expr = true_expr;
+		expr_ternary->ternary_expr.true_expr = true_expr;
 	}
 
 	if (!consume(TOKEN_COLON, "Expected ':'")) return NULL;
 
-	Ast *false_expr = parse_precedence(PREC_TERNARY + 1);
+	Expr *false_expr = parse_precedence(PREC_TERNARY + 1);
 
 	if (!false_expr) return NULL;
 
-	ast_ternary->ternary_expr.false_expr = false_expr;
-	UPDATE_AND_RETURN_AST(ast_ternary);
-
+	expr_ternary->ternary_expr.false_expr = false_expr;
+	UPDATE_AND_RETURN(expr_ternary);
 }
 
 
 
 // Right associative
-static Ast *parse_binary_right(Ast *left_side)
+static Expr *parse_binary_right(Expr *left_side)
 {
 	// Remember the operator.
 	token_type operator_type = prev_tok.type;
 
 	ParseRule *rule = get_rule(operator_type);
-	Ast *right_side = parse_precedence((precedence)(rule->precedence));
+	Expr *right_side = parse_precedence((Precedence)(rule->precedence));
 
-	Ast *binary = new_ast_with_span(AST_BINARY_EXPR, &left_side->span);
+	Expr *binary = expr_new(EXPR_BINARY, &left_side->span);
 	binary->binary_expr.left = left_side;
 	binary->binary_expr.right = right_side;
 	binary->binary_expr.operator = operator_type;
-	UPDATE_AND_RETURN_AST(binary);
+	UPDATE_AND_RETURN(binary);
 
 }
 
-static Ast *parse_unary(Ast *left)
+static Expr *parse_unary(Expr *left)
 {
 	assert(!left && "Did not expect a left hand side!");
 
-	Ast *unary = new_ast_with_span(AST_UNARY_EXPR, &prev_tok);
+	Expr *unary = expr_new(EXPR_UNARY, &prev_tok);
 	unary->unary_expr.operator = prev_tok.type;
 	unary->unary_expr.expr = parse_precedence(PREC_UNARY);
-	UPDATE_AND_RETURN_AST(unary);
+	UPDATE_AND_RETURN(unary);
 }
 
-static Ast *parse_post_unary(Ast *left)
+static Expr *parse_post_unary(Expr *left)
 {
-	Ast *unary = new_ast_with_span(AST_POST_EXPR, &left->span);
+	Expr *unary = expr_new(EXPR_POST, &left->span);
 	unary->post_expr.operator = prev_tok.type;
 	unary->post_expr.expr = left;
-	UPDATE_AND_RETURN_AST(unary);
+	UPDATE_AND_RETURN(unary);
 }
 
-static Ast *parse_grouping(Ast *left)
+static Expr *parse_grouping(Expr *left)
 {
 	assert(!left && "Unexpected left hand side");
-	Ast *ast = parse_expression();
+	Expr *ast = parse_expression();
 	consume(TOKEN_RPAREN, "Expected ')' after expression.");
 	return ast;
 }
 
-static Ast *parse_call(Ast *left)
+static Expr *parse_call(Expr *left)
 {
 	if (!left)
 	{
@@ -1855,32 +1857,32 @@ static Ast *parse_call(Ast *left)
 		vector = new_vector(4);
 		do
 		{
-			Ast *param = parse_expression();
+			Expr *param = parse_expression();
 			if (!param) return NULL;
 			vector_add(vector, param);
 		} while (try_consume(TOKEN_COMMA));
 		if (!consume(TOKEN_RPAREN, "Expected )")) return NULL;
 	}
-	Ast *call = new_ast_with_span(AST_CALL_EXPR, &left->span);
+	Expr *call = expr_new(EXPR_CALL, &left->span);
 	call->call_expr.function = left;
 	call->call_expr.parameters = vector;
-	UPDATE_AND_RETURN_AST(call);
+	UPDATE_AND_RETURN(call);
 }
 
-static Ast *parse_sizeof(Ast *left)
+static Expr *parse_sizeof(Expr *left)
 {
 	assert(!left && "Did not expect a left hand side!");
 
-	Ast *ast = new_ast_with_span(AST_SIZEOF_EXPR, &prev_tok);
+	Expr *expr = expr_new(EXPR_SIZEOF, &prev_tok);
 
 	if (!consume(TOKEN_LPAREN, "Expected '('")) return NULL;
 
-	ast->sizeof_expr.expr = parse_expression();
-	if (!ast->sizeof_expr.expr) return NULL;
+	expr->sizeof_expr.expr = parse_expression();
+	if (!expr->sizeof_expr.expr) return NULL;
 
 	if (!consume(TOKEN_RPAREN, "Expected ')'")) return NULL;
 
-	UPDATE_AND_RETURN_AST(ast);
+	UPDATE_AND_RETURN(expr);
 }
 
 /**
@@ -1889,29 +1891,29 @@ static Ast *parse_sizeof(Ast *left)
  * @param left
  * @return
  */
-static Ast *parse_cast(Ast *left)
+static Expr *parse_cast(Expr *left)
 {
 	assert(!left && "Did not expect a left hand side!");
 
-	Ast *ast = new_ast_with_span(AST_CAST_EXPR, &prev_tok);
+	Expr *expr = expr_new(EXPR_CAST, &prev_tok);
 
 	if (!consume(TOKEN_LPAREN, "Expected '('")) return NULL;
 
-	ast->cast_expr.expr = parse_expression();
-	if (!ast->cast_expr.expr) return NULL;
+	expr->cast_expr.expr = parse_expression();
+	if (!expr->cast_expr.expr) return NULL;
 
 	if (!consume(TOKEN_COMMA, "Expected ','")) return NULL;
 
-	ast->cast_expr.type = parse_type(true);
+	expr->cast_expr.type = parse_type(true, false);
 
-	if (!ast->cast_expr.type) return NULL;
+	if (!expr->cast_expr.type) return NULL;
 
 	if (!consume(TOKEN_RPAREN, "Expected ')'")) return NULL;
 
-	UPDATE_AND_RETURN_AST(ast);
+	UPDATE_AND_RETURN(expr);
 }
 
-static Ast *parse_subscript(Ast *left)
+static Expr *parse_subscript(Expr *left)
 {
 	if (!left)
 	{
@@ -1920,33 +1922,35 @@ static Ast *parse_subscript(Ast *left)
 	// Check for possible array type, if so then this is a type expression.
 	if (try_consume(TOKEN_RBRACKET))
 	{
-		// See parse_array_type
-		Ast *array = new_type_expr(TYPE_EXPR_ARRAY, &left->span);
-		array->type_expr.array_type_expr.type = left;
-		array->type_expr.array_type_expr.size = NULL;
-		UPDATE_AND_RETURN_AST(array);
+		Type *type = new_type(TYPE_ARRAY, false, &left->span);
+		type->array.base = new_unresolved_type(left, false);
+		type->array.is_empty = true;
+		type->array.is_len_resolved = true;
+		UPDATE(type);
+		Expr *expr = expr_new_type_expr(type);
+		UPDATE_AND_RETURN(expr);
 	}
-	Ast *index = parse_expression();
+	Expr *index = parse_expression();
 	consume(TOKEN_RBRACKET, "Expected ]");
 	if (!index) return NULL;
-    Ast *subscript_ast = new_ast_with_span(AST_SUBSCRIPT_EXPR, &left->span);
+    Expr *subscript_ast = expr_new(EXPR_SUBSCRIPT, &left->span);
 	subscript_ast->subscript_expr.expr = left;
 	subscript_ast->subscript_expr.index = index;
-    UPDATE_AND_RETURN_AST(subscript_ast);
+    UPDATE_AND_RETURN(subscript_ast);
 }
 
 
-static Ast *parse_access(Ast *left)
+static Expr *parse_access(Expr *left)
 {
 	if (!left) return NULL;
-	Ast *accessed = parse_expression();
-	Ast *access_ast = new_ast_with_span(AST_ACCESS_EXPR, &left->span);
-	access_ast->access_expr.parent = left;
-	access_ast->access_expr.sub_element = accessed;
-	UPDATE_AND_RETURN_AST(access_ast);
+	Expr *accessed = parse_expression();
+	Expr *access_expr = expr_new(EXPR_ACCESS, &left->span);
+	access_expr->access_expr.parent = left;
+	access_expr->access_expr.sub_element = accessed;
+	UPDATE_AND_RETURN(access_expr);
 }
 
-static void set_parse_rule(token_type type, ParseFn prefix, ParseFn infix, precedence rule_precedence)
+static void set_parse_rule(token_type type, ParseFn prefix, ParseFn infix, Precedence rule_precedence)
 {
 	rules[type].prefix = prefix;
 	rules[type].precedence = rule_precedence;
@@ -1981,8 +1985,6 @@ void setup_parse_rules(void)
 	set_parse_rule(TOKEN_NOT_EQUAL, NULL, parse_binary, PREC_COMPARISON);
 	set_parse_rule(TOKEN_GREATER, NULL, parse_binary, PREC_COMPARISON);
 	set_parse_rule(TOKEN_GREATER_EQ, NULL, parse_binary, PREC_COMPARISON);
-	set_parse_rule(TOKEN_LESS, NULL, parse_binary, PREC_COMPARISON);
-	set_parse_rule(TOKEN_LESS_EQ, NULL, parse_binary, PREC_COMPARISON);
 	set_parse_rule(TOKEN_LESS, NULL, parse_binary, PREC_COMPARISON);
 	set_parse_rule(TOKEN_LESS_EQ, NULL, parse_binary, PREC_COMPARISON);
 	set_parse_rule(TOKEN_LEFT_SHIFT, NULL, parse_binary, PREC_SHIFT);

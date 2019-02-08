@@ -4,25 +4,26 @@
 #include "diagnostics.h"
 #include "error.h"
 
+__thread Scope *active_scope = NULL;
+
 void scope_init(Scope *scope, const Token *name, Table *modules)
 {
     scope->scope_index = 0;
     scope->cur_scope = NULL;
     scope->all_modules = modules;
-    scope->module = NULL;
-    scope->module = scope_find_any_module(scope, name);
+    scope->module = table_get_token(scope->all_modules, name);
     scope->locals = new_vector(8);
     table_init(&scope->imported_modules, 32);
     table_init(&scope->symbol_cache, 16 * 1024);
     assert(scope->module);
 }
 
-Module *scope_find_any_module(Scope *scope, const Token *token)
+Module *scope_find_any_module(const Token *token)
 {
-    return table_get_token(scope->all_modules, token);
+    return table_get_token(active_scope->all_modules, token);
 }
 
-void scope_add_import_declaration(Scope *scope, Decl *import)
+void scope_add_import_declaration(Decl *import)
 {
     assert(import->module && "Module missing");
 
@@ -32,7 +33,7 @@ void scope_add_import_declaration(Scope *scope, Decl *import)
     switch (import->import.type)
     {
         case IMPORT_TYPE_LOCAL:
-            vector_add(scope->locals, import->module);
+            vector_add(active_scope->locals, import->module);
             break;
         case IMPORT_TYPE_ALIAS:
             name = &import->import.alias;
@@ -42,21 +43,22 @@ void scope_add_import_declaration(Scope *scope, Decl *import)
     }
 
     // Add module to imports.
-    void *previous = table_set_token(&scope->imported_modules, name, import);
+    void *previous = table_set_token(&active_scope->imported_modules, name, import);
     assert(!previous && "Previous not expected here");
 
 
     // Link the name to the declaration in the symbol cache.
-    previous = table_set_token(&scope->symbol_cache, name, import);
+    previous = table_set_token(&active_scope->symbol_cache, name, import);
     assert(!previous && "Previous not expected here");
 }
 
-void scope_mark_import_as_used(Scope *scope, Module *module, bool used_public)
+void scope_mark_import_as_used(Module *module, bool used_public)
 {
+
     // IMPROVE cache this
-    for (unsigned i = 0; i < scope->imported_modules.capacity; i++)
+    for (unsigned i = 0; i < active_scope->imported_modules.capacity; i++)
     {
-        Entry *entry = &scope->imported_modules.entries[i];
+        Entry *entry = &active_scope->imported_modules.entries[i];
         if (entry->key == NULL) continue;
         Decl *import = entry->value;
         if (module == import->module)
@@ -68,7 +70,7 @@ void scope_mark_import_as_used(Scope *scope, Module *module, bool used_public)
     }
 }
 
-Decl *scope_find_symbol_in_module(Scope *scope, Token *token, Module *module)
+Decl *scope_find_symbol_in_module(Token *token, Module *module)
 {
     Decl *symbol = module_find_symbol(module, token);
     if (!symbol)
@@ -76,7 +78,7 @@ Decl *scope_find_symbol_in_module(Scope *scope, Token *token, Module *module)
         sema_error_at(token, "Cannot find %.*s in module %.*s", SPLAT_TOK(*token), SPLAT_TOK(module->name));
         return NULL;
     }
-    if (scope_is_external_module(scope, module))
+    if (scope_is_external_module(module))
     {
         if (!symbol->is_public)
         {
@@ -88,22 +90,22 @@ Decl *scope_find_symbol_in_module(Scope *scope, Token *token, Module *module)
     return symbol;
 }
 
-Decl *scope_find_symbol(Scope *scope, Token *symbol, bool is_type, bool used_public)
+Decl *scope_find_symbol(Token *symbol, bool is_type, bool used_public)
 {
-    Decl *symbol_decl = table_get_token(&scope->symbol_cache, symbol);
+    Decl *symbol_decl = table_get_token(&active_scope->symbol_cache, symbol);
     if (symbol_decl)
     {
-        if (used_public && symbol_decl->module != scope->module)
+        if (used_public && symbol_decl->module != active_scope->module)
         {
-            scope_mark_import_as_used(scope, symbol_decl->module, used_public);
+            scope_mark_import_as_used(symbol_decl->module, used_public);
         }
         return symbol_decl;
     }
     bool ambiguous = false;
     bool visible_match = false;
-    for (unsigned i = 0; i < scope->locals->size; i++)
+    for (unsigned i = 0; i < active_scope->locals->size; i++)
     {
-        Module *module = scope->locals->entries[i];
+        Module *module = active_scope->locals->entries[i];
         Decl *decl = module_find_symbol(module, symbol);
         if (!decl) continue;
         bool visible = !module->is_external || decl->is_public;
@@ -142,38 +144,38 @@ Decl *scope_find_symbol(Scope *scope, Token *symbol, bool is_type, bool used_pub
 
 
     // mark import as as used
-    scope_mark_import_as_used(scope, symbol_decl->module, used_public);
+    scope_mark_import_as_used(symbol_decl->module, used_public);
     if (!visible_match)
     {
         sema_error_at(symbol, "Symbol '%.*s' is not public", symbol->length, symbol->start);
         return NULL;
     }
 
-    if (symbol_decl->module && symbol_decl->module != scope->module)
+    if (symbol_decl->module && symbol_decl->module != active_scope->module)
     {
         symbol_decl->is_used_public = true;
     }
-    table_set_token(&scope->symbol_cache, symbol, symbol_decl);
+    table_set_token(&active_scope->symbol_cache, symbol, symbol_decl);
     return symbol_decl;
 }
 
-bool scope_had_errors(Scope *scope)
+bool scope_had_errors(void)
 {
-    unsigned errors_at_scope_start = scope->cur_scope ? scope->cur_scope->errors : 0;
+    unsigned errors_at_scope_start = active_scope->cur_scope ? active_scope->cur_scope->errors : 0;
     return errors_at_scope_start < errors();
 }
 
-void scope_add_scoped_symbol(Scope *scope, Decl *var_decl)
+void scope_add_scoped_symbol(Decl *var_decl)
 {
-    assert(scope->cur_scope);
+    assert(active_scope->cur_scope);
 
-    vector_add(scope->cur_scope->local_decls, var_decl);
-    table_set_token(&scope->symbol_cache, &var_decl->name, var_decl);
+    vector_add(active_scope->cur_scope->local_decls, var_decl);
+    table_set_token(&active_scope->symbol_cache, &var_decl->name, var_decl);
 }
 
-Module *scope_find_used_module(Scope *scope, Token *name, bool used_public)
+Module *scope_find_used_module(Token *name, bool used_public)
 {
-    Decl *import_decl = table_get_token(&scope->imported_modules, name);
+    Decl *import_decl = table_get_token(&active_scope->imported_modules, name);
     if (import_decl)
     {
         import_decl->is_used = true;
@@ -208,16 +210,16 @@ Module *scope_find_used_module(Scope *scope, Token *name, bool used_public)
     return NULL;
 }
 
-Decl * scope_check_scoped_symbol(Scope *scope, Token *token)
+Decl *scope_check_scoped_symbol(Token *token)
 {
-    Decl *old = table_get_token(&scope->symbol_cache, token);
+    Decl *old = table_get_token(&active_scope->symbol_cache, token);
 
     if (old) return old;
 
     // Check in local modules
-    for (unsigned i = 0; i < scope->locals->size; i++)
+    for (unsigned i = 0; i < active_scope->locals->size; i++)
     {
-        Module *module = scope->locals->entries[i];
+        Module *module = active_scope->locals->entries[i];
         old = module_find_symbol(module, token);
         if (old) return old;
     }
@@ -240,7 +242,7 @@ Ast *scope_defer_top(Scope *scope)
 static inline bool should_skip_exit_defer_stmt(Ast *stmt)
 {
     if (!stmt) return false;
-    switch (stmt->type)
+    switch (stmt->ast_id)
     {
         case AST_RETURN_STMT:
         case AST_BREAK_STMT:
@@ -254,41 +256,41 @@ static inline bool should_skip_exit_defer_stmt(Ast *stmt)
     }
 }
 
-void scope_enter(Scope *scope, unsigned flags)
+void scope_enter(unsigned flags)
 {
-    if (scope->scope_index >= MAX_SCOPE_DEPTH) FATAL_ERROR("Out of scopes");
-    DynamicScope *parent = scope->cur_scope;
-    scope->cur_scope = &scope->scopes[scope->scope_index++];
+    if (active_scope->scope_index >= MAX_SCOPE_DEPTH) FATAL_ERROR("Out of scopes");
+    DynamicScope *parent = active_scope->cur_scope;
+    active_scope->cur_scope = &active_scope->scopes[active_scope->scope_index++];
 
-    scope->cur_scope->errors = errors();
-    if (!scope->cur_scope->local_decls)
+    active_scope->cur_scope->errors = errors();
+    if (!active_scope->cur_scope->local_decls)
     {
-        scope->cur_scope->local_decls = new_vector(64);
+        active_scope->cur_scope->local_decls = new_vector(64);
     }
     else
     {
-        scope->cur_scope->local_decls->size = 0;
+        active_scope->cur_scope->local_decls->size = 0;
     }
-    scope->cur_scope->flags = flags;
-    scope->cur_scope->flags_created = flags;
-    scope->cur_scope->last_defer = NULL;
+    active_scope->cur_scope->flags = flags;
+    active_scope->cur_scope->flags_created = flags;
+    active_scope->cur_scope->last_defer = NULL;
 
     if (parent)
     {
         // Keep the break/continue/defer flags.
-        scope->cur_scope->flags |= (parent->flags & (SCOPE_BREAK | SCOPE_CONTINUE | SCOPE_DEFER));
+        active_scope->cur_scope->flags |= (parent->flags & (SCOPE_BREAK | SCOPE_CONTINUE | SCOPE_DEFER));
     }
     if (flags & SCOPE_DEFER)
     {
         // Continue is not valid when entering Defer.
-        scope->cur_scope->flags &= ~SCOPE_CONTINUE;
+        active_scope->cur_scope->flags &= ~SCOPE_CONTINUE;
     }
 }
 
-void scope_exit(Scope *scope, Ast *stmt)
+void scope_exit(Ast *stmt)
 {
-    DynamicScope *current = scope->cur_scope;
-    bool had_errors = scope_had_errors(scope);
+    DynamicScope *current = active_scope->cur_scope;
+    bool had_errors = scope_had_errors();
     for (unsigned i = 0; i < current->local_decls->size; i++)
     {
         Decl *decl = current->local_decls->entries[i];
@@ -305,20 +307,20 @@ void scope_exit(Scope *scope, Ast *stmt)
             }
         }
         // IMPROVE this assumes shadowing is disallowed.
-        table_delete_token(&scope->symbol_cache, &decl->name);
+        table_delete_token(&active_scope->symbol_cache, &decl->name);
     }
 
-    Ast *defer = scope_defer_top(scope);
+    Ast *defer = scope_defer_top(active_scope);
 
-    scope->scope_index--;
-    scope->cur_scope = scope->scope_index ? &scope->scopes[scope->scope_index] : NULL;
+    active_scope->scope_index--;
+    active_scope->cur_scope = active_scope->scope_index ? &active_scope->scopes[active_scope->scope_index] : NULL;
 
-    Ast *defer_end = scope_defer_top(scope);
+    Ast *defer_end = scope_defer_top(active_scope);
 
     if (defer == defer_end) return;
 
     DeferList list = { .defer_start = defer, .defer_end = defer_end };
-    switch (stmt->type)
+    switch (stmt->ast_id)
     {
         case AST_COMPOUND_STMT:
             // Ignore defer if the last statement was an exit.
@@ -334,9 +336,9 @@ void scope_exit(Scope *scope, Ast *stmt)
         default:
             break;
     }
-    Ast *old_stmt = new_ast(stmt->type);
+    Ast *old_stmt = new_ast(stmt->ast_id);
     *old_stmt = *stmt;
-    stmt->type = AST_DEFER_RELASE;
+    stmt->ast_id = AST_DEFER_RELASE;
     stmt->defer_release_stmt.inner = old_stmt;
     stmt->defer_release_stmt.list = list;
 }

@@ -33,7 +33,8 @@ typedef enum _TypeId
 
 
 typedef struct _Type Type;
-typedef struct _Ast Ast;
+typedef struct _Expr Expr;
+typedef struct _Decl Decl;
 
 typedef struct _TypePointer
 {
@@ -50,9 +51,7 @@ typedef struct _TypeInt
 
 typedef struct _TypeUnresolved
 {
-    Ast *type_expr;
-    Token module_name;
-    Token identifier;
+    Expr *type_expr;
 } TypeUnresolved;
 
 typedef struct _TypeOpaque
@@ -67,80 +66,45 @@ typedef struct _TypeFloat
 typedef struct _TypeArray
 {
     Type *base;
-    uint32_t len;
-    bool is_incremental;
-} TypeArray;
-
-typedef struct _TypeStructUnion
-{
-    struct _Ast *decl;
-} TypeStructUnion;
-
-typedef struct _FunctionName
-{
-    Token struct_name;
-    Token function_name;
-    Token full_name;
-} FunctionName;
-
-typedef struct _TypeFunc
-{
-    bool rtype_resolved : 1;
-    FunctionName *name;
+    bool is_len_resolved : 1;
+    bool is_empty : 1;
     union
     {
-        Ast *rtype_expr;
-        Type *rtype;
+        Expr *len_expr;
+        uint32_t len;
     };
-    Ast *params;
-} TypeFunc;
-
-typedef struct _TypeEnum
-{
-    struct _Ast *decl;
-    struct _Vector *entries;
-    Type *int_type;
-    /*
-    // set this flag temporarily to detect infinite loops
-    bool embedded_in_current;
-    bool reported_infinite_err;
-    // whether we've finished resolving it
-    bool complete;*/
-} TypeEnum;
+} TypeArray;
 
 typedef struct _Type
 {
 
-    TypeId type_id : 5;
+    TypeId type_id : 8;
     bool is_public : 1;
     bool is_exported : 1;
     bool is_incremental : 1;
     bool is_used_public : 1;
-
+    bool is_const : 1;
+    bool is_volatile : 1;
+    bool is_aliased : 1;
     Token span;
     Token name;
-    Token module_name;
     LLVMTypeRef llvm_type;
+    Decl *decl;
     struct _Module *module;
-    struct _Ast *attributes;
-
     union
     {
         TypePointer pointer;
         TypeInt integer;
         TypeFloat real;
         TypeArray array;
-        TypeStructUnion structure;
-        TypeStructUnion unionstruct;
-        TypeEnum enumeration;
-        TypeFunc func;
         TypeOpaque opaque;
         TypeUnresolved unresolved;
     };
 } Type;
 
-Type *new_unresolved_type(Ast *expr, bool public);
+Type *new_unresolved_type(Expr *expr, bool public);
 Type *new_type(TypeId type_id, bool public, Token *initial_token);
 Type *end_type(Type *ast, Token *end);
-void print_type(Type *type, int current_indent);
-void print_sub_type(const char *header, int current_indent, Type *type);
+void print_type(Type *type, unsigned int current_indent);
+void type_print_sub(const char *header, unsigned int current_indent, Type *type);
+Type *void_type();

@@ -106,7 +106,7 @@ add_executable(titanos
         titanos/src/vector.h
         titanos/src/values/value.c
         titanos/src/values/value.h
-        titanos/main.c titanos/src/values/bigint.c titanos/src/values/bigint.h titanos/src/analyser.c titanos/src/analyser.h titanos/src/statement_analysis.c titanos/src/statement_analysis.h titanos/src/types/type.c titanos/src/types/type.h titanos/src/decl.c titanos/src/decl.h titanos/src/type_analysis.c titanos/src/type_analysis.h)
+        titanos/main.c titanos/src/values/bigint.c titanos/src/values/bigint.h titanos/src/analyser.c titanos/src/analyser.h titanos/src/statement_analysis.c titanos/src/statement_analysis.h titanos/src/types/type.c titanos/src/types/type.h titanos/src/decl.c titanos/src/decl.h titanos/src/type_analysis.c titanos/src/type_analysis.h titanos/src/expr.c titanos/src/expr.h)
 
 
 target_link_libraries(titanos ${llvm_libs})

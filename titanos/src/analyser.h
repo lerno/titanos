@@ -22,8 +22,6 @@ typedef struct _Analyser
     Vector labels;
     Vector gotos;
     Vector defers;
-    Table temp_table;
-    Vector temp_vector;
     /*
      *   AST& ast;
          const Module& module;
@@ -35,4 +33,9 @@ typedef struct _Analyser
      */
 } Analyser;
 
-extern Analyser *analyser;
+extern __thread Analyser *active_analyser;
+void select_analyser(Analyser *current_analyser);
+Table *push_scratch_table();
+void pop_scratch_table(Table *table);
+Vector *push_scratch_vector();
+void pop_scratch_vector(Vector *vector);

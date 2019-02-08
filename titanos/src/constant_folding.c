@@ -3,33 +3,12 @@
 #include "ast_types.h"
 #include "error.h"
 #include "diagnostics.h"
+#include "type_analysis.h"
 
 
-static inline AstConstState evaluate_constant_type_expr(Ast *type_expr)
-{
-    assert(type_expr->type == AST_TYPE_EXPR);
-
-    // Improve: with macros, identifiers will be evaluated.
-    switch (type_expr->type_expr.type)
-    {
-        case TYPE_EXPR_IDENTIFIER:
-            type_expr->const_state = CONST_FULL;
-            break;
-        case TYPE_EXPR_ARRAY:
-            type_expr->const_state = evaluate_constant(type_expr->type_expr.array_type_expr.size) ? CONST_FULL : CONST_NONE;
-            break;
-        case TYPE_EXPR_POINTER:
-            type_expr->const_state = evaluate_constant_type_expr(type_expr->type_expr.pointer_type_expr.type) ? CONST_FULL : CONST_NONE;
-        case TYPE_EXPR_VOID:
-            type_expr->const_state = CONST_FULL;
-        default:
-            FATAL_ERROR("Not reachable");
-    }
-    return type_expr->const_state;
-}
 
 
-static inline void replace_ast(Ast *target, Ast *source)
+static inline void replace_expr(Expr *target, Expr *source)
 {
     Token original_span = target->span;
     *target = *source;
@@ -57,98 +36,91 @@ static inline bool implicit_conversion(Value *left, Value *right)
 
 typedef Value (*BinOp)(Value, Value);
 
-static inline AstConstState evaluate_constant_operation(Ast *ast, BinOp operation, const char *error)
+static inline ExprConstState evaluate_constant_operation(Expr *expr, BinOp operation, const char *error)
 {
-    Value left = ast->binary_expr.left->const_expr.value;
-    Value right = ast->binary_expr.right->const_expr.value;
+    Value left = expr->binary_expr.left->const_expr.value;
+    Value right = expr->binary_expr.right->const_expr.value;
 
-    if (!implicit_conversion(&left, &right)) return ast->const_state = CONST_NONE;
+    if (!implicit_conversion(&left, &right)) return expr->const_state = CONST_NONE;
 
     Value value = operation(left, right);
     if (value.type == VALUE_TYPE_ERROR)
     {
-        sema_error_at(&ast->span, error,
+        sema_error_at(&expr->span, error,
                 operation,
-                value_type_name(ast->binary_expr.left->const_expr.value),
-                value_type_name(ast->binary_expr.right->const_expr.value));
-        return ast->const_state = CONST_NONE;
+                value_type_name(expr->binary_expr.left->const_expr.value),
+                value_type_name(expr->binary_expr.right->const_expr.value));
+        return expr->const_state = CONST_NONE;
     }
-    ast->const_expr.value = value;
-    ast->type = AST_CONST_EXPR;
-    return ast->const_state = CONST_FULL;
+    expr->const_expr.value = value;
+    expr->expr_id = EXPR_CONST;
+    return expr->const_state = CONST_FULL;
 }
 
 
-static inline AstConstState evaluate_constant_binary_expr(Ast *ast)
+static inline ExprConstState evaluate_constant_binary_expr(Expr *expr)
 {
-    AstConstState left = evaluate_constant(ast->binary_expr.left);
+    ExprConstState left = evaluate_constant(expr->binary_expr.left);
     if (left == CONST_UNKNOWN) return CONST_UNKNOWN;
 
-    AstConstState right = evaluate_constant(ast->binary_expr.right);
+    ExprConstState right = evaluate_constant(expr->binary_expr.right);
     if (right == CONST_UNKNOWN) return CONST_UNKNOWN;
 
-    if (left == CONST_NONE || right == CONST_NONE) return ast->const_state = CONST_NONE;
+    if (left == CONST_NONE || right == CONST_NONE) return expr->const_state = CONST_NONE;
 
-    switch (ast->binary_expr.operator)
+    switch (expr->binary_expr.operator)
     {
         case TOKEN_PLUS:
-            return evaluate_constant_operation(ast, &value_add, "Cant't add '%s' to '%s'");
+            return evaluate_constant_operation(expr, &value_add, "Cant't add '%s' to '%s'");
         case TOKEN_MINUS:
-            return evaluate_constant_operation(ast, &value_sub, "Can't subtract '%s' from '%s'");
+            return evaluate_constant_operation(expr, &value_sub, "Can't subtract '%s' from '%s'");
         case TOKEN_STAR:
-            return evaluate_constant_operation(ast, &value_mult, "Can't multiply '%s' by '%s'");;
+            return evaluate_constant_operation(expr, &value_mult, "Can't multiply '%s' by '%s'");;
         case TOKEN_DIV:
-            return evaluate_constant_operation(ast, &value_div, "Can't divide '%s' by '%s'");
+            return evaluate_constant_operation(expr, &value_div, "Can't divide '%s' by '%s'");
         case TOKEN_MOD:
-            return evaluate_constant_operation(ast, &value_mod, "Can't get reminder of '%s' divided by '%s'");
+            return evaluate_constant_operation(expr, &value_mod, "Can't get reminder of '%s' divided by '%s'");
         default:
             FATAL_ERROR("TODO");
 
     }
 }
 
-static inline AstConstState evaluate_constant_ternary_expr(Ast *ast)
+static inline ExprConstState evaluate_constant_ternary_expr(Expr *expr)
 {
-    AstConstState decider = evaluate_constant(ast->ternary_expr.expr);
+    ExprConstState decider = evaluate_constant(expr->ternary_expr.expr);
 
     if (decider != CONST_FULL) return decider;
-    Value expr = value_to_bool(ast->ternary_expr.expr->const_expr.value);
-    if (expr.type == VALUE_TYPE_ERROR)
+    Value value = value_to_bool(expr->ternary_expr.expr->const_expr.value);
+    if (value.type == VALUE_TYPE_ERROR)
     {
-        return ast->const_state = CONST_NONE;
+        return expr->const_state = CONST_NONE;
     }
-    ast->ternary_expr.expr->const_expr.value = expr;
-    AstConstState const_true = evaluate_constant(ast->ternary_expr.true_expr);
-    AstConstState const_false = evaluate_constant(ast->ternary_expr.true_expr);
-
-    // Both sides must be constant
-    if (const_true != CONST_FULL || const_false != CONST_FULL)
+    expr->ternary_expr.expr->const_expr.value = value;
+    ExprConstState const_true = evaluate_constant(expr->ternary_expr.true_expr);
+    ExprConstState const_false = evaluate_constant(expr->ternary_expr.true_expr);
+    assert(expr->ternary_expr.expr->const_expr.value.type == VALUE_TYPE_BOOL);
+    if (expr->ternary_expr.expr->const_expr.value.b)
     {
-        return ast->const_state = CONST_NONE;
-    }
-
-    assert(ast->ternary_expr.expr->const_expr.value.type == VALUE_TYPE_BOOL);
-
-    if (ast->ternary_expr.expr->const_expr.value.b)
-    {
-        replace_ast(ast, ast->ternary_expr.true_expr);
+        replace_expr(expr, expr->ternary_expr.true_expr);
+        return const_true;
     }
     else
     {
-        replace_ast(ast, ast->ternary_expr.false_expr);
+        replace_expr(expr, expr->ternary_expr.false_expr);
+        return const_false;
     }
-    return CONST_FULL;
 }
 
-static inline AstConstState evaluate_constant_unary_expr(Ast *ast)
+static inline ExprConstState evaluate_constant_unary_expr(Expr *expr)
 {
-    if (CONST_NONE == evaluate_constant(ast->unary_expr.expr))
+    if (CONST_NONE == evaluate_constant(expr->unary_expr.expr))
     {
-        return ast->const_state = CONST_NONE;
+        return expr->const_state = CONST_NONE;
     }
-    Ast *value = ast->unary_expr.expr;
+    Expr *value = expr->unary_expr.expr;
     Value res = { .type = VALUE_TYPE_ERROR };
-    switch (ast->unary_expr.operator)
+    switch (expr->unary_expr.operator)
     {
         case TOKEN_NOT:
             res = value_to_bool(value->const_expr.value);
@@ -182,44 +154,52 @@ static inline AstConstState evaluate_constant_unary_expr(Ast *ast)
     }
     if (res.type == VALUE_TYPE_ERROR)
     {
-        return ast->const_state = CONST_NONE;
+        return expr->const_state = CONST_NONE;
     }
-    ast->const_expr.value = res;
-    ast->type = AST_CONST_EXPR;
-    return ast->const_state = CONST_FULL;
+    expr->const_expr.value = res;
+    expr->expr_id = EXPR_CONST;
+    return expr->const_state = CONST_FULL;
 }
 
-AstConstState evaluate_constant(Ast *ast)
+ExprConstState evaluate_constant(Expr *expr)
 {
-    if (ast == NULL) return CONST_FULL;
-    if (ast->const_state != CONST_UNKNOWN) return ast->const_state;
-    switch (ast->type)
+    if (expr == NULL) return CONST_FULL;
+    if (expr->const_state != CONST_UNKNOWN) return expr->const_state;
+    switch (expr->expr_id)
     {
-        case AST_TYPE_EXPR:
-            return evaluate_constant_type_expr(ast);
-        case AST_CONST_EXPR:
+        case EXPR_TYPE:
+            return CONST_NONE;
+        case EXPR_CONST:
             FATAL_ERROR("Should already be marked CONST_FULL");
             return CONST_FULL;
-        case AST_UNARY_EXPR:
-            return evaluate_constant_unary_expr(ast);
-        case AST_POST_EXPR:
-            evaluate_constant(ast->post_expr.expr);
+        case EXPR_UNARY:
+            return evaluate_constant_unary_expr(expr);
+        case EXPR_POST:
+            evaluate_constant(expr->post_expr.expr);
             return CONST_NONE;
-        case AST_TERNARY_EXPR:
-            return evaluate_constant_ternary_expr(ast);
-        case AST_BINARY_EXPR:
-            return evaluate_constant_binary_expr(ast);
-        case AST_IDENTIFIER_EXPR:
-        case AST_CALL_EXPR:break;
-        case AST_SIZEOF_EXPR:break;
-        case AST_CAST_EXPR:break;
-        case AST_SUBSCRIPT_EXPR:break;
-        case AST_ACCESS_EXPR:break;
-        case AST_STRUCT_INIT_VALUES_EXPR:break;
-        case AST_DESIGNATED_INITIALIZED_EXPR:break;
-        default:
-            FATAL_ERROR("Unexpected type %d for folding", ast->type);
-            return CONST_NONE;
+        case EXPR_TERNARY:
+            return evaluate_constant_ternary_expr(expr);
+        case EXPR_BINARY:
+            return evaluate_constant_binary_expr(expr);
+        case EXPR_SUBSCRIPT:
+            break;
+        case EXPR_IDENTIFIER:
+            return expr->const_state = CONST_NONE;
+        case EXPR_CALL:
+            evaluate_constant(expr->call_expr.function);
+            for (unsigned i = 0; i < expr->call_expr.parameters->size; i++)
+            {
+                evaluate_constant(expr->call_expr.parameters->entries[i]);
+            }
+            return expr->const_state = CONST_NONE;
+        case EXPR_SIZEOF:break;
+        case EXPR_CAST:break;
+        case EXPR_ACCESS:
+            evaluate_constant(expr->access_expr.parent);
+            evaluate_constant(expr->access_expr.sub_element);
+            return expr->const_state = CONST_NONE;
+        case EXPR_STRUCT_INIT_VALUES:break;
+        case EXPR_DESIGNATED_INITIALIZER:break;
     }
     FATAL_ERROR("TODO");
     return CONST_UNKNOWN;

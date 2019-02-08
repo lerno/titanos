@@ -30,4 +30,4 @@ int use_colors(void);
 #else
 #define DEBUG_LOG(_string, ...)
 #endif
-#define LOG_FUNC DEBUG_LOG("<<");
+#define LOG_FUNC DEBUG_LOG("[ENTERED]");

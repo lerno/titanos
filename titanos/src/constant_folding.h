@@ -1,6 +1,6 @@
 #pragma once
 
 #include "common.h"
-#include "ast_types.h"
+#include "expr.h"
 
-AstConstState evaluate_constant(Ast *ast);
+ExprConstState evaluate_constant(Expr *expr);

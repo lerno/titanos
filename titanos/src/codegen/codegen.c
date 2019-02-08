@@ -50,10 +50,10 @@ static LLVMTypeRef codegen_convert_type(Type *type)
         case TYPE_NIL:
             return LLVMPointerType(LLVMVoidType(), 0);
         case TYPE_FUNC:
-            assert(type->func.rtype_resolved);
+            FATAL_ERROR("TODO");
 //            return LLVMFunctionType(llvm_type(type->func.rtype), /* TODO */ NULL, type->func.params->size, type->func.params->param_list.variadic);
         case TYPE_ENUM:
-            return llvm_type(type->enumeration.int_type);
+            return llvm_type(type->decl->enum_decl.type);
         case TYPE_STRUCT:
         case TYPE_UNION:
             FATAL_ERROR("TODO");

@@ -52,64 +52,66 @@ typedef struct _Scope
     Vector *locals; // Module list
 } Scope;
 
-
-void scope_add_import_declaration(Scope *scope, Decl *import);
+extern __thread Scope *active_scope;
 void scope_init(Scope *scope, const Token *name, Table *modules);
-Decl *scope_check_scoped_symbol(Scope *scope, Token *token);
-void scope_add_scoped_symbol(Scope *scope, Decl *var_decl);
-Module *scope_find_used_module(Scope *scope, Token *name, bool used_public);
-Decl *scope_find_symbol(Scope *scope, Token *token, bool is_type, bool used_public);
-Decl *scope_find_symbol_in_module(Scope *scope, Token *token, Module *module);
-void scope_check_access(Scope *scope, Ast *decl, Token *loc);
-void push_defer(Scope *scope, Ast *defer_stmt);
-void scope_enter(Scope *scope, unsigned flags);
-void scope_exit(Scope *scope, Ast *stmt);
-Ast *scope_defer_top(Scope *scope);
+
+
+void scope_add_import_declaration(Decl *import);
+Decl *scope_check_scoped_symbol(Token *token);
+void scope_add_scoped_symbol(Decl *var_decl);
+Module *scope_find_used_module(Token *name, bool used_public);
+Decl *scope_find_symbol(Token *token, bool is_type, bool used_public);
+Decl *scope_find_symbol_in_module(Token *token, Module *module);
+void scope_check_access(Ast *decl, Token *loc);
+void scope_push_defer(Scope *scope, Ast *defer_stmt);
+void scope_enter(unsigned flags);
+void scope_exit(Ast *stmt);
+Ast *scope_defer_top();
 Ast **exit_scope_defers(unsigned flags);
-static inline void scope_set_has_decls(Scope *scope)
+static inline void scope_set_has_decls()
 {
-    scope->cur_scope->flags |= SCOPE_HAS_DECLS;
+    active_scope->cur_scope->flags |= SCOPE_HAS_DECLS;
 }
-bool scope_had_errors(Scope *scope);
-void scope_set_has_breaks(Scope *breaks);
-bool scope_has_error(Scope *scope);
-static inline bool scope_allow_break(Scope *scope)
+bool scope_had_errors(void);
+void scope_set_has_breaks(void);
+bool scope_has_error(void);
+static inline bool scope_allow_break()
 {
-    return (scope->cur_scope->flags & SCOPE_BREAK) != 0;
+    return (active_scope->cur_scope->flags & SCOPE_BREAK) != 0;
 }
-static inline bool scope_allow_continue(Scope *scope)
+static inline bool scope_allow_continue()
 {
-    return (scope->cur_scope->flags & SCOPE_CONTINUE) != 0;
+    return (active_scope->cur_scope->flags & SCOPE_CONTINUE) != 0;
 }
-static inline bool scope_has_decls(Scope *scope)
+static inline bool scope_has_decls()
 {
-    return (scope->cur_scope->flags & SCOPE_HAS_DECLS) != 0;
+    return (active_scope->cur_scope->flags & SCOPE_HAS_DECLS) != 0;
 }
-static inline bool scope_has_breaks(Scope *scope)
+static inline bool scope_has_breaks()
 {
-    return (scope->cur_scope->flags & SCOPE_HAS_BREAKS) != 0;
+    return (active_scope->cur_scope->flags & SCOPE_HAS_BREAKS) != 0;
 }
-static inline bool scope_allow_scope_exit(Scope *scope)
+static inline bool scope_allow_scope_exit()
 {
-    return (scope->cur_scope->flags & SCOPE_DEFER) == 0;
-}
-
-static inline bool scope_is_defer(Scope *scope)
-{
-    return (scope->cur_scope->flags & SCOPE_DEFER) != 0;
+    return (active_scope->cur_scope->flags & SCOPE_DEFER) == 0;
 }
 
-static inline bool scope_is_control(Scope *scope)
+static inline bool scope_is_defer()
 {
-    return (scope->cur_scope->flags & SCOPE_CONTROL) != 0;
+    return (active_scope->cur_scope->flags & SCOPE_DEFER) != 0;
 }
 
-static inline bool scope_is_external_module(Scope *scope, Module *module)
+static inline bool scope_is_control()
 {
-    return module && scope->module != module;
+    return (active_scope->cur_scope->flags & SCOPE_CONTROL) != 0;
 }
 
-Module *scope_find_any_module(Scope *scope, const Token *token);
+static inline bool scope_is_external_module(Module *module)
+{
+    return module && active_scope->module != module;
+}
+
+Module *scope_find_any_module(const Token *token);
 
 static Ast *find_own_module(Token *symbol);
 
