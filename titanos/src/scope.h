@@ -115,7 +115,7 @@ Module *scope_find_any_module(const Token *token);
 
 static Ast *find_own_module(Token *symbol);
 
-#ifdef TODO
+#ifdef TODOX
     // Modules with local symbols (includes self mod)
 
     DeferStmt* deferForScopeIndex(unsigned index);

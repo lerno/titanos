@@ -9,4 +9,13 @@
 
 bool analyse_stmt(Ast *stmt);
 bool analyse_compound_stmt(Ast *compound_stmt);
+bool analyse_global_var(Decl *decl);
+
+typedef enum
+{
+    RHS,
+    LHS
+} Side;
+
+bool analyse_expr(Expr *expr, Side side);
 

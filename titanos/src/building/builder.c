@@ -467,7 +467,7 @@ static void show_lib(const char *lib_dir)
             if (err) goto next;
             printf("    %s", entry->d_name);
             printf("\n"); // REMOVE
-#ifdef TODO
+#ifdef TODOX
             {
                 ManifestReader manifest(fullname);
                 if (!manifest.parse()) {

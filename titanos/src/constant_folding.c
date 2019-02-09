@@ -4,7 +4,7 @@
 #include "error.h"
 #include "diagnostics.h"
 #include "type_analysis.h"
-
+#include "statement_analysis.h"
 
 
 
@@ -161,8 +161,53 @@ static inline ExprConstState evaluate_constant_unary_expr(Expr *expr)
     return expr->const_state = CONST_FULL;
 }
 
+ExprConstState evaluate_constant_identifer(Expr *identifier)
+{
+    LOG_FUNC
+    if (!analyse_expr(identifier, RHS)) return CONST_UNKNOWN;
+    Decl *decl = identifier->identifier_expr.resolved;
+    if (!decl) return CONST_UNKNOWN;
+    switch (decl->type_id)
+    {
+        case DECL_BUILTIN:
+            identifier->expr_id = EXPR_TYPE;
+            identifier->type_expr.type = decl->builtin_decl.type;
+            return CONST_FULL;
+        case DECL_FUNC:
+            // TODO revisit
+            return CONST_NONE;
+        case DECL_VAR:
+            evaluate_constant(decl->var.init_expr);
+            if (decl->var.init_expr->const_state == CONST_FULL)
+            {
+                replace_expr(identifier, decl->var.init_expr);
+            }
+            return decl->var.init_expr->const_state;
+        case DECL_ENUM_CONSTANT:
+            // TODO check that this is evaluated
+            assert(evaluate_constant(decl->enum_constant.init_value) == CONST_FULL);
+            replace_expr(identifier, decl->enum_constant.init_value);
+            return CONST_FULL;
+        case DECL_ALIAS_TYPE:
+            identifier->expr_id = EXPR_TYPE;
+            identifier->type_expr.type = decl->alias_decl.type;
+            return CONST_FULL;
+        case DECL_STRUCT_TYPE:
+        case DECL_ENUM_TYPE:
+        case DECL_FUNC_TYPE:
+            expr_convert_to_type_expr_from_decl(identifier, decl);
+            return CONST_FULL;
+        case DECL_ARRAY_VALUE:
+        case DECL_IMPORT:
+        case DECL_LABEL:
+            return CONST_NONE;
+    }
+    UNREACHABLE
+}
+
 ExprConstState evaluate_constant(Expr *expr)
 {
+    LOG_FUNC
     if (expr == NULL) return CONST_FULL;
     if (expr->const_state != CONST_UNKNOWN) return expr->const_state;
     switch (expr->expr_id)
@@ -184,7 +229,7 @@ ExprConstState evaluate_constant(Expr *expr)
         case EXPR_SUBSCRIPT:
             break;
         case EXPR_IDENTIFIER:
-            return expr->const_state = CONST_NONE;
+            return evaluate_constant_identifer(expr);
         case EXPR_CALL:
             evaluate_constant(expr->call_expr.function);
             for (unsigned i = 0; i < expr->call_expr.parameters->size; i++)
@@ -192,7 +237,8 @@ ExprConstState evaluate_constant(Expr *expr)
                 evaluate_constant(expr->call_expr.parameters->entries[i]);
             }
             return expr->const_state = CONST_NONE;
-        case EXPR_SIZEOF:break;
+        case EXPR_SIZEOF:
+            break;
         case EXPR_CAST:break;
         case EXPR_ACCESS:
             evaluate_constant(expr->access_expr.parent);

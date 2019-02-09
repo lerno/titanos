@@ -3,7 +3,7 @@ import c2 local;
 
 type foo2 alias foo;
 
-type fekeo alias i32[1*2];
+type fekeo alias i32[FOO];
 
 type gog enum i32 {
    Brog,
@@ -13,10 +13,11 @@ type gog enum i32 {
 
 }
 
+const i32 FOO = 3;
 
 type foo struct
 {
-  i32 a;
+  i32[FOO] a;
   union {
     i32 b;
   }
@@ -25,8 +26,8 @@ type foo struct
   }
 }
 
+
 public func i32 main() @(foo = 1 + 2) {
-    const i8[12] Buffer = { 0 }
     i8[10 + 1] buffer2;
     i32 a;
     i32 b = 10;

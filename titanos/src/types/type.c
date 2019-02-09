@@ -12,7 +12,7 @@
 
 Type *new_unresolved_type(Expr *expr, bool public)
 {
-    assert(expr->expr_id == EXPR_TYPE || expr->expr_id == EXPR_IDENTIFIER || expr->expr_id == EXPR_ACCESS);
+    assert(expr->expr_id == EXPR_TYPE || expr->expr_id == EXPR_IDENTIFIER || expr->expr_id == EXPR_ACCESS);
     Type *type = new_type(TYPE_UNRESOLVED, public, &expr->span);
     type->unresolved.type_expr = expr;
     return type;
@@ -128,6 +128,10 @@ void print_type(Type *type, unsigned current_indent)
         case TYPE_INVALID:
             printf("TYPE_INVALID\n");
             return;
+        case TYPE_TYPEVAL:
+            printf("TYPEVAL\n");
+            type_print_sub("Type", current_indent, type->type_of_type);
+            break;
     }
     printf("TODO\n");
 }

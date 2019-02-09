@@ -12,6 +12,7 @@
 typedef struct _Ast Ast;
 typedef struct _Type Type;
 typedef struct _Expr Expr;
+typedef struct _Decl Decl;
 
 typedef enum _ExprTypeId
 {
@@ -55,7 +56,7 @@ typedef struct _ExprTernary
 typedef struct _ExprIdentifier
 {
     Token identifier;
-    Ast *resolved;
+    Decl *resolved;
 } ExprIdentifier;
 
 
@@ -169,4 +170,4 @@ void expr_print(Expr *expr, unsigned current_indent);
 void expr_print_sub(const char *header, unsigned current_indent, Expr *expr);
 Expr *expr_new(ExprTypeId type, Token *span);
 Expr *expr_new_type_expr(Type *type);
-
+void expr_convert_to_type_expr_from_decl(Expr *expr, Decl *decl);

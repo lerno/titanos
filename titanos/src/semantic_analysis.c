@@ -234,7 +234,7 @@ static bool analyse_defer_goto()
         //    defer do_c();
         //    goto label1; // defer list = do_c() -> do_a() -> null
         // }
-#ifdef TODO
+#ifdef TODOX
 Make sure this is set!
         if (gotoStmt->isGotoBack())
         {
@@ -383,6 +383,7 @@ static inline void add_symbols()
     for (unsigned i = 0; i < active_analyser->parser->variables->size; i++)
     {
         Decl *var = active_analyser->parser->variables->entries[i];
+        printf("Added %.*s\n", SPLAT_TOK(var->span));
         assert(var->type_id == DECL_VAR);
         Decl *old = module_add_symbol(active_analyser->module, &var->name, var);
         if (old)
@@ -427,6 +428,16 @@ static inline void add_symbols()
     }
 }
 
+static void analyse_variables()
+{
+    Vector *variables = active_analyser->parser->variables;
+    for (unsigned i = 0; i < variables->size; i++)
+    {
+        Decl *decl = variables->entries[i];
+        analyse_global_var(decl);
+    }
+}
+
 static inline void init_analyser(Analyser *analyser, Module *module, Table *modules, Parser *parser)
 {
     scope_init(&analyser->scope, &module->name, modules);
@@ -453,35 +464,53 @@ bool analyse(Component *component, Table *modules)
     }
     unsigned analyser_count = analysers->size;
 
+    DEBUG_LOG("1. Adding all imports");
     for (unsigned i = 0; i < analyser_count; i++)
     {
         select_analyser(analysers->entries[i]);
         add_imports();
     }
 
-    unsigned errors = 0;
-
+    DEBUG_LOG("2. Adding global symbols");
     for (unsigned i = 0; i < analyser_count; i++)
     {
         select_analyser(analysers->entries[i]);
         add_symbols();
     }
 
-    if (error_found()) return false;
+    if (error_found())
+    {
+        DEBUG_LOG("%d error(s) while adding global symbols, compile is aborted", errors());
+        return false;
+    }
 
+    DEBUG_LOG("3. Analyse types");
     for (unsigned i = 0; i < analyser_count; i++)
     {
         select_analyser(analysers->entries[i]);
-        resolve_types();
+        analyse_types();
     }
 
-    if (error_found()) return errors;
-
+    DEBUG_LOG("4. Analyse (global) variables");
     for (unsigned i = 0; i < analyser_count; i++)
     {
         select_analyser(analysers->entries[i]);
-        errors += check_functions();
+        analyse_variables();
     }
+
+    if (error_found())
+    {
+        DEBUG_LOG("%d error(s) while resolving global types, compile is aborted", errors());
+        return false;
+    }
+
+    FATAL_ERROR("TODO");
+    for (unsigned i = 0; i < analyser_count; i++)
+    {
+        select_analyser(analysers->entries[i]);
+        check_functions();
+    }
+
 
     bool success = true;
 

@@ -28,6 +28,7 @@ typedef enum _TypeId
     TYPE_OPAQUE,
     TYPE_IMPORT,
     TYPE_UNRESOLVED,
+    TYPE_TYPEVAL
     // TYPE_OPAQUE, TYPE_MODULE?, TYPE_NONNULL_PTR? VECTOR ETC
 } TypeId;
 
@@ -99,6 +100,7 @@ typedef struct _Type
         TypeArray array;
         TypeOpaque opaque;
         TypeUnresolved unresolved;
+        Type *type_of_type;
     };
 } Type;
 

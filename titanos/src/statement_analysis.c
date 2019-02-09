@@ -12,13 +12,7 @@
 #include "expr.h"
 
 
-typedef enum
-{
-    RHS,
-    LHS
-} Side;
 
-static bool analyse_expr(Expr *expr, Side side);
 
 static inline bool analyse_while(Ast *stmt)
 {
@@ -88,8 +82,10 @@ bool analyse_decl_stmt(Ast *decl_stmt)
 
     if (decl->var.init_expr)
     {
+        decl->var.in_init = true;
         // TODO
         //success = analyse_init_expr(decl->var.init_expr) & success;
+        decl->var.in_init = false;
     }
 
     if (decl->var.type->is_const && !decl->var.init_expr)
@@ -110,6 +106,13 @@ bool analyse_compound_stmt(Ast *compound_stmt)
         if (scope_had_errors()) return false;
     }
     return true;
+}
+
+bool analyse_global_var(Decl *decl)
+{
+    assert(decl->type_id == DECL_VAR);
+    assert(decl->var.kind == VARDECL_GLOBAL);
+    // TODO
 }
 
 bool cast_to_type(Expr *expression, Type *type_expression)
@@ -151,15 +154,26 @@ bool analyse_return(Ast *stmt)
     return true;
 }
 
+bool try_cast(Expr *a, Expr *b)
+{
+
+}
+
 bool analyse_binary_expr(Expr *expr, Side side)
 {
     LOG_FUNC
-    bool success = analyse_expr(expr->binary_expr.left, LHS);
+    bool success = analyse_expr(expr->binary_expr.left, RHS);
     success = analyse_expr(expr->binary_expr.right, RHS);
     switch (expr->binary_expr.operator)
     {
         case TOKEN_EQ:
+            if (!analyse_expr(expr->binary_expr.left, LHS)
+                | !analyse_expr(expr->binary_expr.right, RHS)) return false;
+            return try_cast(expr->binary_expr.right, expr->binary_expr.left);
         case TOKEN_MINUS:
+/*            return (analyse_expr(expr->binary_expr.left, RHS)
+                   & analyse_expr(expr->binary_expr.right, RHS))
+                   && promote_cast(expr->binary_expr.left, expr->binary_expr.right);*/
         case TOKEN_PLUS:
         case TOKEN_DIV:
         case TOKEN_MOD:
@@ -275,18 +289,84 @@ static bool is_assignable(Expr *expr)
     }
 */
 }
-static bool analyse_expr(Expr *expr, Side side)
+
+static bool analyse_type_expr(Expr *expr, Side side)
+{
+    Type *type = expr->type_expr.type;
+    if (!resolve_type(type, false)) return false;
+    // Type now resolves, we can set the expression
+    Type *type_of_type = new_type(TYPE_TYPEVAL, false, &type->span);
+    type_of_type->is_public = type->is_public;
+    type_of_type->is_exported = type->is_exported;
+    type_of_type->name = type->name;
+    type_of_type->module = type->module;
+    type_of_type->type_of_type = type;
+    return true;
+}
+
+static bool resolve_identifier(Expr *expr, Side side)
+{
+    LOG_FUNC
+    Decl *decl = scope_find_symbol(&expr->identifier_expr.identifier, false, false);
+    if (!decl)
+    {
+        return false;
+    }
+    expr->identifier_expr.resolved = decl;
+    decl->is_used = true;
+    if (decl->var.in_init)
+    {
+        sema_error_at(&expr->span, "Used '%.*s' in own initialization", SPLAT_TOK(expr->identifier_expr.identifier));
+        return false;
+    }
+    switch (decl->type_id)
+    {
+        case DECL_FUNC:
+        case DECL_ENUM_CONSTANT:
+        case DECL_STRUCT_TYPE:
+        case DECL_FUNC_TYPE:
+        case DECL_BUILTIN:
+        case DECL_ALIAS_TYPE:;
+        case DECL_ENUM_TYPE:
+        case DECL_ARRAY_VALUE:
+        case DECL_IMPORT:
+        case DECL_LABEL:
+            if (side == LHS)
+            {
+                sema_error_at(&expr->span, "Only variables can be assigned to");
+                return false;
+            }
+            expr->const_state = CONST_FULL;
+            break;
+        case DECL_VAR:
+            if (side == LHS && decl->var.type->is_const)
+            {
+                sema_error_at(&expr->span, "Cannot assign to constant value");
+                return false;
+            }
+            expr->const_state = decl->var.type->is_const ? CONST_FULL : CONST_NONE;
+            break;
+    }
+    if (side == RHS)
+    {
+        decl->is_used = true;
+        // TODO
+        // if (usedPublicly) decl->is_used_public = true;
+    }
+    return expr->const_state;
+}
+
+bool analyse_expr(Expr *expr, Side side)
 {
     LOG_FUNC
     if (side == LHS)
     {
         if (!is_assignable(expr)) return false;
     }
-    bool success;
     switch (expr->expr_id)
     {
         case EXPR_TYPE:
-            //return analyse_type_expr(expr, side);
+            return analyse_type_expr(expr, side);
         case EXPR_CONST:
             //return analyse_const_expr(expr, side);
         case EXPR_BINARY:
@@ -298,7 +378,7 @@ static bool analyse_expr(Expr *expr, Side side)
         case EXPR_POST:
             //return analyse_post_expr(expr, side);
         case EXPR_IDENTIFIER:
-            //return analyse_identifier(expr, side);
+            return resolve_identifier(expr, side);
         case EXPR_CALL:
             //return analyse_call(expr, side);
         case EXPR_SIZEOF:
@@ -329,7 +409,7 @@ bool analyse_stmt(Ast *stmt)
             return analyse_decl_stmt(stmt);
         case AST_EXPR_STMT:
             return analyse_expr(stmt->expr_stmt.expr, RHS);
-#ifdef TODO
+#ifdef TODOX
         case AST_IF_STMT:
             return analyse_if(stmt);
         case AST_WHILE_STMT:

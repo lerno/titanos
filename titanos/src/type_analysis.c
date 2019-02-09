@@ -96,7 +96,7 @@ static bool resolve_unresolved_type(Type *type, bool used_public)
             name = type_expr->identifier_expr.identifier;
             break;
         case EXPR_TYPE:
-            if (resolve_unresolved_type(type_expr->type_expr.type, used_public))
+            if (resolve_type(type_expr->type_expr.type, used_public))
             {
                 // Copy!
                 *type = *type_expr->type_expr.type;
@@ -195,6 +195,8 @@ bool resolve_type(Type *type, bool used_public)
             return resolve_type(type->pointer.base, used_public);
         case TYPE_ARRAY:
             return resolve_type(type->array.base, used_public) && resolve_array_size(type);
+        case TYPE_TYPEVAL:
+            return resolve_type(type->type_of_type, used_public);
         case TYPE_STRUCT:
         case TYPE_ENUM:
         case TYPE_FUNC:
@@ -571,7 +573,7 @@ bool analyse_attributes(Decl* decl)
     return success;
 }
 
-void resolve_types(void)
+void analyse_types(void)
 {
     bool success = true;
     for (unsigned i = 0; i < active_analyser->parser->types->size; i++)

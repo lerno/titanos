@@ -36,7 +36,8 @@ typedef enum _VarDeclKind {
 typedef struct _VarDecl
 {
     VarDeclKind kind : 2;
-    unsigned local : 1;
+    bool local : 1;
+    bool in_init : 1;
     Type *type;
     Expr *init_expr;
     LLVMValueRef ir_value;

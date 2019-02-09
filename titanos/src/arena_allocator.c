@@ -50,7 +50,7 @@ void *malloc_arena(size_t mem)
     uint8_t *ptr = current_arena + current_use;
     current_use += mem;
     allocations_done++;
-    if (mem > 1024)
+    if (mem > 4096)
     {
         printf("Allocated large chunk %llu\n", (unsigned long long)mem);
     }
