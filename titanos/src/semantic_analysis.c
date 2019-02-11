@@ -139,7 +139,7 @@ static inline bool analyse_body(Decl *func)
     {
         Decl *param_decl = func_decl->args->entries[i];
 
-        assert(param_decl->var.type->type_id != TYPE_UNRESOLVED && param_decl->var.type->type_id != TYPE_INVALID);
+        assert(param_decl->type.type_id != TYPE_UNRESOLVED && param_decl->type.type_id != TYPE_INVALID);
         if (skip_unused_params_check)
         {
             param_decl->is_used = true;
@@ -281,6 +281,7 @@ static bool analyse_func_body(Decl *func)
                               "Default value must be a compile time constant");
                 success = false;
             }
+
         }
     }
     // Clear labels
@@ -368,6 +369,7 @@ static inline void add_symbols()
         Decl *type = active_analyser->parser->types->entries[i];
         type->module = active_analyser->module;
         Decl *old = module_add_symbol(active_analyser->module, &type->name, type);
+        printf("Adding %.*s\n", SPLAT_TOK(type->name));
         if (old)
         {
             sema_error_at(&type->span, "Type '%.*s' redefines identifier", SPLAT_TOK(type->name));
@@ -504,7 +506,7 @@ bool analyse(Component *component, Table *modules)
         return false;
     }
 
-    FATAL_ERROR("TODO");
+   // FATAL_ERROR("TODO");
     for (unsigned i = 0; i < analyser_count; i++)
     {
         select_analyser(analysers->entries[i]);

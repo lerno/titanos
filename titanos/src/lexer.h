@@ -134,7 +134,7 @@ const char *line_start(Token *token);
 bool token_compare(const Token *token1, const Token *token2);
 bool token_compare_str(const Token *token1, const char *string);
 void token_expand(Token *to_expand, Token *end_token);
-
+void token_to_buffer(Token *token, char *buffer, unsigned len);
 const char *skip_to_end_of_previous_line(const char *file_start, const char *start);
 const char *find_line_start(const char *file_start, const char *start);
 const char *find_line_end(const char *line_start);

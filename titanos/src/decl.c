@@ -17,6 +17,9 @@ void decl_init(Decl *decl, DeclType decl_type, Token *span, Token *name, bool pu
     decl->name = *name;
     decl->span = *span;
     decl->is_public = public;
+    decl->type.decl = decl;
+    decl->type.span = *span;
+    decl->type.type_id = TYPE_DECLARED;
 }
 Decl *decl_new(DeclType decl_type, Token *span, Token *name, bool public)
 {
@@ -144,10 +147,10 @@ void decl_print(Decl *decl, unsigned current_indent)
             printf("TODO\n");
             return;
         case DECL_BUILTIN:
-            printf("BUILTIN");
+            printf("BUILTIN TODO ");
             decl_print_name_visibility(decl);
+
             printf("\n");
-            type_print_sub("Def", current_indent, decl->builtin_decl.type);
             break;
     }
     FATAL_ERROR("TODO %d", decl->type_id);
@@ -156,6 +159,36 @@ void decl_print(Decl *decl, unsigned current_indent)
 void decl_print_attributes(Decl *decl, unsigned indent)
 {
     printf("TODO");
+}
+
+uint64_t decl_size(Decl *decl)
+{
+    switch (decl->type_id)
+    {
+        case DECL_BUILTIN:
+            return type_size(&decl->type);
+        case DECL_FUNC:
+        case DECL_FUNC_TYPE:
+            // TODO pointer size
+            return 8;
+            break;
+        case DECL_VAR:
+            return type_size(decl->var.type);
+        case DECL_ENUM_CONSTANT:
+            // Go to parent
+            return type_size(&decl->type);
+        case DECL_ALIAS_TYPE:
+            return type_size(decl->alias_decl.type);
+        case DECL_STRUCT_TYPE:
+            // TODO
+            return 16;
+        case DECL_ENUM_TYPE:
+            return type_size(decl->enum_decl.type);
+        case DECL_ARRAY_VALUE:
+        case DECL_IMPORT:
+        case DECL_LABEL:
+            FATAL_ERROR("Cannot have size");
+    }
 }
 
 bool decl_is_type(Decl *decl)

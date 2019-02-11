@@ -16,6 +16,7 @@
 #include "types/type.h"
 #include "decl.h"
 #include "expr.h"
+#include "builtins.h"
 
 Parser *current_parser;
 Token tok;
@@ -28,6 +29,14 @@ Token prev_tok;
 #define UPDATE_AND_RETURN(__X) do { UPDATE(__X); return __X; } while (0)
 #define CONSUME_REQ_EOS_AND_RETURN(__X) do { UPDATE(__X); CONSUME_EOS_OR_EXIT; return __X; } while(0)
 
+static inline Decl *new_var_decl(Token *start, Token *name, VarDeclKind kind, Type *type, bool public)
+{
+	Decl *declaration = decl_new(DECL_VAR, start, name, false);
+	declaration->var.type = type;
+	declaration->var.kind = kind;
+	declaration->var.in_init = false;
+	return declaration;
+}
 static inline bool has_attributes()
 {
     return tok.type == TOKEN_AT;
@@ -261,6 +270,7 @@ static Expr *parse_string_literal(Expr *left)
 	}
 	expr_string->const_expr.value = value_new_string(str, len);
 	expr_string->const_state = CONST_FULL;
+	expr_string->type = type_string();
 	UPDATE_AND_RETURN(expr_string);
 }
 
@@ -270,6 +280,7 @@ static Expr *parse_integer(Expr *left)
 	Expr *number = expr_new(EXPR_CONST, &prev_tok);
 	number->const_expr.value = parse_int(prev_tok.start, prev_tok.length);
 	number->const_state = CONST_FULL;
+	number->type = type_compint();
 	return number;
 }
 
@@ -287,6 +298,7 @@ static Expr *parse_double(Expr *left)
 		return NULL;
 	}
 	number->const_expr.value = value_new_float(fval);
+	number->type = type_compfloat();
 	return number;
 }
 
@@ -296,6 +308,7 @@ static Expr *parse_bool(Expr *left)
 	Expr *number = expr_new(EXPR_CONST, &prev_tok);
 	number->const_state = CONST_FULL;
 	number->const_expr.value = value_new_bool(tok.type == TOKEN_TRUE);
+	number->type = type_builtin_bool();
 	return number;
 }
 
@@ -305,6 +318,7 @@ static Expr *parse_nil(Expr *left)
 	Expr *value = expr_new(EXPR_CONST, &prev_tok);
 	value->const_expr.value = value_nil();
 	value->const_state = CONST_FULL;
+	value->type = type_nil();
 	return value;
 }
 
@@ -477,7 +491,7 @@ static Type *create_pointer_type(Type *base)
 {
 	Type *pointer = new_type(TYPE_POINTER, base->is_public, &base->span);
 	pointer->pointer.base = base;
-	UPDATE_AND_RETURN(pointer);
+	return pointer;
 }
 
 /**
@@ -579,12 +593,11 @@ static Expr *parse_precedence(Precedence precedence)
  */
 static inline Decl *parse_param_decl(bool public, bool has_default_args)
 {
+	Token start = tok;
 	Type *type = parse_type(true, public);
 	if (!type) return NULL;
 
-    Decl *param_decl = decl_new(DECL_VAR, &type->span, &type->span, public);
-    param_decl->var.kind = VARDECL_PARAM;
-    param_decl->var.type = type;
+    Decl *param_decl = new_var_decl(&start, &start, VARDECL_PARAM, type, public);
 	if (!try_consume(TOKEN_IDENTIFIER))
 	{
 		param_decl->name.length = 0;
@@ -667,6 +680,7 @@ static inline bool parse_argument_list(FuncDecl *func_decl, bool public, bool ty
 
 static inline Decl *parse_func_decl(bool public, bool type_only)
 {
+	Token start = tok;
 	advance_and_verify(TOKEN_FUNC);
 
     Type *return_type = parse_type(true, public);
@@ -674,7 +688,7 @@ static inline Decl *parse_func_decl(bool public, bool type_only)
 
 	if (!consume(TOKEN_IDENTIFIER, "Expected function name but got '%.*s'", SPLAT_TOK(tok))) return NULL;
 
-    Decl *decl = decl_new(DECL_FUNC, &return_type->span, &prev_tok, public);
+    Decl *decl = decl_new(DECL_FUNC, &start, &prev_tok, public);
 	decl->func_decl.rtype = return_type;
 
 	if (try_consume(TOKEN_DOT))
@@ -693,7 +707,8 @@ static inline Decl *parse_func_decl(bool public, bool type_only)
 
 	if (!optional_add_attributes(&decl->attributes)) return NULL;
 
-    UPDATE_AND_RETURN(decl);
+
+	UPDATE_AND_RETURN(decl);
 }
 
 static Ast *parse_compound_stmt()
@@ -1097,14 +1112,13 @@ static Expr *parse_init_value_and_optional_eos()
  */
 static Decl *parse_declaration()
 {
+
+	Token start = tok;
+
 	Type *type_expr = parse_type(true, false);
 	if (!type_expr) return NULL;
 
-
-    Decl *declaration = decl_new(DECL_VAR, &type_expr->span, &tok, false);
-    // TODO check
-    declaration->var.kind = VARDECL_LOCAL;
-    declaration->var.type = type_expr;
+    Decl *declaration = new_var_decl(&start, &tok, VARDECL_LOCAL, type_expr, false);
 
 	if (!consume(TOKEN_IDENTIFIER, "Expected variable name")) return NULL;
 
@@ -1379,10 +1393,10 @@ bool parse_struct_block(Decl *struct_members)
 	{
 		if (tok.type == TOKEN_RBRACE) break;
 
-		Decl *member = decl_new(DECL_STRUCT_TYPE, &tok, &tok, struct_members->is_public);
-		vector_add(struct_members->struct_decl.members, member);
+
 		if (tok.type == TOKEN_STRUCT || tok.type == TOKEN_UNION)
 		{
+			Decl *member = decl_new(DECL_STRUCT_TYPE, &tok, &tok, struct_members->is_public);
 			member->struct_decl.struct_type = tok.type == TOKEN_STRUCT ? ST_STRUCT : ST_UNION;
 			advance();
 			if (try_consume(TOKEN_IDENTIFIER))
@@ -1395,13 +1409,13 @@ bool parse_struct_block(Decl *struct_members)
 			}
 			if (!parse_struct_block(member)) return false;
 			token_expand(&member->span, &prev_tok);
+			vector_add(struct_members->struct_decl.members, member);
 			continue;
 		}
-		member->type_id = DECL_VAR;
-		member->var.kind = VARDECL_MEMBER;
 		Type *type = parse_type(true, struct_members->is_public);
 		if (!type) return false;
-		member->var.type = type;
+		Decl *member = new_var_decl(&tok, &tok, VARDECL_MEMBER, type, struct_members->is_public);
+
 		if (!consume(TOKEN_IDENTIFIER, "Expected identifier")) return false;
 		member->name = prev_tok;
 		token_expand(&member->span, &prev_tok);
@@ -1421,9 +1435,13 @@ bool parse_struct_block(Decl *struct_members)
  */
 static Decl *parse_struct_or_union_type(bool public, Token *initial_token)
 {
+
+	bool is_struct = tok.type == TOKEN_STRUCT;
 	Decl *struct_decl = decl_new(DECL_STRUCT_TYPE, initial_token, &prev_tok, public);
 
-	struct_decl->struct_decl.struct_type = tok.type == TOKEN_STRUCT ? ST_STRUCT : ST_UNION;
+	struct_decl->struct_decl.struct_type = is_struct ? ST_STRUCT : ST_UNION;
+	struct_decl->struct_decl.is_global = true;
+
     advance();
 
     struct_decl->struct_decl.members = new_vector(8);
@@ -1439,12 +1457,11 @@ static Decl *parse_struct_or_union_type(bool public, Token *initial_token)
 
  * @param public if the alias is public
  * @param initial_token the first token belonging to the parse.
- * @return the created Ast* or NULL in case of error
+ * @return the created Decl* or NULL in case of error
  */
 static Decl *parse_alias_type(bool public, Token *initial_token)
 {
 	Decl *alias = decl_new(DECL_ALIAS_TYPE, initial_token, &prev_tok, public);
-
 	Type *type = parse_type(true, public);
 	if (!type) return NULL;
 	alias->alias_decl.type = type;
@@ -1461,12 +1478,10 @@ static Decl *parse_alias_type(bool public, Token *initial_token)
  */
 static Decl *parse_function_type(bool public, Token *initial_token)
 {
-	Decl *type = decl_new(DECL_FUNC_TYPE, initial_token, &prev_tok, public);
-
 	Decl *func_decl = parse_func_decl(public, true);
-
 	if (!func_decl) return NULL;
 
+	Decl *type = decl_new(DECL_FUNC_TYPE, initial_token, &prev_tok, public);
 	type->func_type.func_decl = func_decl;
 
 	CONSUME_REQ_EOS_AND_RETURN(type);
@@ -1509,8 +1524,8 @@ static Decl *parse_enum_type(bool public, Token *initial_token)
     {
 	    if (!consume(TOKEN_IDENTIFIER, "Expected enum name")) return NULL;
 	    Decl *enum_constant = decl_new(DECL_ENUM_CONSTANT, &prev_tok, &prev_tok, public);
-	    enum_constant->name = prev_tok;
-        vector_add(entries, enum_constant);
+	    enum_constant->type.decl = enum_decl;
+	    vector_add(entries, enum_constant);
         vector_add(current_parser->enum_values, enum_constant);
         if (try_consume(TOKEN_EQ))
         {
@@ -1606,9 +1621,8 @@ static Decl *parse_var_definition(bool public)
 
     if (!consume(TOKEN_IDENTIFIER, "Expected variable name")) return NULL;
 
-	Decl *decl = decl_new(DECL_VAR, &start, &prev_tok, public);
+	Decl *decl = new_var_decl(&start, &prev_tok, VARDECL_GLOBAL, type, public);
 	decl->is_public = public;
-	decl->var.type = type;
 
 	if (!optional_add_attributes(&decl->attributes)) return NULL;
 
@@ -1637,6 +1651,8 @@ Decl *parse_array_entry()
 
 	Decl *array = decl_new(DECL_ARRAY_VALUE, &prev_tok, &prev_tok, false);
 
+	// TODO set module?
+
 	advance_and_verify(TOKEN_PLUS_ASSIGN);
 
 	Expr *result = parse_init_value();
@@ -1649,6 +1665,8 @@ Decl *parse_array_entry()
 	{
 	    CONSUME_EOS_OR_EXIT;
 	}
+
+	vector_add(current_parser->array_values, array);
 
     UPDATE_AND_RETURN(array);
 }
@@ -1926,7 +1944,7 @@ static Expr *parse_subscript(Expr *left)
 		type->array.base = new_unresolved_type(left, false);
 		type->array.is_empty = true;
 		type->array.is_len_resolved = true;
-		UPDATE(type);
+        UPDATE(type);
 		Expr *expr = expr_new_type_expr(type);
 		UPDATE_AND_RETURN(expr);
 	}

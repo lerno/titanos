@@ -20,6 +20,7 @@
 #include "ast_types.h"
 #include "semantic_analysis.h"
 #include "codegen.h"
+#include "builtins.h"
 
 BuildOptions build_options = { 0 };
 
@@ -573,17 +574,15 @@ static void register_c2_constant(const char *name, const char *type, Value value
 {
     Token token = token_wrap(name);
     Token type_token = token_wrap(type);
-    Decl *decl = decl_new(DECL_VAR, &token, &token, true);
     Expr *expr_value = expr_new(EXPR_CONST, &token);
     expr_value->const_expr.value = value;
     Expr *type_expr = expr_new(EXPR_IDENTIFIER, &type_token);
     type_expr->identifier_expr.identifier = type_token;
+    Decl *decl = decl_new(DECL_VAR, &token, &token, true);
     decl->var.type = new_unresolved_type(type_expr, true);
     decl->var.init_expr = expr_value;
     decl->var.kind = VARDECL_GLOBAL;
     decl->is_exported = true;
-    decl->var.type = new_type(TYPE_UNRESOLVED, true, &type_token);
-    decl->var.type->unresolved.type_expr = type_expr;
     Parser *parser = c2_module->files->entries[0];
     vector_add(parser->variables, decl);
 }
@@ -594,31 +593,6 @@ static void register_c2_unsigned_constant(const char *type, const char *name, ui
 static void register_c2_signed_constant(const char *type, const char *name, int64_t size)
 {
     register_c2_constant(name, type, value_new_int_with_int(size));
-}
-
-static void register_c2_builtin(const char *name, TypeId family, unsigned bits, bool is_signed)
-{
-    Token token = token_wrap(name);
-    Decl *decl = decl_new(DECL_BUILTIN, &token, &token, true);
-    Type *builtin = new_type(family, true, &token);
-    switch (family)
-    {
-        case TYPE_INT:
-            builtin->integer.bits = bits;
-            builtin->integer.is_signed = is_signed;
-            break;
-        case TYPE_FLOAT:
-            builtin->real.bits = bits;
-            break;
-        case TYPE_BOOL:
-            break;
-        default:
-            FATAL_ERROR("Unsupported builtin");
-    }
-    decl->module = c2_module;
-    decl->builtin_decl.type = builtin;
-    builtin->module = c2_module;
-    module_add_symbol(c2_module, &token, decl);
 }
 
 static void create_c2_module()
@@ -653,17 +627,7 @@ static void create_c2_module()
         register_c2_signed_constant("i64", "max_i64", 0x7FFFFFFFFFFFFFFFll);
         register_c2_unsigned_constant("u64", "min_u64", 0);
         register_c2_unsigned_constant("u64", "max_u64", 0xFFFFFFFFFFFFFFFFllu);
-        register_c2_builtin("u8", TYPE_INT, 8, false);
-        register_c2_builtin("u16", TYPE_INT, 16, false);
-        register_c2_builtin("u32", TYPE_INT, 32, false);
-        register_c2_builtin("u64", TYPE_INT, 64, false);
-        register_c2_builtin("i8", TYPE_INT, 8, true);
-        register_c2_builtin("i16", TYPE_INT, 16, true);
-        register_c2_builtin("i32", TYPE_INT, 32, true);
-        register_c2_builtin("i64", TYPE_INT, 64, true);
-        register_c2_builtin("f32", TYPE_FLOAT, 32, true);
-        register_c2_builtin("f64", TYPE_FLOAT, 64, true);
-        register_c2_builtin("bool", TYPE_BOOL, 1, true);
+        register_builtins(c2_module);
     }
 };
 

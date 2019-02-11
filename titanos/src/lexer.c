@@ -888,6 +888,12 @@ bool token_compare_str(const Token *token1, const char *string)
     return memcmp(token1->start, string, len) == 0;
 }
 
+void token_to_buffer(Token *token, char *buffer, unsigned len)
+{
+    unsigned copy_len = MIN(len - 1, token->length);
+    strncpy(buffer, token->start, copy_len);
+    buffer[copy_len + 1] = '\0';
+}
 void token_expand(Token *to_expand, Token *end)
 {
     if (to_expand->length == 0)

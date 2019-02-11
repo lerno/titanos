@@ -26,6 +26,8 @@ typedef enum _DeclType
     DECL_LABEL
 } DeclType;
 
+
+
 typedef enum _VarDeclKind {
     VARDECL_GLOBAL = 0,
     VARDECL_LOCAL,
@@ -38,9 +40,10 @@ typedef struct _VarDecl
     VarDeclKind kind : 2;
     bool local : 1;
     bool in_init : 1;
-    Type *type;
+    // Type *original_type;
     Expr *init_expr;
-    LLVMValueRef ir_value;
+    LLVMValueRef llvm_ref;
+    Type *type;
 } VarDecl;
 
 typedef struct _ArrayValueDecl
@@ -89,18 +92,13 @@ typedef struct _FuncDecl
     Token full_name;
     Vector* args; // VarDecl[]
     Ast *body;
-    LLVMTypeRef *ir_proto;
+    LLVMValueRef llvm_function_proto;
 } FuncDecl;
 
 typedef struct _FunTypeDecl
 {
     struct _Decl *func_decl;
 } FuncTypeDecl;
-
-typedef struct _BuiltinTypeDecl
-{
-    Type *type;
-} BuiltinTypeDecl;
 
 typedef enum
 {
@@ -143,6 +141,7 @@ typedef struct _Decl
     Token name;
     struct _Module *module;
     struct _Vector *attributes;
+    Type type;
     union
     {
         StructDecl struct_decl;
@@ -154,7 +153,6 @@ typedef struct _Decl
         ImportDecl import;
         ArrayDecl array_decl;
         AliasDecl alias_decl;
-        BuiltinTypeDecl builtin_decl;
     };
 } Decl;
 
@@ -165,3 +163,4 @@ void decl_print_sub(const char *header, unsigned current_indent, Decl *decl);
 void decl_print_attributes(Decl *decl, unsigned indent);
 bool decl_has_attribute(Decl *decl, enum _AttributeType attribute);
 bool decl_is_type(Decl *decl);
+uint64_t decl_size(Decl *decl);

@@ -30,6 +30,7 @@ void init_arena(void)
 // Simple bump allocator with buckets.
 void *malloc_arena(size_t mem)
 {
+    if (mem == 0) return NULL;
     // Round to multiple of 16
     size_t oldmem = mem;
     mem = (mem + 15) & ~15;

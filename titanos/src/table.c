@@ -33,7 +33,7 @@ void table_init(Table *table, uint32_t initial_size)
 
 void table_clear(Table *table)
 {
-    memset(table->entries, 0, sizeof(table->capacity * sizeof(Entry)));
+    memset(table->entries, 0, table->capacity * sizeof(Entry));
     table->count = 0;
 }
 

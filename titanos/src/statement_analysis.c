@@ -10,8 +10,7 @@
 #include "types/type.h"
 #include "type_analysis.h"
 #include "expr.h"
-
-
+#include "constant_folding.h"
 
 
 static inline bool analyse_while(Ast *stmt)
@@ -26,6 +25,24 @@ static inline bool analyse_while(Ast *stmt)
     return success;
 }
 
+bool cast_to_type(Expr *expression, Type *type)
+{
+    assert(expression->type);
+    if (expression->type->type_id == TYPE_CONST_INT && type_is_int(type))
+    {
+        // Quick test
+        expression->type = type;
+        return true;
+    }
+        // TODO
+    return false;
+}
+
+bool analyse_init_expr(Decl *decl)
+{
+    evaluate_constant(decl->var.init_expr);
+    return cast_to_type(decl->var.init_expr, decl->var.type);
+}
 bool analyse_decl_stmt(Ast *decl_stmt)
 {
     LOG_FUNC
@@ -83,8 +100,7 @@ bool analyse_decl_stmt(Ast *decl_stmt)
     if (decl->var.init_expr)
     {
         decl->var.in_init = true;
-        // TODO
-        //success = analyse_init_expr(decl->var.init_expr) & success;
+        success = analyse_init_expr(decl) & success;
         decl->var.in_init = false;
     }
 
@@ -113,12 +129,9 @@ bool analyse_global_var(Decl *decl)
     assert(decl->type_id == DECL_VAR);
     assert(decl->var.kind == VARDECL_GLOBAL);
     // TODO
+    return false;
 }
 
-bool cast_to_type(Expr *expression, Type *type_expression)
-{
-    return true;
-}
 
 bool analyse_return(Ast *stmt)
 {
@@ -156,7 +169,7 @@ bool analyse_return(Ast *stmt)
 
 bool try_cast(Expr *a, Expr *b)
 {
-
+    return false;
 }
 
 bool analyse_binary_expr(Expr *expr, Side side)
@@ -314,11 +327,6 @@ static bool resolve_identifier(Expr *expr, Side side)
     }
     expr->identifier_expr.resolved = decl;
     decl->is_used = true;
-    if (decl->var.in_init)
-    {
-        sema_error_at(&expr->span, "Used '%.*s' in own initialization", SPLAT_TOK(expr->identifier_expr.identifier));
-        return false;
-    }
     switch (decl->type_id)
     {
         case DECL_FUNC:
@@ -339,6 +347,11 @@ static bool resolve_identifier(Expr *expr, Side side)
             expr->const_state = CONST_FULL;
             break;
         case DECL_VAR:
+            if (decl->var.in_init)
+            {
+                sema_error_at(&expr->span, "Used '%.*s' in own initialization", SPLAT_TOK(expr->identifier_expr.identifier));
+                return false;
+            }
             if (side == LHS && decl->var.type->is_const)
             {
                 sema_error_at(&expr->span, "Cannot assign to constant value");
@@ -368,7 +381,9 @@ bool analyse_expr(Expr *expr, Side side)
         case EXPR_TYPE:
             return analyse_type_expr(expr, side);
         case EXPR_CONST:
+            return true;
             //return analyse_const_expr(expr, side);
+            break;
         case EXPR_BINARY:
             return analyse_binary_expr(expr, side);
         case EXPR_TERNARY:

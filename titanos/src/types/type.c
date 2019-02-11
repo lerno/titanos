@@ -9,6 +9,7 @@
 #include "arena_allocator.h"
 #include "ast_types.h"
 #include "decl.h"
+#include <llvm-c/Core.h>
 
 Type *new_unresolved_type(Expr *expr, bool public)
 {
@@ -30,11 +31,6 @@ Type *new_type(TypeId type_id, bool public, Token *initial_token)
     return type;
 }
 
-Type *end_type(Type *type, Token *end)
-{
-    token_expand(&type->span, end);
-    return type;
-}
 
 Type *void_type()
 {
@@ -42,6 +38,83 @@ Type *void_type()
     return &type;
 }
 
+Type *type_nil()
+{
+    static Type type = { .type_id = TYPE_NIL, .is_public = true };
+    return &type;
+}
+
+Type *type_string()
+{
+    static Type type = { .type_id = TYPE_STRING, .is_public = true };
+    return &type;
+}
+
+Type *type_invalid()
+{
+    static Type type = { .type_id = TYPE_INVALID, .is_public = true };
+    return &type;
+}
+
+Type *type_compint()
+{
+    static Type type = { .type_id = TYPE_CONST_INT, .is_public = true };
+    return &type;
+}
+Type *type_compfloat()
+{
+    static Type type = { .type_id = TYPE_CONST_FLOAT, .is_public = true };
+    return &type;
+}
+
+bool type_is_int(Type *type)
+{
+    if (type->type_id == TYPE_CONST_INT) return true;
+    return type->type_id == TYPE_BUILTIN &&
+           (type->builtin.builtin_kind == BUILTIN_UNSIGNED_INT || type->builtin.builtin_kind == BUILTIN_SIGNED_INT);
+}
+
+bool type_is_signed(Type *type)
+{
+    if (type->type_id == TYPE_CONST_INT) return true;
+    return type->type_id == TYPE_BUILTIN && type->builtin.builtin_kind == BUILTIN_SIGNED_INT;
+}
+
+uint64_t type_size(Type *type)
+{
+    switch (type->type_id)
+    {
+        case TYPE_INVALID:
+            return 0;
+        case TYPE_VOID:
+            return 1;
+        case TYPE_DECLARED:
+            return decl_size(type->decl);
+        case TYPE_NIL:
+        case TYPE_STRING:
+        case TYPE_POINTER:
+            // TODO pointer size
+            return sizeof(void *);
+        case TYPE_ARRAY:
+            // TODO check
+            return type_size(type->array.base) * (type->array.is_empty ? 1 : type->array.len);
+        case TYPE_OPAQUE:
+            return type_size(type->opaque.base);
+        case TYPE_IMPORT:
+            return 0;
+        case TYPE_UNRESOLVED:
+            FATAL_ERROR("Should never happen");
+        case TYPE_TYPEVAL:
+            return type_size(type->type_of_type);
+        case TYPE_BUILTIN:
+            return (uint64_t) ((type->builtin.bits + 7) / 8);
+        case TYPE_CONST_FLOAT:
+            return 16; // TODO
+        case TYPE_CONST_INT:
+            return 8; // TODO
+    }
+    UNREACHABLE
+}
 void type_print_sub(const char *header, unsigned int current_indent, Type *type)
 {
     if (!type) return;
@@ -73,23 +146,11 @@ void print_type(Type *type, unsigned current_indent)
     }
     switch (type->type_id)
     {
-        case TYPE_FUNC:
-            print_unresolved_or_name("TYPE_FUNC", type);
-            return;
-        case TYPE_ENUM:
-            print_unresolved_or_name("TYPE_ENUM", type);
-            return;
         case TYPE_VOID:
             printf("TYPE_VOID\n");
             return;
-        case TYPE_BOOL:
-            printf("TYPE_BOOL\n");
-            return;
-        case TYPE_INT:
-            printf("TYPE_INT %s-%d\n", type->integer.is_signed ? "signed" : "unsigned", type->integer.bits);
-            return;
-        case TYPE_FLOAT:
-            printf("TYPE_FLOAT [%d]\n", type->real.bits);
+        case TYPE_DECLARED:
+            printf("TYPE_DECLARED\n");
             return;
         case TYPE_POINTER:
             print_unresolved_or_name("TYPE_POINTER", type);
@@ -99,20 +160,8 @@ void print_type(Type *type, unsigned current_indent)
             print_unresolved_or_name("TYPE_ARRAY", type);
             // Improve add length
             return;
-        case TYPE_STRUCT:
-            print_unresolved_or_name("TYPE_STRUCT", type);
-            return;
-        case TYPE_CONST_FLOAT:
-            printf("TYPE_CONST_FLOAT\n");
-            return;
-        case TYPE_CONST_INT:
-            printf("TYPE_CONST_INT\n");
-            return;
         case TYPE_NIL:
             printf("TYPE_NIL\n");
-            return;
-        case TYPE_UNION:
-            print_unresolved_or_name("TYPE_UNION", type);
             return;
         case TYPE_OPAQUE:
             print_unresolved_or_name("TYPE_OPAQUE", type);
@@ -124,17 +173,30 @@ void print_type(Type *type, unsigned current_indent)
         case TYPE_UNRESOLVED:
             printf("UNRESOLVED\n");
             expr_print_sub("Ast", current_indent, type->unresolved.type_expr);
-            break;
+            return;
         case TYPE_INVALID:
             printf("TYPE_INVALID\n");
             return;
         case TYPE_TYPEVAL:
             printf("TYPEVAL\n");
             type_print_sub("Type", current_indent, type->type_of_type);
-            break;
+            return;
+        case TYPE_BUILTIN:
+            printf("BUILTIN %.*s\n", SPLAT_TOK(type->name));
+            return;
+        case TYPE_STRING:
+            printf("BUILTIN STRING\n");
+            return;
+        case TYPE_CONST_FLOAT:
+            printf("CONT_FLOAT\n");
+            return;
+        case TYPE_CONST_INT:
+            printf("CONST_INT\n");
+            return;
     }
-    printf("TODO\n");
+    UNREACHABLE
 }
+
 
 /*
  *             printf("TYPE_DEFINITION ");

@@ -7,6 +7,14 @@
 #include "statement_analysis.h"
 
 
+static inline ExprConstState replace_with_constant(Expr *target, Value *source)
+{
+    target->const_expr.value = *source;
+    target->const_state = CONST_FULL;
+    target->expr_id = EXPR_CONST;
+    target->type = value_find_type(source);
+    return CONST_FULL;
+}
 
 static inline void replace_expr(Expr *target, Expr *source)
 {
@@ -15,46 +23,39 @@ static inline void replace_expr(Expr *target, Expr *source)
     target->span = original_span;
 }
 
-static inline bool try_conversion(Value *left, Value *right, ValueType type, const char *type_name)
-{
-    if (left->type == type)
-    {
-        return value_convert_to_type(right, type, type_name);
-    }
-    if (right->type == type)
-    {
-        return value_convert_to_type(left, type, type_name);
-    }
-    return false;
-}
 
-static inline bool implicit_conversion(Value *left, Value *right)
+static inline bool implicit_conversion(Expr *left, Expr *right)
 {
-    if (try_conversion(left, right, VALUE_TYPE_FLOAT, "float")) return true;
-    return value_convert_to_type(left, VALUE_TYPE_INT, "int") && value_convert_to_type(right, VALUE_TYPE_INT, "int");
+    return value_convert_to_type(&left->const_expr.value, &right->const_expr.value);
 }
 
 typedef Value (*BinOp)(Value, Value);
 
-static inline ExprConstState evaluate_constant_operation(Expr *expr, BinOp operation, const char *error)
+static inline ExprConstState evaluate_constant_operation(Expr *expr, BinOp operation, const char *error, bool req_int)
 {
-    Value left = expr->binary_expr.left->const_expr.value;
-    Value right = expr->binary_expr.right->const_expr.value;
+    Expr *left = expr->binary_expr.left;
+    Expr *right = expr->binary_expr.right;
 
-    if (!implicit_conversion(&left, &right)) return expr->const_state = CONST_NONE;
-
-    Value value = operation(left, right);
-    if (value.type == VALUE_TYPE_ERROR)
+    if (req_int && (right->const_expr.value.type != VALUE_TYPE_INT || left->const_expr.value.type == VALUE_TYPE_INT))
     {
-        sema_error_at(&expr->span, error,
-                operation,
-                value_type_name(expr->binary_expr.left->const_expr.value),
-                value_type_name(expr->binary_expr.right->const_expr.value));
+        sema_error_at(&expr->span, error, value_type_name(&left->const_expr.value), value_type_name(&right->const_expr.value));
+        expr->type->type_id = TYPE_INVALID;
         return expr->const_state = CONST_NONE;
     }
-    expr->const_expr.value = value;
-    expr->expr_id = EXPR_CONST;
-    return expr->const_state = CONST_FULL;
+    if (!implicit_conversion(left, right))
+    {
+        sema_error_at(&expr->span, "Can't implicitly convert between '%s' and '%s'", value_type_name(&left->const_expr.value), value_type_name(&right->const_expr.value));
+        expr->type->type_id = TYPE_INVALID;
+        return expr->const_state = CONST_NONE;
+    }
+    Value value = operation(left->const_expr.value, right->const_expr.value);
+    if (value.type == VALUE_TYPE_ERROR)
+    {
+        sema_error_at(&expr->span, error, value_type_name(&left->const_expr.value), value_type_name(&right->const_expr.value));
+        expr->type->type_id = TYPE_INVALID;
+        return expr->const_state = CONST_NONE;
+    }
+    return replace_with_constant(expr, &value);
 }
 
 
@@ -71,15 +72,41 @@ static inline ExprConstState evaluate_constant_binary_expr(Expr *expr)
     switch (expr->binary_expr.operator)
     {
         case TOKEN_PLUS:
-            return evaluate_constant_operation(expr, &value_add, "Cant't add '%s' to '%s'");
+            return evaluate_constant_operation(expr, &value_add, "Cant't add '%s' to '%s'", false);
         case TOKEN_MINUS:
-            return evaluate_constant_operation(expr, &value_sub, "Can't subtract '%s' from '%s'");
+            return evaluate_constant_operation(expr, &value_sub, "Can't subtract '%s' from '%s'", false);
         case TOKEN_STAR:
-            return evaluate_constant_operation(expr, &value_mult, "Can't multiply '%s' by '%s'");;
+            return evaluate_constant_operation(expr, &value_mult, "Can't multiply '%s' by '%s'", false);;
         case TOKEN_DIV:
-            return evaluate_constant_operation(expr, &value_div, "Can't divide '%s' by '%s'");
+            return evaluate_constant_operation(expr, &value_div, "Can't divide '%s' by '%s'", false);
         case TOKEN_MOD:
-            return evaluate_constant_operation(expr, &value_mod, "Can't get reminder of '%s' divided by '%s'");
+            return evaluate_constant_operation(expr, &value_mod, "Can't get reminder of '%s' divided by '%s'", false);
+        case TOKEN_LEFT_SHIFT:
+            TODO;
+        case TOKEN_RIGHT_SHIFT:
+            TODO;
+        case TOKEN_RIGHT_SHIFT_LOGIC:
+            TODO;
+        case TOKEN_BIT_XOR:
+            TODO;
+        case TOKEN_BIT_OR:
+            TODO;
+        case TOKEN_AMP:
+            TODO;
+        case TOKEN_EQEQ:
+            TODO;
+        case TOKEN_GREATER_EQ:
+            TODO;
+        case TOKEN_LESS_EQ:
+            TODO;
+        case TOKEN_LESS:
+            TODO;
+        case TOKEN_GREATER:
+            TODO;
+        case TOKEN_NOT_EQUAL:
+            TODO;
+        case TOKEN_ELVIS:
+            TODO;
         default:
             FATAL_ERROR("TODO");
 
@@ -126,7 +153,7 @@ static inline ExprConstState evaluate_constant_unary_expr(Expr *expr)
             res = value_to_bool(value->const_expr.value);
             if (res.type == VALUE_TYPE_ERROR)
             {
-                error_at(&value->span, "%s cannot be implictly converted to boolean", value_type_name(value->const_expr.value));
+                sema_error_at(&value->span, "%s cannot be implictly converted to boolean", value_type_name(&value->const_expr.value));
                 break;
             }
             res = value_not(res);
@@ -135,14 +162,14 @@ static inline ExprConstState evaluate_constant_unary_expr(Expr *expr)
             res = value_not(value->const_expr.value);
             if (res.type == VALUE_TYPE_ERROR)
             {
-                error_at(&value->span, "%s cannot be bit negated", value_type_name(value->const_expr.value));
+                sema_error_at(&value->span, "%s cannot be bit negated", value_type_name(&value->const_expr.value));
             }
             break;
         case TOKEN_MINUS:
             res = value_negate(value->const_expr.value);
             if (res.type == VALUE_TYPE_ERROR)
             {
-                error_at(&value->span, "%s cannot be negated", value_type_name(value->const_expr.value));
+                sema_error_at(&value->span, "%s cannot be negated", value_type_name(&value->const_expr.value));
             }
             break;
         case TOKEN_PLUSPLUS:
@@ -156,9 +183,7 @@ static inline ExprConstState evaluate_constant_unary_expr(Expr *expr)
     {
         return expr->const_state = CONST_NONE;
     }
-    expr->const_expr.value = res;
-    expr->expr_id = EXPR_CONST;
-    return expr->const_state = CONST_FULL;
+    return replace_with_constant(expr, &res);
 }
 
 ExprConstState evaluate_constant_identifer(Expr *identifier)
@@ -171,7 +196,7 @@ ExprConstState evaluate_constant_identifer(Expr *identifier)
     {
         case DECL_BUILTIN:
             identifier->expr_id = EXPR_TYPE;
-            identifier->type_expr.type = decl->builtin_decl.type;
+            identifier->type_expr.type = &decl->type;
             return CONST_FULL;
         case DECL_FUNC:
             // TODO revisit
@@ -195,7 +220,8 @@ ExprConstState evaluate_constant_identifer(Expr *identifier)
         case DECL_STRUCT_TYPE:
         case DECL_ENUM_TYPE:
         case DECL_FUNC_TYPE:
-            expr_convert_to_type_expr_from_decl(identifier, decl);
+            identifier->expr_id = EXPR_TYPE;
+            identifier->type_expr.type = &decl->type;
             return CONST_FULL;
         case DECL_ARRAY_VALUE:
         case DECL_IMPORT:
@@ -205,11 +231,10 @@ ExprConstState evaluate_constant_identifer(Expr *identifier)
     UNREACHABLE
 }
 
-ExprConstState evaluate_constant(Expr *expr)
+// Assumes that all checks are already done.
+static ExprConstState evaluate_constant_without_checks(Expr *expr)
 {
     LOG_FUNC
-    if (expr == NULL) return CONST_FULL;
-    if (expr->const_state != CONST_UNKNOWN) return expr->const_state;
     switch (expr->expr_id)
     {
         case EXPR_TYPE:
@@ -238,6 +263,10 @@ ExprConstState evaluate_constant(Expr *expr)
             }
             return expr->const_state = CONST_NONE;
         case EXPR_SIZEOF:
+            if (!analyse_expr(expr->sizeof_expr.expr, RHS)) return CONST_UNKNOWN;
+            if (!resolve_type(expr->sizeof_expr.expr->type, false)) return CONST_UNKNOWN;
+            expr->expr_id = EXPR_CONST;
+            bigint_init_unsigned(&expr->const_expr.value.big_int, type_size(expr->sizeof_expr.expr->type));
             break;
         case EXPR_CAST:break;
         case EXPR_ACCESS:
@@ -251,3 +280,18 @@ ExprConstState evaluate_constant(Expr *expr)
     return CONST_UNKNOWN;
 }
 
+ExprConstState evaluate_constant(Expr *expr)
+{
+    LOG_FUNC
+    if (expr == NULL) return CONST_FULL;
+    if (expr->is_evaluating)
+    {
+        sema_error_at(&expr->span, "Recursive expression found");
+        return expr->const_state = CONST_NONE;
+    }
+    if (expr->const_state != CONST_UNKNOWN) return expr->const_state;
+    expr->is_evaluating = true;
+    ExprConstState state = evaluate_constant_without_checks(expr);
+    expr->is_evaluating = false;
+    return state;
+}

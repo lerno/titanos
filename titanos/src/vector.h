@@ -17,3 +17,5 @@ void vector_init(Vector *vector, unsigned size);
 
 void run_vector_tests(void);
 
+#define ENTRIES(__vector, __ii, __entry) \
+  unsigned __ii = 0, __entry = __vector.size > 0 ? __vector.entries[0] : NULL; __ii < __vector.size; __entry = __vector.entries[++__ii]

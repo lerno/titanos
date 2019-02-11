@@ -22,6 +22,7 @@ __thread int current_table = -1;
 
 Table *push_scratch_table()
 {
+    LOG_FUNC;
     if (current_table == -1)
     {
         for (unsigned i = 0; i < TABLE_SCOPE_DEPTH; i++)

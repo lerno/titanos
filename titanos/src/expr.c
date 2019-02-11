@@ -134,38 +134,3 @@ void expr_print_sub(const char *header, unsigned current_indent, Expr *expr)
     expr_print(expr, current_indent + 1);
 }
 
-void expr_convert_to_type_expr_from_decl(Expr *expr, Decl *decl)
-{
-    Type *type = NULL;
-    switch (decl->type_id)
-    {
-        case DECL_BUILTIN:
-            type = decl->builtin_decl.type;
-            break;
-        case DECL_FUNC:
-        case DECL_FUNC_TYPE:
-            type = new_type(TYPE_FUNC, decl->is_public, &expr->span);
-            break;
-        case DECL_ALIAS_TYPE:
-            type = decl->alias_decl.type;
-            break;
-        case DECL_STRUCT_TYPE:
-            type = new_type(decl->struct_decl.struct_type == ST_STRUCT ? TYPE_STRUCT : TYPE_UNION,
-                            decl->is_public,
-                            &expr->span);
-            break;
-        case DECL_ENUM_TYPE:
-            type = new_type(TYPE_ENUM, decl->is_public, &expr->span);
-            break;
-        case DECL_VAR:
-        case DECL_ENUM_CONSTANT:
-        case DECL_ARRAY_VALUE:
-        case DECL_IMPORT:
-        case DECL_LABEL:
-            FATAL_ERROR("Cannot happen");
-            break;
-    }
-    assert(type);
-    expr->expr_id = EXPR_TYPE;
-    expr->type_expr.type = type;
-}

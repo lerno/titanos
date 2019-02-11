@@ -145,6 +145,7 @@ typedef struct _Expr
 {
     ExprTypeId expr_id : 8;
     ExprConstState const_state : 2;
+    bool is_evaluating : 1;
     Token span;
     Type *type;
     union {
@@ -170,4 +171,3 @@ void expr_print(Expr *expr, unsigned current_indent);
 void expr_print_sub(const char *header, unsigned current_indent, Expr *expr);
 Expr *expr_new(ExprTypeId type, Token *span);
 Expr *expr_new_type_expr(Type *type);
-void expr_convert_to_type_expr_from_decl(Expr *expr, Decl *decl);

@@ -3,10 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "ansi_color.h"
-#define FATAL_ERROR(_string, ...) do { printf("FATAL ERROR: " _string, ##__VA_ARGS__); printf("\n"); exit(-1); } while(0)
+#define FATAL_ERROR(_string, ...) do { printf("FATAL ERROR as %s:%d: " _string, __func__, __LINE__, ##__VA_ARGS__); printf("\n"); exit(-1); } while(0)
 
 #define UNREACHABLE FATAL_ERROR("Cannot reach %s:%d", __func__, __LINE__);
-#define TODO FATAL_ERROR("Not done yet %s:%d", __func__, __LINE____);
+#define TODO FATAL_ERROR("Not done yet %s:%d", __func__, __LINE__);
 
 #define ASSERT(_condition, _string, ...) while (!(_condition)) { FATAL_ERROR(_string, ##__VA_ARGS__); }
 

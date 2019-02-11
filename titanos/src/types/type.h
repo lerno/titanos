@@ -12,23 +12,19 @@
 typedef enum _TypeId
 {
     TYPE_INVALID,
+    TYPE_STRING,
     TYPE_VOID,
-    TYPE_BOOL,
-    TYPE_INT,
-    TYPE_FLOAT,
     TYPE_POINTER,
     TYPE_ARRAY,
-    TYPE_STRUCT,
+    TYPE_DECLARED,
     TYPE_CONST_FLOAT,
     TYPE_CONST_INT,
     TYPE_NIL,
-    TYPE_ENUM,
-    TYPE_FUNC,
-    TYPE_UNION,
     TYPE_OPAQUE,
     TYPE_IMPORT,
     TYPE_UNRESOLVED,
-    TYPE_TYPEVAL
+    TYPE_TYPEVAL,
+    TYPE_BUILTIN,
     // TYPE_OPAQUE, TYPE_MODULE?, TYPE_NONNULL_PTR? VECTOR ETC
 } TypeId;
 
@@ -59,10 +55,19 @@ typedef struct _TypeOpaque
 {
     Type *base;
 } TypeOpaque;
-typedef struct _TypeFloat
+
+typedef enum _BuiltinKind {
+    BUILTIN_SIGNED_INT,
+    BUILTIN_UNSIGNED_INT,
+    BUILTIN_FLOAT,
+    BUILTIN_BOOL,
+} BuiltinKind;
+
+typedef struct _TypeBuiltin
 {
-    uint32_t bits;
-} TypeFloat;
+    BuiltinKind builtin_kind : 16;
+    uint16_t bits;
+} TypeBuiltin;
 
 typedef struct _TypeArray
 {
@@ -78,7 +83,6 @@ typedef struct _TypeArray
 
 typedef struct _Type
 {
-
     TypeId type_id : 8;
     bool is_public : 1;
     bool is_exported : 1;
@@ -87,20 +91,19 @@ typedef struct _Type
     bool is_const : 1;
     bool is_volatile : 1;
     bool is_aliased : 1;
-    Token span;
     Token name;
+    Token span;
     LLVMTypeRef llvm_type;
-    Decl *decl;
     struct _Module *module;
     union
     {
         TypePointer pointer;
-        TypeInt integer;
-        TypeFloat real;
         TypeArray array;
         TypeOpaque opaque;
         TypeUnresolved unresolved;
         Type *type_of_type;
+        Decl *decl;
+        TypeBuiltin builtin;
     };
 } Type;
 
@@ -110,3 +113,12 @@ Type *end_type(Type *ast, Token *end);
 void print_type(Type *type, unsigned int current_indent);
 void type_print_sub(const char *header, unsigned int current_indent, Type *type);
 Type *void_type();
+Type *type_nil();
+Type *type_string();
+Type *type_invalid();
+Type *type_compint();
+Type *type_compfloat();
+bool type_is_int(Type *type);
+bool type_is_signed(Type *type);
+uint64_t type_size(Type *type);
+

@@ -1,9 +1,9 @@
 module test;
 import c2 local;
 
-type foo2 alias foo;
+type foo2 foo;
 
-type fekeo alias i32[FOO];
+type fekeo i32;
 
 type gog enum i32 {
    Brog,
@@ -13,7 +13,9 @@ type gog enum i32 {
 
 }
 
-const i32 FOO = 3;
+const i32 FAZ = 1;
+const i32 BAR = 2 + FAZ;
+const i32 FOO = BAR + 3;
 
 type foo struct
 {
@@ -26,15 +28,25 @@ type foo struct
   }
 }
 
+type kex struct
+{
+    struct foo {
+    i32 er;
+    }
+    struct faz {
+        i32 x;
+        kex rec;
+    }
+}
 
 public func i32 main() @(foo = 1 + 2) {
     i8[10 + 1] buffer2;
-    i32 a;
+    i32 a = 21 +21;
     i32 b = 10;
     const u8* name = "bas";
     a = 10;
 
-    const i32 A2 = 20;
+ //   const i32 A2 = 20;
     //volatile i32* b2 = 0x2000;
     return 0;
 }

@@ -6,7 +6,7 @@
 #include "ast_types.h"
 #include "arena_allocator.h"
 #include <stdio.h>
-#include <types/type.h>
+#include "types/type.h"
 #include "vector.h"
 #include "diagnostics.h"
 #include "printer.h"

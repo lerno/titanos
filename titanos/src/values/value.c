@@ -6,6 +6,8 @@
 #include <llvm-c/Core.h>
 #include <error.h>
 #include "value.h"
+#include "builtins.h"
+#include "types/type.h"
 
 #define ERROR_VALUE (Value) { .type = VALUE_TYPE_ERROR }
 
@@ -17,13 +19,12 @@ Value value_new_int_with_bigint(BigInt big_int)
 
 Value value_new_float(long double f)
 {
-    return (Value) { .f = f, .type = VALUE_TYPE_INT };
+    return (Value) { .f = f, .type = VALUE_TYPE_FLOAT };
 }
 Value value_new_int_with_int(int64_t val)
 {
-    Value value;
+    Value value = { .type = VALUE_TYPE_INT };
     bigint_init_signed(&value.big_int, val);
-    value.type = VALUE_TYPE_INT;
     return value;
 }
 
@@ -32,7 +33,6 @@ Value value_nil()
 {
     return (Value) { .b = false, .type = VALUE_TYPE_NIL };
 }
-
 
 Value value_not(Value value)
 {
@@ -53,7 +53,6 @@ Value value_not(Value value)
     return ERROR_VALUE;
 }
 
-
 #define BIN_OP(_x, _intop, _floatop) \
 Value value_## _x(Value lhs, Value rhs) { \
     assert(lhs.type == rhs.type); \
@@ -63,7 +62,7 @@ Value value_## _x(Value lhs, Value rhs) { \
             return (Value) { .f = lhs.f _floatop rhs.f, .type = VALUE_TYPE_FLOAT }; \
         case VALUE_TYPE_INT: {\
             Value value = value_new_int_with_int(0);\
-            _intop(&value.big_int, &lhs.big_int, &rhs.big_int);\
+            _intop(&value.big_int, &lhs.big_int, &rhs.big_int); \
             return value;\
         }\
         case VALUE_TYPE_BOOL:\
@@ -74,11 +73,40 @@ Value value_## _x(Value lhs, Value rhs) { \
     }\
 }
 
-BIN_OP(sub, bigint_sub, -)
-BIN_OP(add, bigint_add, +)
-BIN_OP(mult, bigint_mul, *)
+#define BIN_OP_W(_x, _intop, _intopwrap, _floatop) \
+Value value_## _x(Value lhs, Value rhs) { \
+    assert(lhs.type == rhs.type); \
+    switch (lhs.type)\
+    { \
+        case VALUE_TYPE_FLOAT: \
+            return (Value) { .f = lhs.f _floatop rhs.f, .type = VALUE_TYPE_FLOAT }; \
+        case VALUE_TYPE_INT: {\
+            Value value = value_new_int_with_int(0);\
+            if (lhs.int_bits > 0) { \
+                 value.int_bits = lhs.int_bits; value.is_unsigned = lhs.is_unsigned; \
+                 _intopwrap(&value.big_int, &lhs.big_int, &rhs.big_int, lhs.int_bits, !lhs.is_unsigned); \
+            } else { \
+                  _intop(&value.big_int, &lhs.big_int, &rhs.big_int); \
+            };\
+            return value;\
+        }\
+        case VALUE_TYPE_BOOL:\
+        case VALUE_TYPE_STRING:\
+        case VALUE_TYPE_NIL:\
+        case VALUE_TYPE_ERROR:\
+            return ERROR_VALUE;\
+    }\
+}
+
+BIN_OP_W(add, bigint_add, bigint_add_wrap, +)
+BIN_OP_W(mult, bigint_mul, bigint_mul_wrap, *)
 BIN_OP(div, bigint_div_floor, /)
 BIN_OP(mod, bigint_mod, /)
+
+Value value_sub(Value value1, Value value2)
+{
+    return value_add(value1, value_negate(value2));
+}
 
 Value value_negate(Value value)
 {
@@ -87,7 +115,16 @@ Value value_negate(Value value)
         case VALUE_TYPE_INT:
         {
             Value result = value_new_int_with_int(0);
-            bigint_negate(&result.big_int, &value.big_int);
+            result.is_unsigned = value.is_unsigned;
+            result.int_bits = value.int_bits;
+            if (value.int_bits)
+            {
+                bigint_negate_wrap(&result.big_int, &value.big_int, value.int_bits);
+            }
+            else
+            {
+                bigint_negate(&result.big_int, &value.big_int);
+            }
             return result;
         }
         case VALUE_TYPE_BOOL:
@@ -131,20 +168,38 @@ Value value_to_bool(Value value)
     return ERROR_VALUE;
 }
 
-const char *value_type_name(Value value)
+const char *value_type_name(const Value *value)
 {
-    switch (value.type)
+    switch (value->type)
     {
         case VALUE_TYPE_BOOL:
             return "bool";
         case VALUE_TYPE_NIL:
             return "nil";
         case VALUE_TYPE_FLOAT:
-            return "float";
+            switch (value->float_bits)
+            {
+                case 0: return "float";
+                case 16: return "f16";
+                case 32: return "f32";
+                case 64: return "f64";
+                case 128: return "f128";
+                default:
+                    UNREACHABLE;
+            }
         case VALUE_TYPE_STRING:
             return "string";
         case VALUE_TYPE_INT:
-            return "int";
+            switch (value->int_bits)
+            {
+                case 0: return "int";
+                case 8: return value->is_unsigned ? "u8" : "i8";
+                case 16: return value->is_unsigned ? "u16" : "i16";
+                case 32: return value->is_unsigned ? "u32" : "i32";
+                case 64: return value->is_unsigned ? "u64" : "i64";
+                default:
+                    UNREACHABLE;
+            }
         case VALUE_TYPE_ERROR:
             return "<error>";
     }
@@ -158,6 +213,42 @@ bool value_is_number(const Value *value)
     return value->type == VALUE_TYPE_INT || value->type == VALUE_TYPE_FLOAT;
 }
 
+Type *value_find_type(const Value *value)
+{
+    switch (value->type)
+    {
+        case VALUE_TYPE_FLOAT:
+            switch (value->float_bits)
+            {
+                case 0: return type_compfloat();
+                case 16: return type_builtin_f16();
+                case 32: return type_builtin_f32();
+                case 64: return type_builtin_f64();
+                case 128: return type_builtin_f128();
+                default: break;
+            }
+            UNREACHABLE
+        case VALUE_TYPE_INT:
+            switch (value->int_bits)
+            {
+                case 0: return type_compint();
+                case 8: return value->is_unsigned ? type_builtin_u8() : type_builtin_i8();
+                case 16: return value->is_unsigned ? type_builtin_u16() : type_builtin_i16();
+                case 32: return value->is_unsigned ? type_builtin_u32() : type_builtin_i32();
+                case 64: return value->is_unsigned ? type_builtin_u64() : type_builtin_i64();
+                default: break;
+            }
+            UNREACHABLE
+        case VALUE_TYPE_BOOL:
+            return type_builtin_bool();
+        case VALUE_TYPE_NIL:
+            return type_nil();
+        case VALUE_TYPE_STRING:
+            return type_string();
+        case VALUE_TYPE_ERROR:
+            return type_invalid();
+    }
+}
 
 void value_print(Value value)
 {
@@ -185,57 +276,155 @@ void value_print(Value value)
 }
 
 
-bool value_convert_to_type(Value *value, ValueType type, const char *type_name)
+void value_update_to_float(Value *value, long double f, uint16_t bits)
 {
-    if (type == value->type) return true;
-    switch (value->type)
+    value->f = f;
+    value->type = VALUE_TYPE_FLOAT;
+    value->float_bits = bits;
+}
+/**
+ * Convert value2 to value1 (note that we have already ordered things in conversion order.
+ *
+ * @param value1
+ * @param value2
+ * @return true if conversion worked.
+ */
+static bool value_convert_to_type_ordered(Value *value1, Value *value2)
+{
+    switch (value1->type)
     {
-        case VALUE_TYPE_STRING:
-            return false;
         case VALUE_TYPE_FLOAT:
-            FATAL_ERROR("Conversion should never happen");
+            switch (value2->type)
+            {
+                case VALUE_TYPE_FLOAT:
+                    value1->float_bits = value2->float_bits;
+                    return true;
+                case VALUE_TYPE_INT:
+                    value_update_to_float(value2, bigint_as_float(&value2->big_int), value1->float_bits);
+                    return true;
+                case VALUE_TYPE_BOOL:
+                    value_update_to_float(value2, value2->b ? 1.0 : 0.0, value1->float_bits);
+                    return true;
+                case VALUE_TYPE_NIL:
+                    value_update_to_float(value2, 0.0, value1->float_bits);
+                    return true;
+                case VALUE_TYPE_STRING:
+                case VALUE_TYPE_ERROR:
+                    return false;
+            }
+            UNREACHABLE
         case VALUE_TYPE_INT:
-            assert(type == VALUE_TYPE_FLOAT);
-            value->f = bigint_as_float(&value->big_int);
-            value->type = VALUE_TYPE_FLOAT;
-            return true;
+            switch (value2->type)
+            {
+                case VALUE_TYPE_INT:
+                    // First check if we have a comptime int. If so, check that it fits.
+                    if (value2->int_bits == 0)
+                    {
+                        if (value1->int_bits == 0) return true;
+                        if (!bigint_fits_in_bits(&value2->big_int, value1->int_bits, !value1->is_unsigned)) return false;
+                        BigInt res;
+                        bigint_truncate(&res, &value2->big_int, value1->int_bits, !value1->is_unsigned);
+                        value2->big_int = res;
+                        return true;
+                    }
+                    if (!value1->is_unsigned && value2->is_unsigned)
+                    {
+                        // If unsigned value is same or larger, disallow!
+                        if (value1->int_bits <= value2->int_bits) return false;
+
+                        value2->is_unsigned = false;
+                        value2->int_bits = value1->int_bits;
+                        return true;
+                    }
+                    // Final case, both has same sign, promote to largest.
+                    value2->int_bits = value1->int_bits;
+                    return true;
+                case VALUE_TYPE_BOOL:
+                    bigint_init_unsigned(&value2->big_int, value2->b ? 1 : 0);
+                    value2->int_bits = value1->int_bits;
+                    value2->is_unsigned = value1->is_unsigned;
+                    value2->type = VALUE_TYPE_INT;
+                    return true;
+                case VALUE_TYPE_NIL:
+                    bigint_init_unsigned(&value2->big_int, 0);
+                    value2->int_bits = value1->int_bits;
+                    value2->is_unsigned = value1->is_unsigned;
+                    value2->type = VALUE_TYPE_INT;
+                    return true;
+                case VALUE_TYPE_STRING:
+                case VALUE_TYPE_ERROR:
+                    return false;
+                case VALUE_TYPE_FLOAT:
+                    UNREACHABLE;
+            }
+            UNREACHABLE;
         case VALUE_TYPE_BOOL:
-            if (type == VALUE_TYPE_FLOAT)
+            switch (value2->type)
             {
-                value->f = value->b ? 1.0 : 0.0;
-                value->type = VALUE_TYPE_FLOAT;
-                return true;
+                case VALUE_TYPE_BOOL:
+                    return true;
+                case VALUE_TYPE_NIL:
+                    value2->b = false;
+                    value2->type = VALUE_TYPE_BOOL;
+                    return true;
+                case VALUE_TYPE_STRING:
+                case VALUE_TYPE_ERROR:
+                    return false;
+                case VALUE_TYPE_FLOAT:
+                case VALUE_TYPE_INT:
+                    UNREACHABLE;
             }
-            if (type == VALUE_TYPE_INT)
-            {
-                bigint_init_signed(&value->big_int, value->b ? 1 : 0);
-                value->type = VALUE_TYPE_INT;
-                return true;
-            }
-            FATAL_ERROR("Should never happen");
-            return false;
+            UNREACHABLE;
         case VALUE_TYPE_NIL:
-            if (type == VALUE_TYPE_FLOAT)
+            switch (value2->type)
             {
-                value->f = 0.0;
-                value->type = VALUE_TYPE_FLOAT;
-                return true;
+                case VALUE_TYPE_NIL:
+                    return true;
+                case VALUE_TYPE_STRING:
+                case VALUE_TYPE_ERROR:
+                    return false;
+                case VALUE_TYPE_FLOAT:
+                case VALUE_TYPE_BOOL:
+                case VALUE_TYPE_INT:
+                    UNREACHABLE;
             }
-            if (type == VALUE_TYPE_INT)
-            {
-                bigint_init_signed(&value->big_int, 0);
-                value->type = VALUE_TYPE_INT;
-                return true;
-            }
-            if (type == VALUE_TYPE_BOOL)
-            {
-                value->b = false;
-                value->type = VALUE_TYPE_BOOL;
-            }
-            FATAL_ERROR("Should never happen");
-            return false;
+            UNREACHABLE;
+        case VALUE_TYPE_STRING:
+            return value2->type == VALUE_TYPE_STRING;
         case VALUE_TYPE_ERROR:
-            break;
+            return false;
     }
-    FATAL_ERROR("Should never happen");
+    UNREACHABLE;
+}
+
+bool value_convert_to_type(Value *value1, Value *value2)
+{
+    bool reverse_order = false;
+    if (value2->type == value1->type)
+    {
+        switch (value1->type)
+        {
+            case VALUE_TYPE_FLOAT:
+                reverse_order = value2->float_bits > value1->float_bits;
+                break;
+            case VALUE_TYPE_INT:
+                if (value1->is_unsigned != value2->is_unsigned)
+                {
+                    reverse_order = value1->is_unsigned;
+                    break;
+                }
+                reverse_order = value2->int_bits > value1->int_bits;
+                break;
+            case VALUE_TYPE_BOOL:
+            case VALUE_TYPE_NIL:
+            case VALUE_TYPE_STRING:
+            case VALUE_TYPE_ERROR:
+                break;
+        }
+    }
+    else
+    {
+        reverse_order = value2->type < value1->type;
+    }
+    return reverse_order ? value_convert_to_type_ordered(value2, value1) : value_convert_to_type_ordered(value1, value2);
 }

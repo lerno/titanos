@@ -62,6 +62,7 @@ bool resolve_array_size(Type *type)
                       "Array size cannot exceed %d", MAX_ARRAY_SIZE);
         return false;
     }
+    DEBUG_LOG("Array size %d", array_size);
     type->array.is_len_resolved = true;
     type->array.len = (uint32_t)array_size;
     return true;
@@ -70,7 +71,6 @@ bool resolve_array_size(Type *type)
 static bool resolve_unresolved_type(Type *type, bool used_public)
 {
     assert(type->type_id == TYPE_UNRESOLVED);
-    assert(!type->decl);
     Decl* decl = NULL;
     Expr *type_expr = type->unresolved.type_expr;
     evaluate_constant(type_expr);
@@ -135,46 +135,16 @@ static bool resolve_unresolved_type(Type *type, bool used_public)
     }
     if (!decl_is_type(decl))
     {
-        sema_error_at(&type->span, "No type with that name found");
+        sema_error_at(&type_expr->span, "No type with that name found");
         type->type_id = TYPE_INVALID;
     }
+    type->type_id = TYPE_DECLARED;
     type->decl = decl;
-    switch (decl->type_id)
-    {
-        case DECL_VAR:
-        case DECL_FUNC:
-        case DECL_ENUM_CONSTANT:
-        case DECL_ARRAY_VALUE:
-        case DECL_IMPORT:
-        case DECL_ALIAS_TYPE:
-        case DECL_LABEL:
-            FATAL_ERROR("Can't happen");
-            return false;
-        case DECL_BUILTIN:
-        {
-            Token span = type->span;
-            *type = *decl->builtin_decl.type;
-            type->span = span;
-            // Always resolved
-            return true;
-        }
-        case DECL_STRUCT_TYPE:
-            type->type_id = decl->struct_decl.struct_type == ST_UNION ? TYPE_UNION : TYPE_STRUCT;
-            break;
-        case DECL_ENUM_TYPE:
-            type->type_id = TYPE_ENUM;
-            break;
-        case DECL_FUNC_TYPE:
-            type->type_id = TYPE_FUNC;
-            break;
-    }
-
     return update_decl(type, used_public);
 }
 
 bool resolve_type(Type *type, bool used_public)
 {
-    if (type->decl) return update_decl(type, used_public);
     switch (type->type_id)
     {
         case TYPE_UNRESOLVED:
@@ -184,9 +154,6 @@ bool resolve_type(Type *type, bool used_public)
         case TYPE_OPAQUE:
             return resolve_type(type->opaque.base, used_public);
         case TYPE_VOID:
-        case TYPE_BOOL:
-        case TYPE_INT:
-        case TYPE_FLOAT:
         case TYPE_CONST_FLOAT:
         case TYPE_CONST_INT:
         case TYPE_NIL:
@@ -197,26 +164,30 @@ bool resolve_type(Type *type, bool used_public)
             return resolve_type(type->array.base, used_public) && resolve_array_size(type);
         case TYPE_TYPEVAL:
             return resolve_type(type->type_of_type, used_public);
-        case TYPE_STRUCT:
-        case TYPE_ENUM:
-        case TYPE_FUNC:
-        case TYPE_UNION:
         case TYPE_IMPORT:
             return true;
+        case TYPE_DECLARED:
+            return update_decl(type, used_public);
+        case TYPE_BUILTIN:
+            return true;
+        case TYPE_STRING:
+            return true;
     }
+    UNREACHABLE;
 }
 
 static inline bool analyse_enum_type(Decl *decl)
 {
-    if (!resolve_type(decl->enum_decl.type, decl)) return false;
+    if (!resolve_type(decl->enum_decl.type, decl->is_public)) return false;
 
     Type *type = decl->enum_decl.type;
 
-    if (type->type_id != TYPE_INT)
+    if (!type_is_int(type))
     {
         sema_error_at(&type->span, "Expected an integer type");
         return false;
     }
+
 
     // TODO if this one is public but the alias used isn't, should we flag the enum as an error?
 
@@ -282,14 +253,14 @@ static inline bool analyse_enum_type(Decl *decl)
             continue;
         }
         BigInt *big_int = &value->const_expr.value.big_int;
-        if (big_int->is_negative && !type->integer.is_signed)
+        if (big_int->is_negative && !type_is_signed(type))
         {
             sema_error_at(&value->span, "Negative enum value for '%.*s', must be unsigned", SPLAT_TOK(entry->name));
             success = false;
             is_first_value = false;
             continue;
         }
-        if (!bigint_fits_in_bits(big_int, type->integer.bits, type->integer.is_signed))
+        if (!bigint_fits_in_bits(big_int, type->builtin.bits, type_is_signed(type)))
         {
             sema_error_at(&value->span, "Enum value '%.*s' exceeds the type size", SPLAT_TOK(entry->name));
             success = false;
