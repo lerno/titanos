@@ -4,7 +4,7 @@
 #include "error.h"
 #include "diagnostics.h"
 #include "type_analysis.h"
-#include "statement_analysis.h"
+#include "expression_analysis.h"
 
 
 static inline ExprConstState replace_with_constant(Expr *target, Value *source)
@@ -84,8 +84,6 @@ static inline ExprConstState evaluate_constant_binary_expr(Expr *expr)
         case TOKEN_LEFT_SHIFT:
             TODO;
         case TOKEN_RIGHT_SHIFT:
-            TODO;
-        case TOKEN_RIGHT_SHIFT_LOGIC:
             TODO;
         case TOKEN_BIT_XOR:
             TODO;

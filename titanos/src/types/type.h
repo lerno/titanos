@@ -9,24 +9,26 @@
 #include "common.h"
 #include "lexer.h"
 
+// IF ORDER IS CHANGED, rewrite type_implicit_convert_ordered
 typedef enum _TypeId
 {
     TYPE_INVALID,
-    TYPE_STRING,
+    TYPE_UNRESOLVED,
+    TYPE_IMPORT,
     TYPE_VOID,
+    TYPE_STRING,
+    TYPE_OPAQUE,
     TYPE_POINTER,
     TYPE_ARRAY,
     TYPE_DECLARED,
-    TYPE_CONST_FLOAT,
-    TYPE_CONST_INT,
-    TYPE_NIL,
-    TYPE_OPAQUE,
-    TYPE_IMPORT,
-    TYPE_UNRESOLVED,
     TYPE_TYPEVAL,
     TYPE_BUILTIN,
+    TYPE_NIL,
+    TYPE_CONST_FLOAT,
+    TYPE_CONST_INT,
     // TYPE_OPAQUE, TYPE_MODULE?, TYPE_NONNULL_PTR? VECTOR ETC
 } TypeId;
+
 
 
 typedef struct _Type Type;
@@ -57,9 +59,9 @@ typedef struct _TypeOpaque
 } TypeOpaque;
 
 typedef enum _BuiltinKind {
-    BUILTIN_SIGNED_INT,
-    BUILTIN_UNSIGNED_INT,
     BUILTIN_FLOAT,
+    BUILTIN_UNSIGNED_INT,
+    BUILTIN_SIGNED_INT,
     BUILTIN_BOOL,
 } BuiltinKind;
 
@@ -121,4 +123,6 @@ Type *type_compfloat();
 bool type_is_int(Type *type);
 bool type_is_signed(Type *type);
 uint64_t type_size(Type *type);
+bool type_is_same(Type *type1, Type *type2);
+Type *type_implicit_convert(Expr *location, Type *type1, Type *type2);
 

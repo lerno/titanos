@@ -2007,7 +2007,6 @@ void setup_parse_rules(void)
 	set_parse_rule(TOKEN_LESS_EQ, NULL, parse_binary, PREC_COMPARISON);
 	set_parse_rule(TOKEN_LEFT_SHIFT, NULL, parse_binary, PREC_SHIFT);
 	set_parse_rule(TOKEN_RIGHT_SHIFT, NULL, parse_binary, PREC_SHIFT);
-	set_parse_rule(TOKEN_RIGHT_SHIFT_LOGIC, NULL, parse_binary, PREC_SHIFT);
 	set_parse_rule(TOKEN_TRUE, parse_bool, NULL, PREC_NONE);
 	set_parse_rule(TOKEN_FALSE, parse_bool, NULL, PREC_NONE);
 	set_parse_rule(TOKEN_NIL, parse_nil, NULL, PREC_NONE);
@@ -2031,7 +2030,6 @@ void setup_parse_rules(void)
 	set_parse_rule(TOKEN_BIT_AND_ASSIGN, NULL, parse_binary, PREC_ASSIGNMENT);
 	set_parse_rule(TOKEN_BIT_OR_ASSIGN, NULL, parse_binary, PREC_ASSIGNMENT);
 	set_parse_rule(TOKEN_RIGHT_SHIFT_ASSIGN, NULL, parse_binary, PREC_ASSIGNMENT);
-	set_parse_rule(TOKEN_RIGHT_SHIFT_LOGIC_ASSIGN, NULL, parse_binary, PREC_ASSIGNMENT);
 	set_parse_rule(TOKEN_LEFT_SHIFT_ASSIGN, NULL, parse_binary, PREC_ASSIGNMENT);
 
     parse_rules_done = true;

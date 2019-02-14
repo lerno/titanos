@@ -111,10 +111,6 @@ const char *token_type_to_string(token_type type)
             return ">>";
         case TOKEN_RIGHT_SHIFT_ASSIGN:
             return ">>=";
-        case TOKEN_RIGHT_SHIFT_LOGIC:
-            return ">>>";
-        case TOKEN_RIGHT_SHIFT_LOGIC_ASSIGN:
-            return ">>>=";
         case TOKEN_LESS:
             return "<";
         case TOKEN_LESS_EQ:
@@ -797,14 +793,7 @@ Token scan_token(void)
             if (match('<')) return make_token(match('=') ? TOKEN_LEFT_SHIFT_ASSIGN : TOKEN_LEFT_SHIFT);
             return make_token(match('=') ? TOKEN_LESS_EQ : TOKEN_LESS);
         case '>':
-            if (match('>'))
-            {
-                if (match('>'))
-                {
-                    return make_token(match('=') ? TOKEN_RIGHT_SHIFT_LOGIC_ASSIGN : TOKEN_RIGHT_SHIFT_LOGIC);
-                }
-                return make_token(match('=') ? TOKEN_RIGHT_SHIFT_ASSIGN : TOKEN_RIGHT_SHIFT);
-            }
+            if (match('>')) return make_token(match('=') ? TOKEN_RIGHT_SHIFT_ASSIGN : TOKEN_RIGHT_SHIFT);
             return make_token(match('=') ? TOKEN_GREATER_EQ : TOKEN_GREATER);
         case '%':
             return make_token(match('=') ? TOKEN_MOD_ASSIGN : TOKEN_MOD);

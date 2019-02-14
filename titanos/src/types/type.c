@@ -3,13 +3,14 @@
 //
 
 #include <string.h>
-#include <printer.h>
-#include <expr.h>
+#include "printer.h"
+#include "expr.h"
 #include "type.h"
 #include "arena_allocator.h"
 #include "ast_types.h"
 #include "decl.h"
 #include <llvm-c/Core.h>
+#include "diagnostics.h"
 
 Type *new_unresolved_type(Expr *expr, bool public)
 {
@@ -197,6 +198,324 @@ void print_type(Type *type, unsigned current_indent)
     UNREACHABLE
 }
 
+
+/**
+ * Convert value2 to value1 (note that we have already ordered things in conversion order.
+ *
+ * @param value1
+ * @param value2
+ * @return true if conversion worked.
+ */
+static bool value_convert_to_type_ordered(Value *value1, Value *value2)
+{
+    switch (value1->type)
+    {
+        case VALUE_TYPE_FLOAT:
+            switch (value2->type)
+            {
+                case VALUE_TYPE_FLOAT:
+                    value1->float_bits = value2->float_bits;
+                    return true;
+                case VALUE_TYPE_INT:
+                    value_update_to_float(value2, bigint_as_float(&value2->big_int), value1->float_bits);
+                    return true;
+                case VALUE_TYPE_BOOL:
+                    value_update_to_float(value2, value2->b ? 1.0 : 0.0, value1->float_bits);
+                    return true;
+                case VALUE_TYPE_NIL:
+                    value_update_to_float(value2, 0.0, value1->float_bits);
+                    return true;
+                case VALUE_TYPE_STRING:
+                case VALUE_TYPE_ERROR:
+                    return false;
+            }
+            UNREACHABLE
+        case VALUE_TYPE_INT:
+            switch (value2->type)
+            {
+                case VALUE_TYPE_INT:
+                    // First check if we have a comptime int. If so, check that it fits.
+                    if (value2->int_bits == 0)
+                    {
+                        if (value1->int_bits == 0) return true;
+                        if (!bigint_fits_in_bits(&value2->big_int, value1->int_bits, !value1->is_unsigned)) return false;
+                        BigInt res;
+                        bigint_truncate(&res, &value2->big_int, value1->int_bits, !value1->is_unsigned);
+                        value2->big_int = res;
+                        return true;
+                    }
+                    if (!value1->is_unsigned && value2->is_unsigned)
+                    {
+                        // If unsigned value is same or larger, disallow!
+                        if (value1->int_bits <= value2->int_bits) return false;
+
+                        value2->is_unsigned = false;
+                        value2->int_bits = value1->int_bits;
+                        return true;
+                    }
+                    // Final case, both has same sign, promote to largest.
+                    value2->int_bits = value1->int_bits;
+                    return true;
+                case VALUE_TYPE_BOOL:
+                    bigint_init_unsigned(&value2->big_int, value2->b ? 1 : 0);
+                    value2->int_bits = value1->int_bits;
+                    value2->is_unsigned = value1->is_unsigned;
+                    value2->type = VALUE_TYPE_INT;
+                    return true;
+                case VALUE_TYPE_NIL:
+                    bigint_init_unsigned(&value2->big_int, 0);
+                    value2->int_bits = value1->int_bits;
+                    value2->is_unsigned = value1->is_unsigned;
+                    value2->type = VALUE_TYPE_INT;
+                    return true;
+                case VALUE_TYPE_STRING:
+                case VALUE_TYPE_ERROR:
+                    return false;
+                case VALUE_TYPE_FLOAT:
+                    UNREACHABLE;
+            }
+            UNREACHABLE;
+        case VALUE_TYPE_BOOL:
+            switch (value2->type)
+            {
+                case VALUE_TYPE_BOOL:
+                    return true;
+                case VALUE_TYPE_NIL:
+                    value2->b = false;
+                    value2->type = VALUE_TYPE_BOOL;
+                    return true;
+                case VALUE_TYPE_STRING:
+                case VALUE_TYPE_ERROR:
+                    return false;
+                case VALUE_TYPE_FLOAT:
+                case VALUE_TYPE_INT:
+                    UNREACHABLE;
+            }
+            UNREACHABLE;
+        case VALUE_TYPE_NIL:
+            switch (value2->type)
+            {
+                case VALUE_TYPE_NIL:
+                    return true;
+                case VALUE_TYPE_STRING:
+                case VALUE_TYPE_ERROR:
+                    return false;
+                case VALUE_TYPE_FLOAT:
+                case VALUE_TYPE_BOOL:
+                case VALUE_TYPE_INT:
+                    UNREACHABLE;
+            }
+            UNREACHABLE;
+        case VALUE_TYPE_STRING:
+            return value2->type == VALUE_TYPE_STRING;
+        case VALUE_TYPE_ERROR:
+            return false;
+    }
+    UNREACHABLE;
+}
+
+bool decl_type_is_same(Decl *decl1, Decl *decl2)
+{
+    TODO;
+    return false;
+}
+
+static inline Type *unfold_opaque(Type *type)
+{
+    while (type->type_id == TYPE_OPAQUE)
+    {
+        type = type->opaque.base;
+    }
+    return type;
+}
+bool type_is_same(Type *type1, Type *type2)
+{
+    type1 = unfold_opaque(type1);
+    type2 = unfold_opaque(type2);
+    if (type1 == type2) return true;
+    if (type1->type_id != type2->type_id) return false;
+    switch (type1->type_id)
+    {
+        case TYPE_INVALID:
+        case TYPE_STRING:
+        case TYPE_VOID:
+        case TYPE_CONST_FLOAT:
+        case TYPE_CONST_INT:
+        case TYPE_NIL:
+            return true;
+        case TYPE_TYPEVAL:
+            return type_is_same(type1->type_of_type, type2->type_of_type);
+            break;
+        case TYPE_BUILTIN:
+            return type1->builtin.builtin_kind == type2->builtin.builtin_kind
+                   && type1->builtin.bits == type2->builtin.bits;
+        case TYPE_POINTER:
+            return type_is_same(type1->pointer.base, type2->pointer.base);
+        case TYPE_ARRAY:
+            assert(type1->array.is_len_resolved && type2->array.is_len_resolved);
+            return type_is_same(type1->array.base, type2->array.base) && type1->array.len == type2->array.len;
+        case TYPE_DECLARED:
+            return decl_type_is_same(type1->decl, type2->decl);
+        case TYPE_OPAQUE:
+        case TYPE_IMPORT:
+            UNREACHABLE
+        case TYPE_UNRESOLVED:
+            FATAL_ERROR("Should be resolved at this point in time");
+    }
+}
+
+
+Type *type_implicit_convert_ordered(Expr *where, Type *type1, Type *type2)
+{
+    int a[4];
+    int *b;
+    int *c = a ;
+
+    switch (type1->type_id)
+    {
+        case TYPE_INVALID:
+            // Invalid always yield invalid
+            return NULL;
+        case TYPE_UNRESOLVED:
+            FATAL_ERROR("Types should already be resolved");
+        case TYPE_IMPORT:
+            UNREACHABLE
+        case TYPE_VOID:
+            sema_error_at(&where->span, "Other types cannot be converted to void");
+            return NULL;
+        case TYPE_STRING:
+            sema_error_at(&where->span, "Cannot use string in expression");
+            return NULL;
+        case TYPE_OPAQUE:
+            sema_error_at(&where->span, "Cannot implicitly convert opaque types");
+            return NULL;
+        case TYPE_POINTER:
+        case TYPE_ARRAY:
+            switch (type2->type_id)
+            {
+                case TYPE_INVALID:
+                case TYPE_UNRESOLVED:
+                case TYPE_IMPORT:
+                case TYPE_VOID:
+                case TYPE_STRING:
+                case TYPE_OPAQUE:
+                    UNREACHABLE;
+                case TYPE_POINTER:
+                    sema_error_at(&where->span, "Cannot implicitly convert one pointer type to the other");
+                    return NULL;
+                case TYPE_ARRAY:
+                    if (!type_is_same(type1->pointer.base, type2->array.base)) return NULL;
+                    sema_error_at(&where->span, "Cannot implicitly convert one pointer type to the other");
+                    return type1;
+                case TYPE_DECLARED:
+                    sema_error_at(&where->span, "Cannot implicitly convert the types");
+                    return NULL;
+                case TYPE_TYPEVAL:
+                    sema_error_at(&where->span, "Cannot convert a type into a pointer");
+                    return NULL;
+                case TYPE_BUILTIN:
+                    switch (type2->builtin.builtin_kind)
+                    {
+                        case BUILTIN_SIGNED_INT:
+                        case BUILTIN_UNSIGNED_INT:
+                            return type1;
+                        case BUILTIN_FLOAT:
+                            sema_error_at(&where->span, "Cannot convert a float into a pointer offset");
+                            return NULL;
+                        case BUILTIN_BOOL:
+                            sema_error_at(&where->span, "Cannot convert a bool into a pointer offset");
+                            return NULL;
+                    }
+                    UNREACHABLE
+                case TYPE_CONST_FLOAT:
+                    sema_error_at(&where->span, "Cannot convert a float into a pointer offset");
+                    return NULL;
+                case TYPE_CONST_INT:
+                case TYPE_NIL:
+                    return type1;
+            }
+            UNREACHABLE
+        case TYPE_DECLARED:
+            sema_error_at(&where->span, "Cannot convert the types");
+            return NULL;
+        case TYPE_TYPEVAL:
+            sema_error_at(&where->span, "Cannot convert the types");
+            return NULL;
+        case TYPE_BUILTIN:
+            switch (type2->type_id)
+            {
+                case TYPE_INVALID:
+                case TYPE_UNRESOLVED:
+                case TYPE_IMPORT:
+                case TYPE_VOID:
+                case TYPE_STRING:
+                case TYPE_OPAQUE:
+                case TYPE_POINTER:
+                case TYPE_ARRAY:
+                case TYPE_DECLARED:
+                case TYPE_TYPEVAL:
+                    UNREACHABLE
+                case TYPE_BUILTIN:
+                    switch (type2->builtin.builtin_kind)
+                    {
+                        case BUILTIN_SIGNED_INT:
+                        case BUILTIN_UNSIGNED_INT:
+                            return type1;
+                        case BUILTIN_FLOAT:
+                            sema_error_at(&where->span, "Cannot convert a float into a pointer offset");
+                            return NULL;
+                        case BUILTIN_BOOL:
+                            sema_error_at(&where->span, "Cannot convert a bool into a pointer offset");
+                            return NULL;
+                    }
+                    UNREACHABLE
+                case TYPE_CONST_FLOAT:
+                    TODO
+                    sema_error_at(&where->span, "Cannot convert a float into a pointer offset");
+                    return NULL;
+                case TYPE_CONST_INT:
+                case TYPE_NIL:
+                    return type1;
+            }
+            UNREACHABLE
+            return type1;
+        case TYPE_CONST_FLOAT:
+            break;
+        case TYPE_CONST_INT:break;
+        case TYPE_NIL:break;
+    }
+    return NULL;
+}
+Type *type_implicit_convert(Expr *expr, Type *type1, Type *type2)
+{
+    if (type_is_same(type1, type2)) return type1;
+    bool reverse_order = false;
+    if (type1->type_id > type2->type_id)
+    {
+        reverse_order = true;
+    }
+    else if (type2->type_id == type1->type_id && type1->type_id == TYPE_BUILTIN)
+    {
+        int bit_diff = (int)type1->builtin.bits - (int)type2->builtin.bits;
+        switch (type1->builtin.builtin_kind)
+        {
+            case BUILTIN_FLOAT:
+                reverse_order = type2->builtin.builtin_kind == BUILTIN_FLOAT && bit_diff < 0;
+                break;
+            case BUILTIN_UNSIGNED_INT:
+                reverse_order = type2->builtin.builtin_kind == BUILTIN_FLOAT || bit_diff < 0;
+                break;
+            case BUILTIN_SIGNED_INT:
+                reverse_order = type2->builtin.builtin_kind == BUILTIN_FLOAT || bit_diff <= 0;
+                break;
+            case BUILTIN_BOOL:
+                reverse_order = type2->builtin.builtin_kind != BUILTIN_BOOL;
+                break;
+        }
+    }
+    if (reverse_order) return type_implicit_convert_ordered(expr, type2, type1);
+    return type_implicit_convert_ordered(expr, type1, type2);
+}
 
 /*
  *             printf("TYPE_DEFINITION ");

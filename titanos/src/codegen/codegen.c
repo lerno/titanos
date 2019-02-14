@@ -10,6 +10,7 @@
 #include <string.h>
 #include <arena_allocator.h>
 #include <building/builder.h>
+#include <building/builtins.h>
 #include "module.h"
 #include "parser.h"
 #include "error.h"
@@ -20,6 +21,7 @@
 static LLVMTypeRef llvm_type(Type *type);
 static LLVMTypeRef codegen_convert_type(Type *type);
 static LLVMTypeRef codegen_convert_decl(Decl *decl);
+static LLVMValueRef codegen_expr(Expr *expr);
 
 __thread static Decl *active_func = NULL;
 __thread static LLVMContextRef active_context = NULL;
@@ -135,7 +137,9 @@ LLVMValueRef codegen_const_expr(Expr *expr)
         case TYPE_DECLARED:break;
         case TYPE_CONST_FLOAT:
             break;
-        case TYPE_CONST_INT:break;
+        case TYPE_CONST_INT:
+            // TODO this is just for test.
+            return LLVMConstInt(type_builtin_i32()->llvm_type, bigint_as_unsigned(&expr->const_expr.value.big_int), false);
         case TYPE_NIL:break;
         case TYPE_OPAQUE:break;
         case TYPE_IMPORT:break;
@@ -159,21 +163,235 @@ LLVMValueRef codegen_const_expr(Expr *expr)
     }
     return NULL;
 }
-LLVMValueRef codegen_expr(Expr *expr)
+LLVMValueRef perform_expr(LLVMValueRef left, LLVMValueRef right, token_type token, bool use_float, bool use_signed)
+{
+    switch (token)
+    {
+        case TOKEN_EQ:
+            return LLVMBuildStore(active_builder, right, left);
+        case TOKEN_PLUS:
+            return use_float
+                   ? LLVMBuildFAdd(active_builder, left, right, "addf")
+                   : LLVMBuildAdd(active_builder, left, right, "add");
+        case TOKEN_MINUS:
+            return use_float
+                   ? LLVMBuildFSub(active_builder, left, right, "subf")
+                   : LLVMBuildSub(active_builder, left, right, "sub");
+        case TOKEN_PLUS_ASSIGN:
+            return perform_expr(left, perform_expr(left, right, TOKEN_PLUS, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
+        case TOKEN_BIT_NOT:
+            assert(!use_float);
+            assert(!right && "Cannot have right hand side");
+            return LLVMBuildNot(active_builder, left, "bit-not");
+        case TOKEN_NOT:
+            return LLVMBuildXor(active_builder, left, LLVMConstInt(LLVMInt1TypeInContext(active_context), 1, 0), "not");
+        case TOKEN_PLUSPLUS:
+        case TOKEN_MINUSMINUS:
+            FATAL_ERROR("Should be handled separately");
+        case TOKEN_MINUS_ASSIGN:
+            return perform_expr(left, perform_expr(left, right, TOKEN_MINUS, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
+        case TOKEN_STAR:
+            if (!right)
+            {
+                // Deref
+                TODO;
+            }
+            return use_float
+                   ? LLVMBuildFMul(active_builder, left, right, "mulf")
+                   : LLVMBuildMul(active_builder, left, right, "mul");
+        case TOKEN_MULT_ASSIGN:
+            return perform_expr(left, perform_expr(left, right, TOKEN_STAR, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
+        case TOKEN_POW:break;
+        case TOKEN_DIV:
+            return use_float
+                   ? LLVMBuildFDiv(active_builder, left, right, "divf")
+                   : (use_signed ? LLVMBuildSDiv(active_builder, left, right, "sdiv") : LLVMBuildUDiv(active_builder, left, right, "udiv"));
+        case TOKEN_DIV_ASSIGN:
+            return perform_expr(left, perform_expr(left, right, TOKEN_DIV, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
+        case TOKEN_MOD:
+            return use_float
+                   ? LLVMBuildFRem(active_builder, left, right, "remf")
+                   : (use_signed ? LLVMBuildSRem(active_builder, left, right, "srem") : LLVMBuildURem(active_builder, left, right, "urem"));
+        case TOKEN_MOD_ASSIGN:
+            return perform_expr(left, perform_expr(left, right, TOKEN_MOD, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
+        case TOKEN_NOT_EQUAL:
+            return use_float
+                   ? LLVMBuildFCmp(active_builder, LLVMRealONE, left, right, "!=")
+                   : LLVMBuildICmp(active_builder, LLVMIntNE, left, right, "!=");
+        case TOKEN_EQEQ:
+            return use_float
+                   ? LLVMBuildFCmp(active_builder, LLVMRealOEQ, left, right, "eq")
+                   : LLVMBuildICmp(active_builder, LLVMIntEQ, left, right, "eq");
+        case TOKEN_GREATER:
+            return use_float
+                   ? LLVMBuildFCmp(active_builder, LLVMRealOGT, left, right, "gt")
+                   : LLVMBuildICmp(active_builder, use_signed ? LLVMIntSGT : LLVMIntUGT, left, right, "gt");
+        case TOKEN_GREATER_EQ:
+            return use_float
+                   ? LLVMBuildFCmp(active_builder, LLVMRealOGE, left, right, "ge")
+                   : LLVMBuildICmp(active_builder, use_signed ? LLVMIntSGE : LLVMIntUGE, left, right, "ge");
+        case TOKEN_RIGHT_SHIFT:
+            assert(!use_float);
+            return use_signed ? LLVMBuildAShr(active_builder, left, right, "shr")
+                              : LLVMBuildLShr(active_builder, left, right, "shrl");
+        case TOKEN_RIGHT_SHIFT_ASSIGN:
+            return perform_expr(left, perform_expr(left, right, TOKEN_RIGHT_SHIFT, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
+        case TOKEN_LESS:
+            return use_float
+                   ? LLVMBuildFCmp(active_builder, LLVMRealOLT, left, right, "lt")
+                   : LLVMBuildICmp(active_builder, use_signed ? LLVMIntSLT : LLVMIntULT, left, right, "lt");
+        case TOKEN_LESS_EQ:
+            return use_float
+                   ? LLVMBuildFCmp(active_builder, LLVMRealOLE, left, right, "le")
+                   : LLVMBuildICmp(active_builder, use_signed ? LLVMIntSLE : LLVMIntULE, left, right, "le");
+        case TOKEN_LEFT_SHIFT:
+            assert(!use_float);
+            return LLVMBuildShl(active_builder, left, right, "shl");
+        case TOKEN_LEFT_SHIFT_ASSIGN:
+            return perform_expr(left, perform_expr(left, right, TOKEN_LEFT_SHIFT, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
+        case TOKEN_AND:break;
+        case TOKEN_AND_ASSIGN:
+            return perform_expr(left, perform_expr(left, right, TOKEN_AND, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
+        case TOKEN_AMP:
+            assert(!use_float);
+            return LLVMBuildAnd(active_builder, left, right, "bit-and");
+        case TOKEN_BIT_AND_ASSIGN:
+            return perform_expr(left, perform_expr(left, right, TOKEN_AMP, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
+        case TOKEN_OR:break;
+        case TOKEN_OR_ASSIGN:
+            return perform_expr(left, perform_expr(left, right, TOKEN_OR, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
+        case TOKEN_BIT_OR:
+            return LLVMBuildOr(active_builder, left, right, "bit or");
+        case TOKEN_BIT_OR_ASSIGN:
+            return perform_expr(left, perform_expr(left, right, TOKEN_BIT_OR, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
+        case TOKEN_BIT_XOR:
+            assert(!use_float);
+            return LLVMBuildXor(active_builder, left, right, "xor");
+        case TOKEN_BIT_XOR_ASSIGN:
+            return perform_expr(left, perform_expr(left, right, TOKEN_BIT_XOR, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
+        case TOKEN_COLON:
+        case TOKEN_COLON_ASSIGN:
+        case TOKEN_COLCOLON:
+        case TOKEN_DOTDOT:
+        case TOKEN_ELIPSIS:
+        case TOKEN_NO_INIT:
+        case TOKEN_IDENTIFIER:
+        case TOKEN_ARROW:
+        case TOKEN_STRING:
+        case TOKEN_INTEGER:
+        case TOKEN_DOT:
+        case TOKEN_FLOAT:
+        case TOKEN_QUESTION:
+        case TOKEN_ELVIS:
+        case TOKEN_VOID:
+        case TOKEN_ALIAS:
+        case TOKEN_CONST:
+        case TOKEN_VOLATILE:
+        case TOKEN_ELSE:
+        case TOKEN_FALSE:
+        case TOKEN_CONTINUE:
+        case TOKEN_FUNC:
+        case TOKEN_FOR:
+        case TOKEN_IMPORT:
+        case TOKEN_MODULE:
+        case TOKEN_IF:
+        case TOKEN_NIL:
+        case TOKEN_RETURN:
+        case TOKEN_GOTO:
+        case TOKEN_DEFER:
+        case TOKEN_TRUE:
+        case TOKEN_WHILE:
+        case TOKEN_LPAREN:
+        case TOKEN_RPAREN:
+        case TOKEN_LBRACE:
+        case TOKEN_RBRACE:
+        case TOKEN_LBRACKET:
+        case TOKEN_RBRACKET:
+        case TOKEN_HASH:
+        case TOKEN_DOLLAR:
+        case TOKEN_COMMA:
+        case TOKEN_EOS:
+        case TOKEN_CASE:
+        case TOKEN_ASM:
+        case TOKEN_DEFAULT:
+        case TOKEN_CAST:
+        case TOKEN_SWITCH:
+        case TOKEN_UNTIL:
+        case TOKEN_BREAK:
+        case TOKEN_TYPE:
+        case TOKEN_DO:
+        case TOKEN_PUBLIC:
+        case TOKEN_LOCAL:
+        case TOKEN_STRUCT:
+        case TOKEN_UNION:
+        case TOKEN_ENUM:
+        case TOKEN_SIZEOF:
+        case TOKEN_AT:
+        case TOKEN_AS:
+        case TOKEN_ERROR:
+        case TOKEN_EOF:
+            UNREACHABLE
+    }
+    TODO;
+}
+
+static inline bool is_float(Expr *expr)
+{
+    return expr->type->type_id == TYPE_BUILTIN && expr->type->builtin.builtin_kind == BUILTIN_FLOAT;
+}
+
+static inline bool is_signed(Expr *expr)
+{
+    return expr->type->type_id == TYPE_BUILTIN && expr->type->builtin.builtin_kind == BUILTIN_SIGNED_INT;
+}
+
+LLVMValueRef codegen_binary_expr(Expr *expr)
+{
+    assert(expr->expr_id == EXPR_BINARY);
+    LLVMValueRef left = codegen_expr(expr->binary_expr.left);
+    LLVMValueRef right = codegen_expr(expr->binary_expr.right);
+    bool use_float = is_float(expr->binary_expr.left);
+    bool use_signed = use_float || is_signed(expr->binary_expr.left);
+    return perform_expr(left, right, expr->binary_expr.operator, use_float, use_signed);
+}
+
+LLVMValueRef codegen_unary_expr(Expr *expr)
+{
+    assert(expr->expr_id == EXPR_UNARY);
+    bool use_float = is_float(expr->unary_expr.expr);
+    bool use_signed = use_float || is_signed(expr->unary_expr.expr);
+    return perform_expr(codegen_expr(expr->unary_expr.expr), NULL, expr->unary_expr.operator, use_float, use_signed);
+}
+
+LLVMValueRef codegen_post_expr(Expr *expr)
+{
+    assert(expr->expr_id == EXPR_UNARY);
+    bool use_float = is_float(expr->post_expr.expr);
+    bool use_signed = use_float || is_signed(expr->post_expr.expr);
+    return perform_expr(NULL, codegen_expr(expr->post_expr.expr), expr->post_expr.operator, use_float, use_signed);
+}
+
+static LLVMValueRef codegen_expr(Expr *expr)
 {
     switch (expr->expr_id)
     {
         case EXPR_CONST:
             return codegen_const_expr(expr);
-            break;
-        case EXPR_TYPE:break;
-        case EXPR_BINARY:break;
+        case EXPR_TYPE:
+            FATAL_ERROR("Type should never leak to codegen");
+        case EXPR_BINARY:
+            return codegen_binary_expr(expr);
         case EXPR_TERNARY:break;
-        case EXPR_UNARY:break;
-        case EXPR_POST:break;
-        case EXPR_IDENTIFIER:break;
+        case EXPR_UNARY:
+            return codegen_unary_expr(expr);
+        case EXPR_POST:
+            return codegen_post_expr(expr);
+        case EXPR_IDENTIFIER:
+            assert(expr->identifier_expr.resolved->var.llvm_ref);
+            return expr->identifier_expr.resolved->var.llvm_ref;
         case EXPR_CALL:break;
-        case EXPR_SIZEOF:break;
+        case EXPR_SIZEOF:
+            FATAL_ERROR("Sizeof should always be const evaluated");
         case EXPR_CAST:break;
         case EXPR_SUBSCRIPT:break;
         case EXPR_ACCESS:break;

@@ -87,10 +87,6 @@ char *token_name(Token *token)
             return ">>";
         case TOKEN_RIGHT_SHIFT_ASSIGN:
             return ">>=";
-        case TOKEN_RIGHT_SHIFT_LOGIC:
-            return ">>>";
-        case TOKEN_RIGHT_SHIFT_LOGIC_ASSIGN:
-            return ">>>=";
         case TOKEN_LESS:
             return "<";
         case TOKEN_LESS_EQ:

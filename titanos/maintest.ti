@@ -45,6 +45,7 @@ public func i32 main() @(foo = 1 + 2) {
     i32 b = 10;
     const u8* name = "bas";
     a = 10;
+    a = b + b;
 
  //   const i32 A2 = 20;
     //volatile i32* b2 = 0x2000;
