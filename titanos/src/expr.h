@@ -8,6 +8,7 @@
 #include "vector.h"
 #include "component.h"
 #include "value.h"
+#include "types/type.h"
 
 typedef struct _Ast Ast;
 typedef struct _Type Type;
@@ -41,14 +42,16 @@ typedef struct _ExprCast
 {
     Expr *expr;
     Type *type;
+    bool implicit;
+    CastResult cast_result;
 } ExprCast;
 
 
 typedef struct _ExprTernary
 {
-    Expr *expr;
-    Expr *true_expr; // May be null for elvis!
-    Expr *false_expr;
+    Expr *cond;
+    Expr *then_expr; // May be null for elvis!
+    Expr *else_expr;
 } ExprTernary;
 
 
@@ -170,4 +173,6 @@ typedef struct _Expr
 void expr_print(Expr *expr, unsigned current_indent);
 void expr_print_sub(const char *header, unsigned current_indent, Expr *expr);
 Expr *expr_new(ExprTypeId type, Token *span);
-Expr *expr_new_type_expr(Type *type);
+Expr *expr_copy(Expr *expr);
+Expr *expr_new_type_expr(Type *type, Token *span);
+void expr_replace(Expr *target, Expr *source);

@@ -23,7 +23,6 @@ bool update_decl(Type *type, bool used_public)
     bool is_external = scope_is_external_module(decl->module);
     if (!is_external && !decl->is_public)
     {
-        sema_error_at(&type->span, "'%.*s' is not a public type", SPLAT_TOK(decl->name));
         return false;
     }
     if (is_external) decl->is_used_public = true;
@@ -68,11 +67,11 @@ bool resolve_array_size(Type *type)
     return true;
 }
 
-static bool resolve_unresolved_type(Type *type, bool used_public)
+static bool resolve_unresolved_type(Type **type_ref, bool used_public)
 {
-    assert(type->type_id == TYPE_UNRESOLVED);
-    Decl* decl = NULL;
-    Expr *type_expr = type->unresolved.type_expr;
+    assert((*type_ref)->type_id == TYPE_UNRESOLVED);
+    Decl *decl = NULL;
+    Expr *type_expr = (*type_ref)->unresolved.type_expr;
     evaluate_constant(type_expr);
     Token module_name = { .length = 0 };
     Token name;
@@ -96,10 +95,10 @@ static bool resolve_unresolved_type(Type *type, bool used_public)
             name = type_expr->identifier_expr.identifier;
             break;
         case EXPR_TYPE:
-            if (resolve_type(type_expr->type_expr.type, used_public))
+            if (resolve_type(&type_expr->type_expr.type, used_public))
             {
                 // Copy!
-                *type = *type_expr->type_expr.type;
+                *type_ref = type_expr->type_expr.type;
                 return true;
             }
             return false;
@@ -120,14 +119,14 @@ static bool resolve_unresolved_type(Type *type, bool used_public)
     if (!decl)
     {
         // Error message already written
-        type->type_id = TYPE_INVALID;
+        (*type_ref)->type_id = TYPE_INVALID;
         return false;
     }
     if (decl->type_id == DECL_ALIAS_TYPE)
     {
-        if (!resolve_type(decl->alias_decl.type, used_public))
+        if (!resolve_type(&decl->alias_decl.type, used_public))
         {
-            type->type_id = TYPE_INVALID;
+            (*type_ref)->type_id = TYPE_INVALID;
             return false;
         }
         // FOR NOW JUST COPY
@@ -136,41 +135,46 @@ static bool resolve_unresolved_type(Type *type, bool used_public)
     if (!decl_is_type(decl))
     {
         sema_error_at(&type_expr->span, "No type with that name found");
-        type->type_id = TYPE_INVALID;
+        (*type_ref)->type_id = TYPE_INVALID;
     }
-    type->type_id = TYPE_DECLARED;
-    type->decl = decl;
-    return update_decl(type, used_public);
+    *type_ref = &decl->type;
+    if (!update_decl(*type_ref, used_public))
+    {
+        sema_error_at(&type_expr->span, "'%.*s' is not a public type", SPLAT_TOK(decl->name));
+        return false;
+    }
+    return true;
 }
 
-bool resolve_type(Type *type, bool used_public)
+bool resolve_type(Type **type, bool used_public)
 {
-    switch (type->type_id)
+    switch ((*type)->type_id)
     {
         case TYPE_UNRESOLVED:
             return resolve_unresolved_type(type, used_public);
         case TYPE_INVALID:
             return false;
         case TYPE_OPAQUE:
-            return resolve_type(type->opaque.base, used_public);
+            return resolve_type(&(*type)->opaque.base, used_public);
         case TYPE_VOID:
         case TYPE_CONST_FLOAT:
         case TYPE_CONST_INT:
         case TYPE_NIL:
+        case TYPE_IMPORT:
+        case TYPE_BUILTIN:
+        case TYPE_STRING:
             return true;
         case TYPE_POINTER:
-            return resolve_type(type->pointer.base, used_public);
+            return resolve_type(&(*type)->pointer.base, used_public);
         case TYPE_ARRAY:
-            return resolve_type(type->array.base, used_public) && resolve_array_size(type);
+            return resolve_type(&(*type)->array.base, used_public) && resolve_array_size(*type);
         case TYPE_TYPEVAL:
-            return resolve_type(type->type_of_type, used_public);
-        case TYPE_IMPORT:
-            return true;
+            return resolve_type(&(*type)->type_of_type, used_public);
         case TYPE_DECLARED:
-            return update_decl(type, used_public);
-        case TYPE_BUILTIN:
-            return true;
-        case TYPE_STRING:
+            if (!update_decl(*type, used_public))
+            {
+                FATAL_ERROR("Should not fail!");
+            }
             return true;
     }
     UNREACHABLE;
@@ -178,13 +182,13 @@ bool resolve_type(Type *type, bool used_public)
 
 static inline bool analyse_enum_type(Decl *decl)
 {
-    if (!resolve_type(decl->enum_decl.type, decl->is_public)) return false;
+    if (!resolve_type(&decl->enum_decl.type, decl->is_public)) return false;
 
     Type *type = decl->enum_decl.type;
 
     if (!type_is_int(type))
     {
-        sema_error_at(&type->span, "Expected an integer type");
+        sema_error_at(&decl->span, "Expected an integer type");
         return false;
     }
 
@@ -332,17 +336,17 @@ static bool analyse_struct_names(Decl *decl, Table *names)
 bool analyse_func_decl(Decl *decl, bool is_public)
 {
     assert(decl->type_id == DECL_FUNC);
-    bool success = resolve_type(decl->func_decl.rtype, is_public);
+    bool success = resolve_type(&decl->func_decl.rtype, is_public);
     if (decl->func_decl.rtype->type_id == TYPE_OPAQUE && is_public)
     {
-        sema_error_at(&decl->func_decl.rtype->span, "Opaque type returned for public function");
+        sema_error_at(&decl->span, "Opaque type returned for public function");
         success = false;
     }
     for (unsigned i = 0; i < decl->func_decl.args->size; i++)
     {
         Decl *param_decl = decl->func_decl.args->entries[i];
         assert(param_decl->type_id == DECL_VAR && param_decl->var.kind == VARDECL_PARAM);
-        success = resolve_type(param_decl->var.type, is_public) && success;
+        success = resolve_type(&param_decl->var.type, is_public) && success;
         if (param_decl->var.type->type_id == TYPE_INVALID) continue;
     }
     return success;
@@ -381,7 +385,7 @@ static inline bool analyse_type_decl(Decl *decl)
             // Always resolved.
             return true;
         case DECL_ALIAS_TYPE:
-            return resolve_type(decl->alias_decl.type, decl->is_public);
+            return resolve_type(&decl->alias_decl.type, decl->is_public);
         case DECL_STRUCT_TYPE:
             return analyse_struct_type(decl);
         case DECL_ENUM_TYPE:

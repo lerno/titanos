@@ -15,4 +15,4 @@ typedef enum
 
 bool analyse_expr(Expr *expr, Side side);
 bool analyse_init_expr(Decl *decl);
-bool cast_to_type(Expr *expression, Type *type);
+bool insert_implicit_cast_if_needed(Expr *expr, Type *type);

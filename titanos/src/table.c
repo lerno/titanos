@@ -74,6 +74,7 @@ void *table_set(Table *table, const char *key, uint32_t len, void *value)
         for (uint32_t i = 0; i < new_capacity; i++)
         {
             new_data[i].key = NULL;
+            new_data[i].key_len = 0;
             new_data[i].value = NULL;
         }
         table->count = 0;
@@ -122,5 +123,6 @@ void *table_delete(Table *table, const char *key, uint32_t len)
     void *value = entry->value;
     entry->key = NULL;
     entry->value = TOMBSTONE;
+    entry->key_len = 0;
     return value;
 }

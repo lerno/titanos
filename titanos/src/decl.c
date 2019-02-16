@@ -18,7 +18,6 @@ void decl_init(Decl *decl, DeclType decl_type, Token *span, Token *name, bool pu
     decl->span = *span;
     decl->is_public = public;
     decl->type.decl = decl;
-    decl->type.span = *span;
     decl->type.type_id = TYPE_DECLARED;
 }
 Decl *decl_new(DeclType decl_type, Token *span, Token *name, bool public)

@@ -306,7 +306,6 @@ void scope_exit(Ast *stmt)
                 sema_warn_at(DIAG_UNUSED_VARIABLE, &decl->span, "Unused variable");
             }
         }
-        // IMPROVE this assumes shadowing is disallowed.
         table_delete_token(&active_scope->symbol_cache, &decl->name);
     }
 

@@ -67,4 +67,5 @@ Type *value_find_type(const Value *value);
 void value_print(Value value);
 
 bool value_convert_to_type(Value *value1, Value *value2);
+bool value_convert(Value *value, ValueType type, uint16_t bits, bool is_unsigned, bool allow_trunc);
 

@@ -65,9 +65,29 @@ typedef enum _BuiltinKind {
     BUILTIN_BOOL,
 } BuiltinKind;
 
+typedef enum _CastResult
+{
+    CAST_INLINE,
+    CAST_FAILED,
+    CAST_PTRPTR,
+    CAST_INTPTR,
+    CAST_PTRINT,
+    CAST_FPFP,
+    CAST_FPUI,
+    CAST_FPSI,
+    CAST_UIFP,
+    CAST_UIUI,
+    CAST_UISI,
+    CAST_SIFP,
+    CAST_SISI,
+    CAST_SIUI
+} CastResult;
+
+extern const CastResult builtin_casts[4][4];
+
 typedef struct _TypeBuiltin
 {
-    BuiltinKind builtin_kind : 16;
+    BuiltinKind builtin_id : 16;
     uint16_t bits;
 } TypeBuiltin;
 
@@ -93,8 +113,6 @@ typedef struct _Type
     bool is_const : 1;
     bool is_volatile : 1;
     bool is_aliased : 1;
-    Token name;
-    Token span;
     LLVMTypeRef llvm_type;
     struct _Module *module;
     union
@@ -110,9 +128,8 @@ typedef struct _Type
 } Type;
 
 Type *new_unresolved_type(Expr *expr, bool public);
-Type *new_type(TypeId type_id, bool public, Token *initial_token);
-Type *end_type(Type *ast, Token *end);
-void print_type(Type *type, unsigned int current_indent);
+Type *new_type(TypeId type_id, bool public);
+
 void type_print_sub(const char *header, unsigned int current_indent, Type *type);
 Type *void_type();
 Type *type_nil();
@@ -120,9 +137,10 @@ Type *type_string();
 Type *type_invalid();
 Type *type_compint();
 Type *type_compfloat();
+Type *type_to_type(Type *type);
 bool type_is_int(Type *type);
 bool type_is_signed(Type *type);
 uint64_t type_size(Type *type);
 bool type_is_same(Type *type1, Type *type2);
-Type *type_implicit_convert(Expr *location, Type *type1, Type *type2);
-
+char *type_to_string(Type *type);
+Type *type_unfold_opaque(Type *type);

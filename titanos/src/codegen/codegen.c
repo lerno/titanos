@@ -22,10 +22,13 @@ static LLVMTypeRef llvm_type(Type *type);
 static LLVMTypeRef codegen_convert_type(Type *type);
 static LLVMTypeRef codegen_convert_decl(Decl *decl);
 static LLVMValueRef codegen_expr(Expr *expr);
+static void codegen_block(Ast *block);
 
 __thread static Decl *active_func = NULL;
 __thread static LLVMContextRef active_context = NULL;
 __thread static LLVMBuilderRef active_builder = NULL;
+__thread static LLVMBasicBlockRef active_break = NULL;
+__thread static LLVMBasicBlockRef active_continue = NULL;
 
 static LLVMTypeRef codegen_convert_func_decl(Decl *decl)
 {
@@ -51,6 +54,20 @@ static LLVMTypeRef codegen_convert_struct_decl(Decl *decl)
     }
     // TODO handle align
     return decl->type.llvm_type = LLVMStructType(members, struct_decl->members->size, false);
+}
+
+LLVMBasicBlockRef codegen_insert_block(char *name)
+{
+    LLVMBasicBlockRef nextblock = LLVMGetNextBasicBlock(LLVMGetInsertBlock(active_builder));
+    if (nextblock)
+    {
+        return LLVMInsertBasicBlockInContext(active_context, nextblock, name);
+    }
+    else
+    {
+        return LLVMAppendBasicBlockInContext(active_context, active_func->func_decl.llvm_function_proto, name);
+    }
+
 }
 
 static LLVMTypeRef codegen_convert_decl(Decl *decl)
@@ -140,14 +157,14 @@ LLVMValueRef codegen_const_expr(Expr *expr)
         case TYPE_CONST_INT:
             // TODO this is just for test.
             return LLVMConstInt(type_builtin_i32()->llvm_type, bigint_as_unsigned(&expr->const_expr.value.big_int), false);
-        case TYPE_NIL:break;
         case TYPE_OPAQUE:break;
-        case TYPE_IMPORT:break;
+        case TYPE_IMPORT:
+            break;
         case TYPE_UNRESOLVED:break;
         case TYPE_TYPEVAL:break;
         case TYPE_STRING:break;
         case TYPE_BUILTIN:
-            switch (expr->type->builtin.builtin_kind)
+            switch (expr->type->builtin.builtin_id)
             {
                 case BUILTIN_UNSIGNED_INT:
                     return LLVMConstInt(expr->type->llvm_type, bigint_as_unsigned(&expr->const_expr.value.big_int), false);
@@ -160,6 +177,7 @@ LLVMValueRef codegen_const_expr(Expr *expr)
                     return LLVMConstInt(expr->type->llvm_type, expr->const_expr.value.b ? 1 : 0, false);
             }
             UNREACHABLE;
+        case TYPE_NIL:break;
     }
     return NULL;
 }
@@ -337,12 +355,12 @@ LLVMValueRef perform_expr(LLVMValueRef left, LLVMValueRef right, token_type toke
 
 static inline bool is_float(Expr *expr)
 {
-    return expr->type->type_id == TYPE_BUILTIN && expr->type->builtin.builtin_kind == BUILTIN_FLOAT;
+    return expr->type->type_id == TYPE_BUILTIN && expr->type->builtin.builtin_id == BUILTIN_FLOAT;
 }
 
 static inline bool is_signed(Expr *expr)
 {
-    return expr->type->type_id == TYPE_BUILTIN && expr->type->builtin.builtin_kind == BUILTIN_SIGNED_INT;
+    return expr->type->type_id == TYPE_BUILTIN && expr->type->builtin.builtin_id == BUILTIN_SIGNED_INT;
 }
 
 LLVMValueRef codegen_binary_expr(Expr *expr)
@@ -371,6 +389,101 @@ LLVMValueRef codegen_post_expr(Expr *expr)
     return perform_expr(NULL, codegen_expr(expr->post_expr.expr), expr->post_expr.operator, use_float, use_signed);
 }
 
+LLVMValueRef codegen_cast(Expr *expr)
+{
+    assert(expr->expr_id == EXPR_CAST);
+    LLVMTypeRef type = llvm_type(expr->cast_expr.type);
+    LLVMValueRef value = codegen_expr(expr->cast_expr.expr);
+
+    Type *target_type = type_unfold_opaque(expr->cast_expr.type);
+    Type *source_type = type_unfold_opaque(expr->cast_expr.expr->type);
+    switch (expr->cast_expr.cast_result)
+    {
+        case CAST_INLINE:
+        case CAST_FAILED:
+            UNREACHABLE
+        case CAST_PTRPTR:
+            return LLVMBuildPointerCast(active_builder, value, type, "");
+        case CAST_INTPTR:
+            return LLVMBuildIntToPtr(active_builder, value, type, "");
+        case CAST_PTRINT:
+            return LLVMBuildPtrToInt(active_builder, value, type, "");
+        case CAST_FPFP:
+            if (target_type->builtin.bits > source_type->builtin.bits)
+            {
+                return LLVMBuildFPExt(active_builder, value, type, "");
+            }
+            if (target_type->builtin.bits < source_type->builtin.bits)
+            {
+                return LLVMBuildFPTrunc(active_builder, value, type, "");
+            }
+            assert(false && "FP cast to same type");
+            return value;
+        case CAST_FPUI:
+            return LLVMBuildFPToUI(active_builder, value, type, "");
+        case CAST_FPSI:
+            return LLVMBuildFPToUI(active_builder, value, type, "");
+        case CAST_UIFP:
+            return LLVMBuildUIToFP(active_builder, value, type, "");
+        case CAST_UIUI:
+            if (target_type->builtin.bits > source_type->builtin.bits)
+            {
+                return LLVMBuildZExt(active_builder, value, type, "");
+            }
+            if (target_type->builtin.bits < source_type->builtin.bits)
+            {
+                return LLVMBuildTrunc(active_builder, value, type, "");
+            }
+            assert(false && "UI cast to same type");
+            return value;
+        case CAST_UISI:
+            if (target_type->builtin.bits > source_type->builtin.bits)
+            {
+                return LLVMBuildZExt(active_builder, value, type, "");
+            }
+            if (target_type->builtin.bits < source_type->builtin.bits)
+            {
+                return LLVMBuildTrunc(active_builder, value, type, "");
+            }
+            // If same bit size, this is a noop, since LLVM ignores sign.
+            return value;
+        case CAST_SIFP:
+            return LLVMBuildSIToFP(active_builder, value, type, "");
+        case CAST_SISI:
+            if (target_type->builtin.bits > source_type->builtin.bits)
+            {
+                return LLVMBuildSExt(active_builder, value, type, "");
+            }
+            if (target_type->builtin.bits < source_type->builtin.bits)
+            {
+                return LLVMBuildTrunc(active_builder, value, type, "");
+            }
+            assert(false && "SI cast to same type");
+            return value;
+        case CAST_SIUI:
+            if (target_type->builtin.bits > source_type->builtin.bits)
+            {
+                return LLVMBuildSExt(active_builder, value, type, "");
+            }
+            if (target_type->builtin.bits > source_type->builtin.bits)
+            {
+                return LLVMBuildTrunc(active_builder, value, type, "");
+            }
+            // If same bit size, this is a noop, since LLVM ignores sign.
+            return value;
+    }
+    UNREACHABLE
+}
+
+static inline LLVMValueRef codegen_ternary_expr(Expr *expr)
+{
+    assert(expr->expr_id == EXPR_TERNARY);
+    LLVMValueRef select = codegen_expr(expr->ternary_expr.cond);
+    LLVMValueRef true_res = codegen_expr(expr->ternary_expr.then_expr);
+    LLVMValueRef false_res = codegen_expr(expr->ternary_expr.else_expr);
+    return LLVMBuildSelect(active_builder, select, true_res, false_res, "");
+}
+
 static LLVMValueRef codegen_expr(Expr *expr)
 {
     switch (expr->expr_id)
@@ -381,7 +494,8 @@ static LLVMValueRef codegen_expr(Expr *expr)
             FATAL_ERROR("Type should never leak to codegen");
         case EXPR_BINARY:
             return codegen_binary_expr(expr);
-        case EXPR_TERNARY:break;
+        case EXPR_TERNARY:
+            return codegen_ternary_expr(expr);
         case EXPR_UNARY:
             return codegen_unary_expr(expr);
         case EXPR_POST:
@@ -389,16 +503,17 @@ static LLVMValueRef codegen_expr(Expr *expr)
         case EXPR_IDENTIFIER:
             assert(expr->identifier_expr.resolved->var.llvm_ref);
             return expr->identifier_expr.resolved->var.llvm_ref;
-        case EXPR_CALL:break;
         case EXPR_SIZEOF:
             FATAL_ERROR("Sizeof should always be const evaluated");
-        case EXPR_CAST:break;
+        case EXPR_CAST:
+            return codegen_cast(expr);
+        case EXPR_CALL:break;
         case EXPR_SUBSCRIPT:break;
         case EXPR_ACCESS:break;
         case EXPR_STRUCT_INIT_VALUES:break;
         case EXPR_DESIGNATED_INITIALIZER:break;
     }
-    printf("Not implemented expr");
+    printf("Not implemented expr\n");
     return NULL;
 }
 
@@ -419,7 +534,31 @@ LLVMValueRef codegen_declare(Decl *decl)
     }
     return val;
 }
-void codegen_block(Ast *block)
+
+static inline void codegen_while(Ast *stmt)
+{
+    // Store break and continue statements
+    LLVMBasicBlockRef prev_break = active_break;
+    LLVMBasicBlockRef prev_continue = active_continue;
+
+    LLVMBasicBlockRef while_end = active_break = codegen_insert_block("whileend");
+    LLVMBasicBlockRef while_block = codegen_insert_block("whileblock");
+    LLVMBasicBlockRef while_start = active_continue = codegen_insert_block("whilebegin");
+
+    LLVMBuildBr(active_builder, while_start);
+    LLVMPositionBuilderAtEnd(active_builder, while_start);
+    LLVMBuildCondBr(active_builder, codegen_expr(stmt->while_stmt.expr), while_block, while_end);
+
+    codegen_block(stmt->while_stmt.body);
+
+    LLVMBuildBr(active_builder, while_start);
+    LLVMPositionBuilderAtEnd(active_builder, while_end);
+
+    active_break = prev_break;
+    active_continue = prev_continue;
+}
+
+static void codegen_block(Ast *block)
 {
     LOG_FUNC
 
@@ -440,8 +579,12 @@ void codegen_block(Ast *block)
                 UNREACHABLE
                 break;
             case AST_COMPOUND_STMT:
-            case AST_IF_STMT:
+                codegen_block(stmt);
+                break;
             case AST_WHILE_STMT:
+                codegen_while(stmt);
+                break;
+            case AST_IF_STMT:
             case AST_DO_STMT:
             case AST_DEFER_STMT:
             case AST_SWITCH_STMT:
@@ -478,7 +621,6 @@ void codegen_function(LLVMModuleRef llvm_module, Parser *parser, Decl *function)
 
     active_builder = LLVMCreateBuilder();
     LLVMPositionBuilderAtEnd(active_builder, entry);
-
 
     // Generate LLVMValueRef's for all parameters, so we can use them as local vars in code
     uint32_t cnt;

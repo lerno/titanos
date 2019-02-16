@@ -10,9 +10,16 @@
 #include "decl.h"
 #include "diagnostics.h"
 
-Expr *expr_new_type_expr(Type *type)
+Expr *expr_copy(Expr *expr)
 {
-    Expr *expr = expr_new(EXPR_TYPE, &type->span);
+    Expr *expr_copy = malloc_arena(sizeof(Expr));
+    memcpy(expr_copy, expr, sizeof(Expr));
+    return expr_copy;
+}
+
+Expr *expr_new_type_expr(Type *type, Token *span)
+{
+    Expr *expr = expr_new(EXPR_TYPE, span);
     expr->type_expr.type = type;
     return expr;
 }
@@ -91,9 +98,9 @@ void expr_print(Expr *expr, unsigned current_indent)
             return;
         case EXPR_TERNARY:
             printf("EXPR_TERNARY\n");
-            expr_print_sub("Expr", current_indent, expr->ternary_expr.expr);
-            expr_print_sub("True", current_indent, expr->ternary_expr.true_expr);
-            expr_print_sub("False", current_indent, expr->ternary_expr.false_expr);
+            expr_print_sub("Expr", current_indent, expr->ternary_expr.cond);
+            expr_print_sub("True", current_indent, expr->ternary_expr.then_expr);
+            expr_print_sub("False", current_indent, expr->ternary_expr.else_expr);
             return;
         case EXPR_ACCESS:
             printf("EXPR_ACCESS\n");
@@ -101,8 +108,11 @@ void expr_print(Expr *expr, unsigned current_indent)
             expr_print_sub("Sub Element", current_indent, expr->access_expr.sub_element);
             return;
         case EXPR_TYPE:
-            printf("EXPR_TYPE\n");
-            print_type(expr->type_expr.type, current_indent);
+        {
+            char *type_name = type_to_string(expr->type_expr.type);
+            printf("EXPR_TYPE %s\n", type_name);
+            free(type_name);
+        }
             return;
         case EXPR_STRUCT_INIT_VALUES:
             printf("EXPR_STRUCT_INIT_VALUES\n");
@@ -132,5 +142,12 @@ void expr_print_sub(const char *header, unsigned current_indent, Expr *expr)
     indent(current_indent);
     printf("%s:\n", header);
     expr_print(expr, current_indent + 1);
+}
+
+void expr_replace(Expr *target, Expr *source)
+{
+    Token original_span = target->span;
+    *target = *source;
+    target->span = original_span;
 }
 

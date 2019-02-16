@@ -41,12 +41,16 @@ type kex struct
 
 public func i32 main() @(foo = 1 + 2) {
     i8[10 + 1] buffer2;
-    i32 a = 21 +21;
+    i32 a = 21 + cast(21, i32);
     i32 b = 10;
-    const u8* name = "bas";
-    a = 10;
-    a = b + b;
-
+    i64 c = 38;
+//    const u8* name = "bas";
+    a = c ? 1 : 2;
+while (1)
+{
+ i32 x = 0;
+}
+a = 2;
  //   const i32 A2 = 20;
     //volatile i32* b2 = 0x2000;
     return 0;

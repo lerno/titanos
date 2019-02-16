@@ -168,6 +168,25 @@ Value value_to_bool(Value value)
     return ERROR_VALUE;
 }
 
+Value value_float(Value value)
+{
+    switch (value.type)
+    {
+        case VALUE_TYPE_FLOAT:
+            return value_new_bool(value.f != 0.0);
+        case VALUE_TYPE_INT:
+            return value_new_bool(bigint_cmp_zero(&value.big_int) != INT_EQ);
+        case VALUE_TYPE_BOOL:
+            return value;
+        case VALUE_TYPE_NIL:
+            return value_new_bool(false);
+        case VALUE_TYPE_STRING:
+        case VALUE_TYPE_ERROR:
+            break;
+    }
+    return ERROR_VALUE;
+}
+
 const char *value_type_name(const Value *value)
 {
     switch (value->type)
@@ -427,4 +446,172 @@ bool value_convert_to_type(Value *value1, Value *value2)
         reverse_order = value2->type < value1->type;
     }
     return reverse_order ? value_convert_to_type_ordered(value2, value1) : value_convert_to_type_ordered(value1, value2);
+}
+
+static inline bool set_bits_and_truncate_int_value_if_needed(Value *value, uint16_t bits, bool allow_trunc)
+{
+    value->int_bits = bits;
+
+    // No truncation
+    if (bits == 0) return true;
+
+    // If it fits then we're fine.
+    if (bigint_fits_in_bits(&value->big_int, bits, !value->is_unsigned))
+    {
+        return true;
+    }
+
+    // If we can truncate, do so.
+    if (allow_trunc)
+    {
+        BigInt temp;
+        bigint_truncate(&temp, &value->big_int, bits, !value->is_unsigned);
+        value->big_int = temp;
+        return true;
+    }
+
+    // Otherwise fail.
+    return false;
+}
+
+bool value_int_change_sign(Value *value, bool is_unsigned, bool allow_trunc)
+{
+    if (value->is_unsigned == is_unsigned) return true;
+    if (value->is_unsigned)
+    {
+        value->is_unsigned = false;
+
+        // No bit limit? Goodie
+        if (!value->int_bits) return true;
+
+        // If it fits, then we're golden.
+        if (bigint_fits_in_bits(&value->big_int, value->int_bits, true)) return true;
+
+        // If not and we're not allowed conversion? Exit:
+        if (!allow_trunc) return false;
+
+        BigInt temp;
+        bigint_truncate(&temp, &value->big_int, value->int_bits, true);
+        value->big_int = temp;
+        // TODO verify that this actually works!
+        return true;
+    }
+    else
+    {
+        // Signed to unsigned
+        value->is_unsigned = true;
+
+        // No bit limit? Goodie
+        if (!value->int_bits) return true;
+
+        // If the value was positive we're golden
+        if (!value->big_int.is_negative) return true;
+
+        // If not and we're not allowed conversion? Exit:
+        if (!allow_trunc) return false;
+
+        BigInt temp;
+        bigint_truncate(&temp, &value->big_int, value->int_bits, false);
+        value->big_int = temp;
+        // TODO verify that this actually works!
+        return true;
+    }
+}
+
+bool value_convert(Value *value, ValueType type, uint16_t bits, bool is_unsigned, bool allow_trunc)
+{
+    switch (type)
+    {
+        case VALUE_TYPE_FLOAT:
+            switch (value->type)
+            {
+                case VALUE_TYPE_FLOAT:
+                    // TODO actual truncation
+                    value->float_bits = bits;
+                    break;
+                case VALUE_TYPE_INT:
+                    value->f = bigint_as_float(&value->big_int);
+                    break;
+                case VALUE_TYPE_BOOL:
+                    value->f = value->b ? 1.0 : 0.0;
+                    break;
+                case VALUE_TYPE_NIL:
+                    value->f = 0.0;
+                    break;
+                case VALUE_TYPE_STRING:
+                    return false;
+                case VALUE_TYPE_ERROR:
+                    return false;
+            }
+            value->float_bits = bits;
+            value->type = VALUE_TYPE_FLOAT;
+            return true;
+        case VALUE_TYPE_INT:
+            switch (value->type)
+            {
+                case VALUE_TYPE_FLOAT:
+                    if (value->f < 0 && is_unsigned)
+                    {
+                        if (!allow_trunc) return false;
+                        // First convert to signed, then convert to unsigned.
+                        bool success = value_convert(value, type, bits, false, true);
+                        assert(success && "Unexpected failure");
+                        return value_convert(value, type, bits, true, true);
+                    }
+                    // TODO actual expansion
+                    bigint_init_signed(&value->big_int, (int64_t)value->f);
+                    value->is_unsigned = is_unsigned;
+                    value->type = VALUE_TYPE_INT;
+                    return set_bits_and_truncate_int_value_if_needed(value, bits, allow_trunc);
+                case VALUE_TYPE_INT:
+                    if (!value_int_change_sign(value, is_unsigned, allow_trunc)) return false;
+                    return set_bits_and_truncate_int_value_if_needed(value, bits, allow_trunc);
+                case VALUE_TYPE_BOOL:
+                    value->type = VALUE_TYPE_INT;
+                    value->int_bits = bits;
+                    value->is_unsigned = is_unsigned;
+                    bigint_init_unsigned(&value->big_int, value->b ? 1 : 0);
+                    return true;
+                case VALUE_TYPE_NIL:
+                    value->type = VALUE_TYPE_INT;
+                    value->int_bits = bits;
+                    value->is_unsigned = is_unsigned;
+                    bigint_init_unsigned(&value->big_int, 0);
+                    return true;
+                case VALUE_TYPE_STRING:
+                    return false;
+                case VALUE_TYPE_ERROR:
+                    return false;
+            }
+            UNREACHABLE
+        case VALUE_TYPE_BOOL:
+            switch (value->type)
+            {
+                case VALUE_TYPE_FLOAT:
+                    if (!allow_trunc) return false;
+                    value->b = value->f != 0.0;
+                    break;
+                case VALUE_TYPE_INT:
+                    value->b = value->big_int.digit_count != 0;
+                    break;
+                case VALUE_TYPE_BOOL:
+                    return true;
+                case VALUE_TYPE_NIL:
+                    value->b = false;
+                    break;
+                case VALUE_TYPE_STRING:
+                    return false;
+                case VALUE_TYPE_ERROR:
+                    return false;
+            }
+            value->type = VALUE_TYPE_BOOL;
+            return true;
+        case VALUE_TYPE_NIL:
+            return value->type == VALUE_TYPE_NIL;
+        case VALUE_TYPE_STRING:
+            return value->type == VALUE_TYPE_STRING;
+        case VALUE_TYPE_ERROR:
+            return false;
+    }
+    UNREACHABLE
 }

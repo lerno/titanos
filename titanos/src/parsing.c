@@ -489,7 +489,7 @@ static void add_type_specifier(Type *type, TypeQualifier type_specifier)
 
 static Type *create_pointer_type(Type *base)
 {
-	Type *pointer = new_type(TYPE_POINTER, base->is_public, &base->span);
+	Type *pointer = new_type(TYPE_POINTER, base->is_public);
 	pointer->pointer.base = base;
 	return pointer;
 }
@@ -504,18 +504,18 @@ Type *parse_array_type(Type *base)
 {
 	assert(base && "Cannot have null expression");
 	advance_and_verify(TOKEN_LBRACKET);
-	Type *type = new_type(TYPE_ARRAY, base->is_public, &base->span);
+	Type *type = new_type(TYPE_ARRAY, base->is_public);
 	type->array.base = base;
 	if (try_consume(TOKEN_RBRACKET))
 	{
 		type->array.is_empty = true;
-		UPDATE_AND_RETURN(type);
+		return type;
 	}
 	Expr *expression = parse_expression();
 	if (!expression) return NULL;
 	if (!consume(TOKEN_RBRACKET, "Missing ']'")) return NULL;
 	type->array.len_expr = expression;
-	UPDATE_AND_RETURN(type);
+	return type;
 }
 
 /**
@@ -1767,10 +1767,9 @@ static Expr *parse_binary(Expr *left_side)
 	// There is a possibility that we actually have a type here.
 	if (operator_type == TOKEN_STAR && is_type_expr_after_star(left_side))
 	{
-		Type *type = new_type(TYPE_POINTER, false, &left_side->span);
+		Type *type = new_type(TYPE_POINTER, false);
 		type->pointer.base = new_unresolved_type(left_side, false);
-		UPDATE(type);
-		Expr *expr = expr_new_type_expr(type);
+		Expr *expr = expr_new_type_expr(type, &left_side->span);
 		UPDATE_AND_RETURN(expr);
 	}
 	ParseRule *rule = get_rule(operator_type);
@@ -1790,18 +1789,18 @@ static Expr *parse_ternary(Expr *left_side)
 {
 
 	Expr *expr_ternary = expr_new(EXPR_TERNARY, &left_side->span);
-	expr_ternary->ternary_expr.expr = left_side;
+	expr_ternary->ternary_expr.cond = left_side;
 
 	// Check for elvis
 	if (tok.type == TOKEN_COLON)
 	{
-		expr_ternary->ternary_expr.true_expr = NULL;
+		expr_ternary->ternary_expr.then_expr = NULL;
 	}
 	else
 	{
 		Expr *true_expr = parse_precedence(PREC_TERNARY + 1);
 		if (!true_expr) return NULL;
-		expr_ternary->ternary_expr.true_expr = true_expr;
+		expr_ternary->ternary_expr.then_expr = true_expr;
 	}
 
 	if (!consume(TOKEN_COLON, "Expected ':'")) return NULL;
@@ -1810,7 +1809,7 @@ static Expr *parse_ternary(Expr *left_side)
 
 	if (!false_expr) return NULL;
 
-	expr_ternary->ternary_expr.false_expr = false_expr;
+	expr_ternary->ternary_expr.else_expr = false_expr;
 	UPDATE_AND_RETURN(expr_ternary);
 }
 
@@ -1940,13 +1939,12 @@ static Expr *parse_subscript(Expr *left)
 	// Check for possible array type, if so then this is a type expression.
 	if (try_consume(TOKEN_RBRACKET))
 	{
-		Type *type = new_type(TYPE_ARRAY, false, &left->span);
+		Type *type = new_type(TYPE_ARRAY, false);
 		type->array.base = new_unresolved_type(left, false);
 		type->array.is_empty = true;
 		type->array.is_len_resolved = true;
-        UPDATE(type);
-		Expr *expr = expr_new_type_expr(type);
-		UPDATE_AND_RETURN(expr);
+        Expr *expr = expr_new_type_expr(type, &left->span);
+        UPDATE_AND_RETURN(expr);
 	}
 	Expr *index = parse_expression();
 	consume(TOKEN_RBRACKET, "Expected ]");

@@ -6,33 +6,307 @@
 #include "constant_folding.h"
 #include "error.h"
 #include "type_analysis.h"
+#include "diagnostics.h"
+#include "builtins.h"
 
-bool cast_to_type(Expr *expression, Type *type)
+static bool analyse_cast_expr(Expr *expr);
+
+static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool implicit);
+
+
+static inline bool is_castable(Type *type)
 {
-    assert(expression->type);
-    if (expression->type->type_id == TYPE_CONST_INT && type_is_int(type))
+    switch (type->type_id)
     {
-        // Quick test
-        expression->type = type;
-        return true;
+        case TYPE_INVALID:
+            return false;
+        case TYPE_UNRESOLVED:
+        case TYPE_IMPORT:
+            UNREACHABLE;
+        case TYPE_CONST_FLOAT:
+        case TYPE_CONST_INT:
+        case TYPE_VOID:
+        case TYPE_NIL:
+        case TYPE_STRING:
+        case TYPE_OPAQUE:
+        case TYPE_POINTER:
+        case TYPE_ARRAY:
+        case TYPE_DECLARED:
+        case TYPE_TYPEVAL:
+        case TYPE_BUILTIN:
+            return true;
     }
-    // TODO
-    return false;
+}
+
+/**
+ * Try to perform compile time cast on expression, if it fails, insert a cast.
+ *
+ * @param expr the expression to cast
+ * @param type the type to cast to
+ * @param implicit if the conversion is implicit or forced
+ * @return false if an error was encountered
+ */
+bool insert_cast_if_needed(Expr *expr, Type *type, bool implicit)
+{
+    assert(expr->type);
+    assert(type);
+    if (expr->type == type) return true;
+    CastResult result = perform_compile_time_cast(expr, type, implicit);
+    switch (result)
+    {
+        case CAST_INLINE:
+            return true;
+        case CAST_FAILED:
+            return false;
+        default:
+            break;
+    }
+    Expr *copy = expr_copy(expr);
+    expr->expr_id = EXPR_CAST;
+    expr->type = type;
+    expr->cast_expr.type = type;
+    expr->cast_expr.expr = copy;
+    expr->cast_expr.cast_result = result;
+    return true;
+}
+
+bool insert_implicit_cast_if_needed(Expr *expr, Type *type)
+{
+    return insert_cast_if_needed(expr, type, true);
 }
 
 bool analyse_init_expr(Decl *decl)
 {
-    evaluate_constant(decl->var.init_expr);
-    return cast_to_type(decl->var.init_expr, decl->var.type);
+    if (!analyse_expr(decl->var.init_expr, RHS)) return false;
+    if (!insert_implicit_cast_if_needed(decl->var.init_expr, decl->var.type))
+    {
+        char *type_name = type_to_string(decl->var.type);
+        sema_error_at(&decl->span, "Cannot implictly cast expression to '%s'", type_name);
+        return false;
+    }
+    return true;
 }
 
-Type *try_cast(Expr *a, Expr *b)
+
+typedef Value (*BinOp)(Value, Value);
+
+Type *try_upcasting_for_pointer_arithmetics(Expr *left, Expr *right)
 {
+    Type *left_type = left->type;
+    Type *right_type = right->type;
 
-    DEBUG_LOG("Attempting to cast %.*s & %.*s ", SPLAT_TOK(a->span), SPLAT_TOK(b->span));
-    return a->type;
+    if (left_type->type_id == TYPE_NIL && right_type->type_id == TYPE_NIL) return NULL;
+    if (left_type->type_id != TYPE_POINTER && right_type->type_id != TYPE_POINTER) return NULL;
+
+    if (left_type->type_id == TYPE_POINTER && right_type->type_id == TYPE_POINTER)
+    {
+        return type_is_same(left_type->pointer.base, right_type->pointer.base) ? left_type : NULL;
+    }
+
+    Expr *non_pointer_expr = left_type->type_id == TYPE_POINTER ? right : left;
+    Expr *pointer_expr = left_type->type_id == TYPE_POINTER ? left : right;
+    Type *non_pointer_type = non_pointer_expr->type;
+
+    if (non_pointer_type->type_id == TYPE_NIL) return pointer_expr->type;
+
+    if (non_pointer_type->type_id != TYPE_BUILTIN) return NULL;
+
+    switch (non_pointer_type->builtin.builtin_id)
+    {
+        case BUILTIN_FLOAT:
+            return NULL;
+        case BUILTIN_SIGNED_INT:
+        case BUILTIN_UNSIGNED_INT:
+            return pointer_expr->type;
+        case BUILTIN_BOOL:
+            return insert_implicit_cast_if_needed(non_pointer_expr, type_builtin_u8()) ? pointer_expr->type : NULL;
+    }
 }
 
+bool try_upcasting_binary_for_pointer_arithmetics(Expr *binary_expr)
+{
+    Type *type = try_upcasting_for_pointer_arithmetics(binary_expr->binary_expr.left, binary_expr->binary_expr.right);
+    if (type)
+    {
+        binary_expr->type = type;
+        return true;
+    }
+    return false;
+}
+
+bool is_arithmetics_type(Type *type)
+{
+    switch (type->type_id)
+    {
+        case TYPE_INVALID:
+        case TYPE_UNRESOLVED:
+        case TYPE_IMPORT:
+        case TYPE_VOID:
+        case TYPE_STRING:
+        case TYPE_OPAQUE:
+        case TYPE_POINTER:
+        case TYPE_ARRAY:
+        case TYPE_DECLARED:
+        case TYPE_TYPEVAL:
+            return false;
+        case TYPE_NIL:
+        case TYPE_CONST_FLOAT:
+        case TYPE_CONST_INT:
+        case TYPE_BUILTIN:
+            return true;
+    }
+}
+
+bool is_real_arithmetics_type(Type *type)
+{
+    switch (type->type_id)
+    {
+        case TYPE_INVALID:
+        case TYPE_UNRESOLVED:
+        case TYPE_IMPORT:
+        case TYPE_VOID:
+        case TYPE_STRING:
+        case TYPE_OPAQUE:
+        case TYPE_POINTER:
+        case TYPE_ARRAY:
+        case TYPE_DECLARED:
+        case TYPE_TYPEVAL:
+            return false;
+        case TYPE_BUILTIN:
+            return type->builtin.builtin_id != BUILTIN_BOOL;
+        case TYPE_NIL:
+            return false;
+        case TYPE_CONST_FLOAT:
+        case TYPE_CONST_INT:
+            return true;
+    }
+}
+
+static inline Type *try_upcasting_for_arithmetics(Expr *left, Expr *right)
+{
+    Type *left_type = left->type;
+    Type *right_type = right->type;
+
+    if (!is_arithmetics_type(left_type) || !is_arithmetics_type(right_type)) return NULL;
+
+    if (type_is_same(left_type, right_type)) return left_type;
+
+    bool reverse_order = false;
+    if (left_type->type_id > right_type->type_id)
+    {
+        reverse_order = true;
+    }
+    else if (right_type->type_id == left_type->type_id && left_type->type_id == TYPE_BUILTIN)
+    {
+        int bit_diff = (int)left_type->builtin.bits - (int)right_type->builtin.bits;
+        switch (left_type->builtin.builtin_id)
+        {
+            case BUILTIN_FLOAT:
+                reverse_order = right_type->builtin.builtin_id == BUILTIN_FLOAT && bit_diff < 0;
+                break;
+            case BUILTIN_UNSIGNED_INT:
+                reverse_order = right_type->builtin.builtin_id == BUILTIN_FLOAT || bit_diff < 0;
+                break;
+            case BUILTIN_SIGNED_INT:
+                reverse_order = right_type->builtin.builtin_id == BUILTIN_FLOAT || bit_diff <= 0;
+                break;
+            case BUILTIN_BOOL:
+                reverse_order = right_type->builtin.builtin_id != BUILTIN_BOOL;
+                break;
+        }
+    }
+
+    if (!is_real_arithmetics_type(left_type) && !is_real_arithmetics_type(right_type))
+    {
+        if (!insert_implicit_cast_if_needed(left, type_builtin_i32()) &&
+                insert_implicit_cast_if_needed(right, type_builtin_i32())) return NULL;
+        return type_builtin_i32();
+    }
+    if (reverse_order) return insert_implicit_cast_if_needed(left, right_type) ? right_type : NULL;
+    return insert_implicit_cast_if_needed(right, left_type) ? left_type : NULL;
+}
+
+static inline bool try_upcasting_binary_for_arithmetics(Expr *binary_expr)
+{
+    Type *type = try_upcasting_for_arithmetics(binary_expr->binary_expr.left, binary_expr->binary_expr.right);
+    if (type)
+    {
+        binary_expr->type = type;
+        return true;
+    }
+    return false;
+}
+
+static inline bool is_both_const(Expr *left, Expr *right)
+{
+    return left->expr_id == EXPR_CONST && right->expr_id == EXPR_CONST;
+}
+
+
+static inline bool analyse_minus_expr(Expr *binary)
+{
+    Expr *left = binary->binary_expr.left;
+    Expr *right = binary->binary_expr.right;
+    // TODO improve
+    if (try_upcasting_binary_for_pointer_arithmetics(binary))
+    {
+        return true;
+    }
+    if (!try_upcasting_for_arithmetics(left, right))
+    {
+        sema_error_at(&binary->span, "Can't subtract '%s' from '%s'", type_to_string(right->type), type_to_string(left->type));
+        return false;
+    }
+    if (is_both_const(left, right))
+    {
+        binary->const_expr.value = value_sub(left->const_expr.value, right->const_expr.value);
+        // TODO handle error
+        binary->expr_id = EXPR_CONST;
+    }
+    return true;
+}
+
+
+static inline bool analyse_plus_expr(Expr *binary)
+{
+    Expr *left = binary->binary_expr.left;
+    Expr *right = binary->binary_expr.right;
+    // TODO improve
+    if (try_upcasting_binary_for_pointer_arithmetics(binary))
+    {
+        return true;
+    }
+    if (!try_upcasting_binary_for_arithmetics(binary))
+    {
+        sema_error_at(&binary->span, "Can't add '%s' to '%s'", type_to_string(right->type), type_to_string(left->type));
+        return false;
+    }
+    if (is_both_const(left, right))
+    {
+        binary->const_expr.value = value_add(left->const_expr.value, right->const_expr.value);
+        // TODO handle error
+        binary->expr_id = EXPR_CONST;
+    }
+    return true;
+}
+
+static inline bool analyse_mult_expr(Expr *binary)
+{
+    Expr *left = binary->binary_expr.left;
+    Expr *right = binary->binary_expr.right;
+    if (!try_upcasting_binary_for_arithmetics(binary))
+    {
+        sema_error_at(&binary->span, "Can't multiply '%s' by '%s'", type_to_string(left->type), type_to_string(right->type));
+        return false;
+    }
+    if (is_both_const(left, right))
+    {
+        binary->const_expr.value = value_mult(left->const_expr.value, right->const_expr.value);
+        // TODO handle error
+        binary->expr_id = EXPR_CONST;
+    }
+    return true;
+}
 
 bool analyse_binary_expr(Expr *expr, Side side)
 {
@@ -43,19 +317,18 @@ bool analyse_binary_expr(Expr *expr, Side side)
     success = analyse_expr(right, RHS) & success;
     if (!success) return false;
 
-    assert(!expr->type);
-
     switch (expr->binary_expr.operator)
     {
         case TOKEN_EQ:
-            expr->type = try_cast(left, right);
-            break;
+            // Make sure types match, otherwise try inserting a cast.
+            return insert_implicit_cast_if_needed(right, left->type);
         case TOKEN_MINUS:
+            return analyse_minus_expr(expr);
         case TOKEN_PLUS:
-            expr->type = try_cast(left, right);
-            break;
-        case TOKEN_DIV:
+            return analyse_plus_expr(expr);
         case TOKEN_MOD:
+            return analyse_mult_expr(expr);
+        case TOKEN_DIV:
         case TOKEN_STAR:
         case TOKEN_EQEQ:
         case TOKEN_NOT_EQUAL:
@@ -89,9 +362,53 @@ bool analyse_binary_expr(Expr *expr, Side side)
     }
     return expr->type != NULL;
 }
-bool analyse_ternary_expr(Expr *expr, Side side)
+
+
+static inline bool insert_bool_cast_for_conditional_if_needed(Expr *expr)
 {
-    FATAL_ERROR("TODO");
+    // TODO warn on if (a = foo)
+    return insert_cast_if_needed(expr, type_builtin_bool(), false);
+}
+
+static inline bool analyse_ternary_expr(Expr *expr, Side side)
+{
+    Expr *cond = expr->ternary_expr.cond;
+    Expr *then_expr = expr->ternary_expr.then_expr;
+    Expr *else_expr = expr->ternary_expr.else_expr;
+    if (!analyse_expr(cond, RHS)) return false;
+    if (!analyse_expr(then_expr, side)) return false;
+    if (!analyse_expr(else_expr, side)) return false;
+    if (!insert_bool_cast_for_conditional_if_needed(cond)) return false;
+
+    if (!type_is_same(then_expr->type, else_expr->type))
+    {
+        Type *type = try_upcasting_for_arithmetics(then_expr, else_expr);
+        if (!type)
+        {
+            char *t1 = type_to_string(else_expr->type);
+            char *t2 = type_to_string(then_expr->type);
+            sema_error_at(&expr->span, "Ternary expression result has incompatible types '%s' and '%s'", t1, t2);
+            return false;
+        }
+        expr->type = type;
+    }
+    else
+    {
+        expr->type = then_expr->type;
+    }
+    if (cond->expr_id == EXPR_CONST)
+    {
+        assert(cond->const_expr.value.type == VALUE_TYPE_BOOL);
+        if (cond->const_expr.value.b)
+        {
+            expr_replace(expr, then_expr);
+        }
+        else
+        {
+            expr_replace(expr, else_expr);
+        }
+    }
+    return true;
 }
 
 
@@ -168,17 +485,204 @@ static bool is_assignable(Expr *expr)
 */
 }
 
-static bool analyse_type_expr(Expr *expr, Side side)
+static bool cast_const_type_expression(Expr *expr, Type *target_type, bool is_implicit)
+{
+    switch (expr->expr_id)
+    {
+        case EXPR_TERNARY:
+            if (!cast_const_type_expression(expr->ternary_expr.then_expr, target_type, is_implicit)) return false;
+            if (!cast_const_type_expression(expr->ternary_expr.else_expr, target_type, is_implicit)) return false;
+            return true;
+        case EXPR_CONST:
+            break;
+        default:
+            UNREACHABLE;
+    }
+    assert(expr->expr_id == EXPR_CONST);
+    Value *value = &expr->const_expr.value;
+    bool allow_trunc = !is_implicit;
+    switch (target_type->type_id)
+    {
+        case TYPE_INVALID:
+        case TYPE_UNRESOLVED:
+        case TYPE_IMPORT:
+        case TYPE_VOID:
+        case TYPE_STRING:
+        case TYPE_OPAQUE:
+        case TYPE_POINTER:
+        case TYPE_ARRAY:
+        case TYPE_DECLARED:
+        case TYPE_TYPEVAL:
+        case TYPE_NIL:
+            UNREACHABLE
+        case TYPE_BUILTIN:
+            switch (target_type->builtin.builtin_id)
+            {
+                case BUILTIN_FLOAT:
+                    return value_convert(value, VALUE_TYPE_FLOAT, target_type->builtin.bits, false, allow_trunc);
+                case BUILTIN_UNSIGNED_INT:
+                    return value_convert(value, VALUE_TYPE_INT, target_type->builtin.bits, true, allow_trunc);
+                case BUILTIN_SIGNED_INT:
+                    return value_convert(value, VALUE_TYPE_INT, target_type->builtin.bits, false, allow_trunc);
+                case BUILTIN_BOOL:
+                    return value_convert(value, VALUE_TYPE_BOOL, target_type->builtin.bits, true, allow_trunc);
+            }
+            UNREACHABLE
+            break;
+        case TYPE_CONST_FLOAT:
+            return value_convert(value, VALUE_TYPE_FLOAT, 0, false, allow_trunc);
+        case TYPE_CONST_INT:
+            return value_convert(value, VALUE_TYPE_INT, 0, false, allow_trunc);
+    }
+    UNREACHABLE
+}
+
+static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool implicit)
+{
+    Type *source_type = expr->type;
+    if (source_type == target_type)
+    {
+        return CAST_INLINE;
+    }
+    bool is_same_type = source_type->type_id == target_type->type_id;
+    switch (target_type->type_id)
+    {
+        case TYPE_INVALID:
+        case TYPE_UNRESOLVED:
+            // Since we resolved the type successfully
+            UNREACHABLE
+        case TYPE_IMPORT:
+            // Can't occur here
+            UNREACHABLE
+        case TYPE_VOID:
+        case TYPE_NIL:
+        case TYPE_CONST_FLOAT:
+        case TYPE_CONST_INT:
+        case TYPE_OPAQUE:
+        case TYPE_TYPEVAL:
+        case TYPE_ARRAY:
+        {
+            char *name = type_to_string(target_type);
+            sema_error_at(&expr->span, "Cannot cast expression to '%s'", name);
+            free(name);
+            return CAST_FAILED;
+        }
+        case TYPE_STRING:
+            if (is_same_type)
+            {
+                // Inline cast
+                return CAST_INLINE;
+            }
+            // Default error
+            break;
+        case TYPE_POINTER:
+            // Pointer and array types can be immediately converted.
+            if (source_type->type_id == TYPE_POINTER || source_type->type_id == TYPE_ARRAY) return CAST_PTRPTR;
+            // Explicit pointer to int conversions are fine.
+            if (type_is_int(target_type) && !implicit) return CAST_INTPTR;
+            // Default error
+            break;
+        case TYPE_DECLARED:
+            // TODO enum!
+            if (is_same_type && source_type->decl == target_type->decl)
+            {
+                // Inline cast
+                expr->type = target_type;
+                return CAST_INLINE;
+            }
+            break;
+        case TYPE_BUILTIN:
+            if (!is_same_type)
+            {
+                // Inline nil
+                switch (source_type->type_id)
+                {
+                    case TYPE_NIL:
+                    case TYPE_CONST_FLOAT:
+                    case TYPE_CONST_INT:
+                        if (!cast_const_type_expression(expr, target_type, implicit))
+                        {
+                            char *type_name = type_to_string(target_type);
+                            sema_error_at(&expr->span, "Cannot implicitly cast '%.*s' to '%s'", expr, type_name);
+                            free(type_name);
+                            return CAST_FAILED;
+                        }
+                        expr->type = target_type;
+                        return CAST_INLINE;
+                    case TYPE_POINTER:
+                    case TYPE_ARRAY:
+                        // Any pointers can be cast to the non-float builtins.
+                        if (!implicit && target_type->builtin.builtin_id != BUILTIN_FLOAT) return CAST_PTRINT;
+                        break;
+                    default:
+                        break;
+                }
+                break;
+            }
+            // Make casts on const expression compile time resolved:
+            if (expr->expr_id == EXPR_CONST)
+            {
+                if (!cast_const_type_expression(expr, target_type, implicit))
+                {
+                    assert(expr->cast_expr.implicit);
+                    char *type_name = type_to_string(expr->cast_expr.type);
+                    sema_error_at(&expr->span, "Cannot implicitly cast '%.*s' to '%s'",
+                                  expr->cast_expr.expr, type_name);
+                    free(type_name);
+                    return CAST_FAILED;
+                }
+                expr->type = target_type;
+                return CAST_INLINE;
+            }
+            if (source_type->builtin.builtin_id == target_type->builtin.builtin_id &&
+                source_type->builtin.bits == target_type->builtin.bits)
+            {
+                DEBUG_LOG("Same but different");
+                return CAST_INLINE;
+            }
+            // Any cast between builtin types are ok (even though some means truncating)
+            return builtin_casts[source_type->builtin.builtin_id][target_type->builtin.builtin_id];
+    }
+    char *target_name = type_to_string(target_type);
+    char *source_name = type_to_string(source_type);
+    sema_error_at(&expr->span, "Cannot cast '%s' to '%s'", source_name, target_name);
+    free(target_name);
+    free(source_name);
+    return CAST_FAILED;
+}
+
+static bool analyse_cast_expr(Expr *expr)
+{
+    if (!analyse_expr(expr->cast_expr.expr, RHS)) return false;
+    if (!resolve_type(&expr->cast_expr.type, false)) return false;
+    Type *target_type = expr->cast_expr.type;
+    Type *source_type = expr->cast_expr.expr->type;
+    assert(target_type && source_type);
+    expr->type = expr->cast_expr.type;
+    expr->cast_expr.cast_result = perform_compile_time_cast(expr->cast_expr.expr, expr->cast_expr.type, expr->cast_expr.implicit);
+    switch (expr->cast_expr.cast_result)
+    {
+        case CAST_FAILED:
+            return false;
+        case CAST_INLINE:
+            expr_replace(expr, expr->cast_expr.expr);
+            return true;
+        default:
+            return true;
+    }
+}
+
+static bool analyse_type_expr(Expr *expr)
 {
     Type *type = expr->type_expr.type;
-    if (!resolve_type(type, false)) return false;
+    if (!resolve_type(&type, false)) return false;
     // Type now resolves, we can set the expression
-    Type *type_of_type = new_type(TYPE_TYPEVAL, false, &type->span);
+    Type *type_of_type = new_type(TYPE_TYPEVAL, false);
     type_of_type->is_public = type->is_public;
     type_of_type->is_exported = type->is_exported;
-    type_of_type->name = type->name;
     type_of_type->module = type->module;
     type_of_type->type_of_type = type;
+    expr->type = type_of_type;
     return true;
 }
 
@@ -209,6 +713,7 @@ static bool resolve_identifier(Expr *expr, Side side)
                 sema_error_at(&expr->span, "Only variables can be assigned to");
                 return false;
             }
+            expr->type = &decl->type;
             expr->const_state = CONST_FULL;
             break;
         case DECL_VAR:
@@ -223,6 +728,7 @@ static bool resolve_identifier(Expr *expr, Side side)
                 return false;
             }
             expr->const_state = decl->var.type->is_const ? CONST_FULL : CONST_NONE;
+            expr->type = decl->var.type;
             break;
     }
     if (side == RHS)
@@ -232,6 +738,13 @@ static bool resolve_identifier(Expr *expr, Side side)
         // if (usedPublicly) decl->is_used_public = true;
     }
     return expr->const_state;
+}
+
+bool analyse_const_expr(Expr *expr)
+{
+    assert(expr->const_state == CONST_FULL);
+    assert(expr->type != NULL);
+    return true;
 }
 
 bool analyse_expr(Expr *expr, Side side)
@@ -244,11 +757,11 @@ bool analyse_expr(Expr *expr, Side side)
     switch (expr->expr_id)
     {
         case EXPR_TYPE:
-            return analyse_type_expr(expr, side);
+            return analyse_type_expr(expr);
+        case EXPR_CAST:
+            return analyse_cast_expr(expr);
         case EXPR_CONST:
-            return true;
-            //return analyse_const_expr(expr, side);
-            break;
+            return analyse_const_expr(expr);
         case EXPR_BINARY:
             return analyse_binary_expr(expr, side);
         case EXPR_TERNARY:
@@ -263,8 +776,6 @@ bool analyse_expr(Expr *expr, Side side)
             //return analyse_call(expr, side);
         case EXPR_SIZEOF:
             //return analyse_sizeof(expr, side);
-        case EXPR_CAST:
-            //return analyse_cast(expr, side);
         case EXPR_SUBSCRIPT:
             //return analyse_subscript(expr, side);
         case EXPR_ACCESS:

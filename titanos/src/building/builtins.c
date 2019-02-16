@@ -43,8 +43,6 @@ TYPES(REG)
     Token token = token_wrap(#__name); \
     decl = decl_new(DECL_BUILTIN, &token, &token, true); \
     decl->type.type_id = TYPE_BUILTIN; \
-    decl->type.name = token; \
-    decl->type.span = token; \
     decl->type.builtin = (TypeBuiltin) { __type, __bits }; \
     decl->type.llvm_type = __init; \
   } \

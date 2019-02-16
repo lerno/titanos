@@ -37,7 +37,7 @@ bool analyse_decl_stmt(Ast *decl_stmt)
     assert(decl->var.kind == VARDECL_LOCAL);
 
     // Resolve the type as local (non public)
-    bool success = resolve_type(decl->var.type, false);
+    bool success = resolve_type(&decl->var.type, false);
 
     if (success && !active_analyser->parser->is_interface)
     {
@@ -52,12 +52,12 @@ bool analyse_decl_stmt(Ast *decl_stmt)
     {
         if (!decl->var.type->array.is_len_resolved)
         {
-            sema_error_at(&decl->var.type->span, "Could not resolve array length");
+            sema_error_at(&decl->var.type->array.len_expr->span, "Could not resolve array length");
             success = false;
         }
         if (decl->var.type->array.is_empty && !decl->var.init_expr)
         {
-            sema_error_at(&decl->var.type->span, "Array without fixed size needs initializer");
+            sema_error_at(&decl->span, "Array without fixed size needs initializer");
             success = false;
         }
     }
@@ -65,7 +65,7 @@ bool analyse_decl_stmt(Ast *decl_stmt)
     {
         if (scope_is_external_module(decl->var.type->module))
         {
-            sema_error_at(&decl->var.type->span, "Cannot create opaque type");
+            sema_error_at(&decl->span, "Cannot create opaque type");
             success = false;
         }
     }
@@ -134,7 +134,7 @@ bool analyse_return(Ast *stmt)
         {
             return false;
         }
-        if (!cast_to_type(r_value, active_analyser->current_func->func_decl.rtype))
+        if (!insert_implicit_cast_if_needed(r_value, active_analyser->current_func->func_decl.rtype))
         {
             // IMPROVE type
             sema_error_at(&r_value->span, "Return value does not match function return type");
@@ -165,6 +165,17 @@ bool analyse_stmt(Ast *stmt)
             return analyse_decl_stmt(stmt);
         case AST_EXPR_STMT:
             return analyse_expr(stmt->expr_stmt.expr, RHS);
+        case AST_COMPOUND_STMT:
+//            if (!haveScope) scope.EnterScope(Scope::DeclScope);
+            return analyse_compound_stmt(stmt);
+    //        if (!haveScope)
+            {
+  //              scope.ExitScope(Context, &S);
+            }
+        case AST_WHILE_STMT:
+            return analyse_while(stmt);
+
+
 #ifdef TODOX
         case AST_IF_STMT:
             return analyse_if(stmt);
@@ -189,12 +200,6 @@ bool analyse_stmt(Ast *stmt)
         case AST_ASM:
             return analyse_asm(stmt);
         case AST_COMPOUND_STMT:
-            if (!haveScope) scope.EnterScope(Scope::DeclScope);
-            analyseCompoundStmt(S);
-            if (!haveScope)
-            {
-                scope.ExitScope(Context, &S);
-            }
             break;
         case AST_DEFER_RELASE:
         case AST_CASE_STMT:

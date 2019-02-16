@@ -113,26 +113,26 @@ static inline ExprConstState evaluate_constant_binary_expr(Expr *expr)
 
 static inline ExprConstState evaluate_constant_ternary_expr(Expr *expr)
 {
-    ExprConstState decider = evaluate_constant(expr->ternary_expr.expr);
+    ExprConstState decider = evaluate_constant(expr->ternary_expr.cond);
 
     if (decider != CONST_FULL) return decider;
-    Value value = value_to_bool(expr->ternary_expr.expr->const_expr.value);
+    Value value = value_to_bool(expr->ternary_expr.cond->const_expr.value);
     if (value.type == VALUE_TYPE_ERROR)
     {
         return expr->const_state = CONST_NONE;
     }
-    expr->ternary_expr.expr->const_expr.value = value;
-    ExprConstState const_true = evaluate_constant(expr->ternary_expr.true_expr);
-    ExprConstState const_false = evaluate_constant(expr->ternary_expr.true_expr);
-    assert(expr->ternary_expr.expr->const_expr.value.type == VALUE_TYPE_BOOL);
-    if (expr->ternary_expr.expr->const_expr.value.b)
+    expr->ternary_expr.cond->const_expr.value = value;
+    ExprConstState const_true = evaluate_constant(expr->ternary_expr.then_expr);
+    ExprConstState const_false = evaluate_constant(expr->ternary_expr.then_expr);
+    assert(expr->ternary_expr.cond->const_expr.value.type == VALUE_TYPE_BOOL);
+    if (expr->ternary_expr.cond->const_expr.value.b)
     {
-        replace_expr(expr, expr->ternary_expr.true_expr);
+        replace_expr(expr, expr->ternary_expr.then_expr);
         return const_true;
     }
     else
     {
-        replace_expr(expr, expr->ternary_expr.false_expr);
+        replace_expr(expr, expr->ternary_expr.else_expr);
         return const_false;
     }
 }
@@ -262,7 +262,7 @@ static ExprConstState evaluate_constant_without_checks(Expr *expr)
             return expr->const_state = CONST_NONE;
         case EXPR_SIZEOF:
             if (!analyse_expr(expr->sizeof_expr.expr, RHS)) return CONST_UNKNOWN;
-            if (!resolve_type(expr->sizeof_expr.expr->type, false)) return CONST_UNKNOWN;
+            if (!resolve_type(&expr->sizeof_expr.expr->type, false)) return CONST_UNKNOWN;
             expr->expr_id = EXPR_CONST;
             bigint_init_unsigned(&expr->const_expr.value.big_int, type_size(expr->sizeof_expr.expr->type));
             break;
