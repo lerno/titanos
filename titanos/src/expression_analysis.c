@@ -308,6 +308,47 @@ static inline bool analyse_mult_expr(Expr *binary)
     return true;
 }
 
+static inline bool analyse_div_expr(Expr *binary)
+{
+    Expr *left = binary->binary_expr.left;
+    Expr *right = binary->binary_expr.right;
+    if (!try_upcasting_binary_for_arithmetics(binary))
+    {
+        sema_error_at(&binary->span, "Can't divide '%s' by '%s'", type_to_string(left->type), type_to_string(right->type));
+        return false;
+    }
+    if (is_both_const(left, right))
+    {
+        binary->const_expr.value = value_div(left->const_expr.value, right->const_expr.value);
+        // TODO handle error
+        binary->expr_id = EXPR_CONST;
+    }
+    return true;
+}
+
+static inline bool analyse_mod_expr(Expr *binary)
+{
+    Expr *left = binary->binary_expr.left;
+    Expr *right = binary->binary_expr.right;
+    if (!type_is_int(left->type) || !type_is_int(right->type))
+    {
+        sema_error_at(&binary->span, "Can't take remainder of '%s' from '%s'", type_to_string(left->type), type_to_string(right->type));
+        return false;
+    }
+    if (!try_upcasting_binary_for_arithmetics(binary))
+    {
+        FATAL_ERROR("Should always succeed");
+    }
+
+    if (is_both_const(left, right))
+    {
+        binary->const_expr.value = value_mod(left->const_expr.value, right->const_expr.value);
+        // TODO handle error
+        binary->expr_id = EXPR_CONST;
+    }
+    return true;
+}
+
 bool analyse_binary_expr(Expr *expr, Side side)
 {
     LOG_FUNC
@@ -321,15 +362,18 @@ bool analyse_binary_expr(Expr *expr, Side side)
     {
         case TOKEN_EQ:
             // Make sure types match, otherwise try inserting a cast.
+            left->identifier_expr.is_ref = true;
             return insert_implicit_cast_if_needed(right, left->type);
         case TOKEN_MINUS:
             return analyse_minus_expr(expr);
         case TOKEN_PLUS:
             return analyse_plus_expr(expr);
-        case TOKEN_MOD:
-            return analyse_mult_expr(expr);
         case TOKEN_DIV:
+            return analyse_div_expr(expr);
         case TOKEN_STAR:
+            return analyse_mult_expr(expr);
+        case TOKEN_MOD:
+            return analyse_mod_expr(expr);
         case TOKEN_EQEQ:
         case TOKEN_NOT_EQUAL:
         case TOKEN_GREATER:
@@ -364,7 +408,7 @@ bool analyse_binary_expr(Expr *expr, Side side)
 }
 
 
-static inline bool insert_bool_cast_for_conditional_if_needed(Expr *expr)
+bool insert_bool_cast_for_conditional_if_needed(Expr *expr)
 {
     // TODO warn on if (a = foo)
     return insert_cast_if_needed(expr, type_builtin_bool(), false);
@@ -729,6 +773,7 @@ static bool resolve_identifier(Expr *expr, Side side)
             }
             expr->const_state = decl->var.type->is_const ? CONST_FULL : CONST_NONE;
             expr->type = decl->var.type;
+            expr->identifier_expr.is_ref = side == LHS;
             break;
     }
     if (side == RHS)

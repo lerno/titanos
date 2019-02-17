@@ -88,7 +88,6 @@ typedef struct _FuncDecl
     bool is_struct_func : 1;
     bool is_static_struct_func : 1;
     Type *rtype;
-    //Type *original_r_type;
     Token full_name;
     Vector* args; // VarDecl[]
     Ast *body;

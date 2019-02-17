@@ -84,7 +84,7 @@ void print_ast(Ast *ast, unsigned current_indent)
         case AST_IF_STMT:
             printf("IF_STMT\n");
             expr_print_sub("if", current_indent, ast->if_stmt.expr);
-            print_sub_ast("body", current_indent, ast->if_stmt.if_body);
+            print_sub_ast("body", current_indent, ast->if_stmt.then_body);
             print_sub_ast("else", current_indent, ast->if_stmt.else_body);
             return;
         case AST_WHILE_STMT:

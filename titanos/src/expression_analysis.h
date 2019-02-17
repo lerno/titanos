@@ -16,3 +16,4 @@ typedef enum
 bool analyse_expr(Expr *expr, Side side);
 bool analyse_init_expr(Decl *decl);
 bool insert_implicit_cast_if_needed(Expr *expr, Type *type);
+bool insert_bool_cast_for_conditional_if_needed(Expr *expr);

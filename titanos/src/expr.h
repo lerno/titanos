@@ -59,6 +59,7 @@ typedef struct _ExprTernary
 typedef struct _ExprIdentifier
 {
     Token identifier;
+    bool is_ref;
     Decl *resolved;
 } ExprIdentifier;
 

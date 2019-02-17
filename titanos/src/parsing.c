@@ -664,7 +664,7 @@ static inline bool parse_argument_list(FuncDecl *func_decl, bool public, bool ty
 					had_defaults = false;
 				}
 			}
-			vector_add(args, func_decl);
+			vector_add(args, decl);
 		}
 		if (!try_consume(TOKEN_COMMA)) break;
 		if (func_decl->variadic)
@@ -765,7 +765,7 @@ static Ast *parse_if_stmt()
 		if (!else_body) return NULL;
 	}
 	if_ast->if_stmt.else_body = stmt_to_compound(else_body);
-	if_ast->if_stmt.if_body = stmt_to_compound(if_body);
+	if_ast->if_stmt.then_body = stmt_to_compound(if_body);
 	if_ast->if_stmt.expr = expr;
 	UPDATE_AND_RETURN(if_ast);
 }

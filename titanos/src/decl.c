@@ -148,9 +148,8 @@ void decl_print(Decl *decl, unsigned current_indent)
         case DECL_BUILTIN:
             printf("BUILTIN TODO ");
             decl_print_name_visibility(decl);
-
             printf("\n");
-            break;
+            return;
     }
     FATAL_ERROR("TODO %d", decl->type_id);
 }

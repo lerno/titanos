@@ -61,7 +61,7 @@ typedef struct _AstCompoundStmt
 typedef struct _AstIfStmt
 {
     Expr *expr;
-    Ast *if_body;
+    Ast *then_body;
     Ast *else_body;
 } AstIfStmt;
 

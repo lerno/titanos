@@ -79,6 +79,10 @@ static inline bool scope_allow_break()
 {
     return (active_scope->cur_scope->flags & SCOPE_BREAK) != 0;
 }
+static inline bool scope_allow_decl()
+{
+    return (active_scope->cur_scope->flags & SCOPE_DECL) != 0;
+}
 static inline bool scope_allow_continue()
 {
     return (active_scope->cur_scope->flags & SCOPE_CONTINUE) != 0;

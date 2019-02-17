@@ -18,6 +18,14 @@
 #include "types/type.h"
 #include "expr.h"
 
+#include <llvm-c/ExecutionEngine.h>
+#include <llvm-c/Target.h>
+#include <llvm-c/Analysis.h>
+#include <llvm-c/BitWriter.h>
+#include <llvm-c/Transforms/Scalar.h>
+#include <llvm-c/Transforms/IPO.h>
+#include "llvm-c/Transforms/Utils.h"
+
 static LLVMTypeRef llvm_type(Type *type);
 static LLVMTypeRef codegen_convert_type(Type *type);
 static LLVMTypeRef codegen_convert_decl(Decl *decl);
@@ -81,7 +89,7 @@ static LLVMTypeRef codegen_convert_decl(Decl *decl)
         case DECL_FUNC:
             return codegen_convert_func_decl(decl);
         case DECL_VAR:
-            return codegen_convert_type(decl->var.type);
+            return llvm_type(decl->var.type);
         case DECL_ALIAS_TYPE:
             return codegen_convert_type(decl->alias_decl.type);
         case DECL_STRUCT_TYPE:
@@ -502,7 +510,7 @@ static LLVMValueRef codegen_expr(Expr *expr)
             return codegen_post_expr(expr);
         case EXPR_IDENTIFIER:
             assert(expr->identifier_expr.resolved->var.llvm_ref);
-            return expr->identifier_expr.resolved->var.llvm_ref;
+            return expr->identifier_expr.is_ref ? expr->identifier_expr.resolved->var.llvm_ref : LLVMBuildLoad(active_builder, expr->identifier_expr.resolved->var.llvm_ref, "");
         case EXPR_SIZEOF:
             FATAL_ERROR("Sizeof should always be const evaluated");
         case EXPR_CAST:
@@ -548,7 +556,7 @@ static inline void codegen_while(Ast *stmt)
     LLVMBuildBr(active_builder, while_start);
     LLVMPositionBuilderAtEnd(active_builder, while_start);
     LLVMBuildCondBr(active_builder, codegen_expr(stmt->while_stmt.expr), while_block, while_end);
-
+    LLVMPositionBuilderAtEnd(active_builder, while_block);
     codegen_block(stmt->while_stmt.body);
 
     LLVMBuildBr(active_builder, while_start);
@@ -558,12 +566,38 @@ static inline void codegen_while(Ast *stmt)
     active_continue = prev_continue;
 }
 
+static inline void codegen_break(Ast *stmt)
+{
+    // Emit defers
+    LLVMBuildBr(active_builder, active_break);
+}
+
+static inline void codegen_continue(Ast *stmt)
+{
+    // Emit defers
+    LLVMBuildBr(active_builder, active_continue);
+}
+
+static inline void codegen_return(Ast *stmt)
+{
+    if (stmt->return_stmt.expr)
+    {
+        LLVMValueRef retval = codegen_expr(stmt->return_stmt.expr);
+        // Release defers
+        LLVMBuildRet(active_builder, retval);
+    }
+    else
+    {
+        // Release defers
+        LLVMBuildRetVoid(active_builder);
+    }
+}
+
 static void codegen_block(Ast *block)
 {
     LOG_FUNC
 
     assert(block->ast_id == AST_COMPOUND_STMT);
-    LLVMValueRef lastval = NULL; // Should never be used by caller
     for (unsigned i = 0; i < block->compound_stmt.stmts->size; i++)
     {
         Ast *stmt = block->compound_stmt.stmts->entries[i];
@@ -584,15 +618,21 @@ static void codegen_block(Ast *block)
             case AST_WHILE_STMT:
                 codegen_while(stmt);
                 break;
+            case AST_BREAK_STMT:
+                codegen_break(stmt);
+                break;
+            case AST_CONTINUE_STMT:
+                codegen_continue(stmt);
+                break;
+            case AST_RETURN_STMT:
+                codegen_return(stmt);
+                break;
             case AST_IF_STMT:
             case AST_DO_STMT:
             case AST_DEFER_STMT:
             case AST_SWITCH_STMT:
             case AST_CASE_STMT:
             case AST_DEFAULT_STMT:
-            case AST_BREAK_STMT:
-            case AST_CONTINUE_STMT:
-            case AST_RETURN_STMT:
             case AST_GOTO_STMT:
             case AST_FOR_STMT:
             case AST_LABEL:
@@ -603,12 +643,15 @@ static void codegen_block(Ast *block)
         }
     }
 }
-void codegen_parameter_var(Decl *param)
+void codegen_parameter_var(Decl *param, unsigned index)
 {
-    TODO
+    assert(param->type_id == DECL_VAR && param->var.kind == VARDECL_PARAM);
+    param->var.llvm_ref = LLVMBuildAlloca(active_builder, llvm_type(param->var.type), "");
+    LLVMSetValueName2(param->var.llvm_ref, param->name.start, param->name.length);
+    LLVMBuildStore(active_builder, LLVMGetParam(active_func->func_decl.llvm_function_proto, index), param->var.llvm_ref);
 }
 
-void codegen_function(LLVMModuleRef llvm_module, Parser *parser, Decl *function)
+void codegen_function(Decl *function)
 {
     LOG_FUNC
 
@@ -616,18 +659,18 @@ void codegen_function(LLVMModuleRef llvm_module, Parser *parser, Decl *function)
     LLVMBuilderRef previous_builder = active_builder;
 
     active_func = function;
+    active_break = NULL;
+    active_continue = NULL;
 
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(active_context, active_func->func_decl.llvm_function_proto, "entry");
 
-    active_builder = LLVMCreateBuilder();
+    active_builder = LLVMCreateBuilderInContext(active_context);
     LLVMPositionBuilderAtEnd(active_builder, entry);
 
     // Generate LLVMValueRef's for all parameters, so we can use them as local vars in code
-    uint32_t cnt;
-
     for (unsigned i = 0; i < function->func_decl.args->size; i++)
     {
-        codegen_parameter_var(function->func_decl.args->entries[i]);
+        codegen_parameter_var(function->func_decl.args->entries[i], i);
     }
 
     codegen_block(function->func_decl.body);
@@ -638,7 +681,6 @@ void codegen_function(LLVMModuleRef llvm_module, Parser *parser, Decl *function)
 
     active_func = NULL;
 
-
 }
 
 void codegen_global_var(LLVMModuleRef llvm_module, Parser *parser, Ast *variable)
@@ -648,6 +690,7 @@ void codegen_global_var(LLVMModuleRef llvm_module, Parser *parser, Ast *variable
 
 void codegen_file(LLVMModuleRef llvm_module, Parser *parser)
 {
+
 }
 
 void codegen(const char *filename, bool single_module, Vector *modules)
@@ -693,63 +736,32 @@ void codegen(const char *filename, bool single_module, Vector *modules)
             for (unsigned i = 0; i < parser->functions->size; i++)
             {
                 Decl *function = parser->functions->entries[i];
-                codegen_function(llvm_module, parser, function);
+                codegen_function(function);
             }
         }
     }
 
-    LLVMBuilderRef builder = LLVMCreateBuilder();
-    LLVMDumpModule(llvm_module);
-    /*
-     *
-    LLVMModuleRef mod = LLVMModuleCreateWithName("my_module");
 
-    LLVMTypeRef param_types[] = { LLVMInt32Type(), LLVMInt32Type() };
-    LLVMTypeRef ret_type = LLVMFunctionType(LLVMInt32Type(), param_types, 2, 0);
-    LLVMValueRef sum = LLVMAddFunction(mod, "sum", ret_type);
-
-    LLVMBasicBlockRef entry = LLVMAppendBasicBlock(sum, "entry");
-
-    LLVMBuilderRef builder = LLVMCreateBuilder();
-    LLVMPositionBuilderAtEnd(builder, entry);
-    LLVMValueRef tmp = LLVMBuildAdd(builder, LLVMGetParam(sum, 0), LLVMGetParam(sum, 1), "tmp");
-    LLVMBuildRet(builder, tmp);
-
+    // Verify generated IR
     char *error = NULL;
-    LLVMVerifyModule(mod, LLVMAbortProcessAction, &error);
-    LLVMDisposeMessage(error);
-
-    LLVMExecutionEngineRef engine;
-    error = NULL;
-    LLVMLinkInMCJIT();
-    LLVMInitializeNativeTarget();
-    LLVMInitializeNativeAsmPrinter();
-    if (LLVMCreateExecutionEngineForModule(&engine, mod, &error) != 0)
+    LLVMDumpModule(llvm_module);
+    bool failed = LLVMVerifyModule(llvm_module, LLVMReturnStatusAction, &error);
+    if (failed)
     {
-        fprintf(stderr, "failed to create execution engine\n");
-        abort();
-    }
-    if (error)
-    {
-        fprintf(stderr, "error: %s\n", error);
-        LLVMDisposeMessage(error);
-        exit(EXIT_FAILURE);
+        printf("Crap: %s\n", error);
+      //  exit(-1);
     }
 
+    LLVMPassManagerRef passmgr = LLVMCreatePassManager();
+    LLVMAddDemoteMemoryToRegisterPass(passmgr);        // Demote allocas to registers.
+    LLVMAddInstructionCombiningPass(passmgr);        // Do simple "peephole" and bit-twiddling optimizations
+    LLVMAddReassociatePass(passmgr);                // Reassociate expressions.
+    LLVMAddGVNPass(passmgr);                        // Eliminate common subexpressions.
+    LLVMAddCFGSimplificationPass(passmgr);            // Simplify the control flow graph
+    //LLVMAddFunctionInliningPass(passmgr);        // Function inlining
+    LLVMRunPassManager(passmgr, llvm_module);
+    LLVMDisposePassManager(passmgr);
 
-    long long x = 5;
-    long long y = 6;
-
-    int (*sum_func)(int, int) = (int (*)(int, int)) LLVMGetFunctionAddress(engine, "sum");
-    printf("%d\n", sum_func(x, y));
-
-    // Write out bitcode to file
-    if (LLVMWriteBitcodeToFile(mod, "sum.bc") != 0)
-    {
-        fprintf(stderr, "error writing bitcode to file, skipping\n");
-    }
-
-    LLVMDisposeBuilder(builder);
-    LLVMDisposeExecutionEngine(engine);*/
+    LLVMDumpModule(llvm_module);
 }
 
