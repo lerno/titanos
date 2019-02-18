@@ -91,6 +91,7 @@ static ParseRule rules[TOKEN_EOF + 1];
 static Expr *parse_expression(void);
 static Ast *parse_stmt(void);
 static Expr *parse_init_value(void);
+static Ast *parse_condition(void);
 
 
 void error_at_current(const char *message)
@@ -307,7 +308,7 @@ static Expr *parse_bool(Expr *left)
 	assert(!left && "Had left hand side");
 	Expr *number = expr_new(EXPR_CONST, &prev_tok);
 	number->const_state = CONST_FULL;
-	number->const_expr.value = value_new_bool(tok.type == TOKEN_TRUE);
+	number->const_expr.value = value_new_bool(prev_tok.type == TOKEN_TRUE);
 	number->type = type_builtin_bool();
 	return number;
 }
@@ -415,7 +416,6 @@ Expr *parse_full_identifier()
 	}
 	UPDATE_AND_RETURN(expr);
 }
-
 
 
 static Expr *parse_precedence_after_advance(Precedence precedence)
@@ -746,7 +746,8 @@ static Ast *parse_if_stmt()
 
 	if (!consume(TOKEN_LPAREN, "Expected (")) return NULL;
 
-	Expr *expr = parse_expression();
+	Ast *cond = parse_condition();
+	if (!cond) return NULL;
 
 	if (!consume(TOKEN_RPAREN, "Expected )")) return NULL;
 
@@ -766,7 +767,7 @@ static Ast *parse_if_stmt()
 	}
 	if_ast->if_stmt.else_body = stmt_to_compound(else_body);
 	if_ast->if_stmt.then_body = stmt_to_compound(if_body);
-	if_ast->if_stmt.expr = expr;
+	if_ast->if_stmt.cond = cond;
 	UPDATE_AND_RETURN(if_ast);
 }
 
@@ -780,13 +781,13 @@ static Ast *parse_while_stmt()
 	advance_and_verify(TOKEN_WHILE);
 	Ast *while_ast = new_ast_with_span(AST_WHILE_STMT, &prev_tok);
 	if (!consume(TOKEN_LPAREN, "Expected (")) return NULL;
-	Expr *expr = parse_expression();
-	if (!expr) return NULL;
+	Ast *cond = parse_condition();
+	if (!cond) return NULL;
 	if (!consume(TOKEN_RPAREN, "Expected )")) return NULL;
 	Ast *body = parse_stmt();
 	if (!body) return NULL;
 	while_ast->while_stmt.body = stmt_to_compound(body);
-	while_ast->while_stmt.expr = expr;
+	while_ast->while_stmt.cond = cond;
 	UPDATE_AND_RETURN(while_ast);
 }
 
@@ -894,13 +895,13 @@ static Ast *parse_switch_stmt()
 	Ast *ast = new_ast_with_span(AST_SWITCH_STMT, &prev_tok);
 	if (!consume(TOKEN_LPAREN, "Expected '('")) return NULL;
 
-	Expr *expr = parse_expression();
-	if (!expr) return NULL;
+	Ast *cond = parse_condition();
+	if (!cond) return NULL;
 
 	if (!consume(TOKEN_RPAREN, "Expected ')'")) return NULL;
 
 
-	ast->switch_stmt.expr = expr;
+	ast->switch_stmt.cond = cond;
 
 	CONSUME_START_BRACE_OR_EXIT;
 
@@ -1964,6 +1965,28 @@ static Expr *parse_access(Expr *left)
 	access_expr->access_expr.parent = left;
 	access_expr->access_expr.sub_element = accessed;
 	UPDATE_AND_RETURN(access_expr);
+}
+
+static Ast *parse_condition(void)
+{
+	Ast *cond_stmt;
+	if (is_next_decl())
+	{
+		Decl* declaration = parse_declaration();
+		if (!declaration) return NULL;
+		cond_stmt = new_ast_with_span(AST_COND_STMT, &declaration->span);
+		cond_stmt->cond_stmt.decl = declaration;
+		cond_stmt->cond_stmt.cond_type = COND_DECL;
+	}
+	else
+	{
+		Expr *expr = parse_expression();
+		if (!expr) return NULL;
+		cond_stmt = new_ast_with_span(AST_COND_STMT, &expr->span);
+		cond_stmt->cond_stmt.expr = expr;
+		cond_stmt->cond_stmt.cond_type = COND_EXPR;
+	}
+	return cond_stmt;
 }
 
 static void set_parse_rule(token_type type, ParseFn prefix, ParseFn infix, Precedence rule_precedence)

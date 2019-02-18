@@ -17,6 +17,7 @@
 Ast *new_ast(AstType type)
 {
     Ast *ast = malloc_arena(sizeof(Ast));
+    ast->exit = EXIT_NONE;
     ast->ast_id = type;
     ast->span.length = 0;
     return ast;
@@ -26,6 +27,7 @@ Ast *new_ast_with_span(AstType type, Token *span)
 {
     Ast *ast = new_ast(type);
     ast->span = *span;
+    ast->exit = EXIT_NONE;
     return ast;
 }
 
@@ -33,6 +35,23 @@ Ast *end_ast(Ast *ast, Token *end)
 {
     token_expand(&ast->span, end);
     return ast;
+}
+
+
+CondValue ast_cond_value(Ast *cond)
+{
+    assert(cond->ast_id == AST_COND_STMT);
+    switch (cond->cond_stmt.cond_type)
+    {
+        case COND_EXPR:
+            if (cond->cond_stmt.expr->expr_id != EXPR_CONST) return COND_VARIABLE;
+            assert(cond->cond_stmt.expr->const_expr.value.type == VALUE_TYPE_BOOL);
+            return cond->cond_stmt.expr->const_expr.value.b ? COND_TRUE : COND_FALSE;
+        case COND_DECL:
+            TODO;
+            return COND_VARIABLE;
+    }
+    UNREACHABLE
 }
 
 void print_sub_ast(const char *header, unsigned int current_indent, Ast *ast)
@@ -83,13 +102,13 @@ void print_ast(Ast *ast, unsigned current_indent)
             return;
         case AST_IF_STMT:
             printf("IF_STMT\n");
-            expr_print_sub("if", current_indent, ast->if_stmt.expr);
+            print_sub_ast("if", current_indent, ast->if_stmt.cond);
             print_sub_ast("body", current_indent, ast->if_stmt.then_body);
             print_sub_ast("else", current_indent, ast->if_stmt.else_body);
             return;
         case AST_WHILE_STMT:
             printf("WHILE_STMT\n");
-            expr_print_sub("expr", current_indent, ast->while_stmt.expr);
+            print_sub_ast("expr", current_indent, ast->while_stmt.cond);
             print_sub_ast("body", current_indent, ast->while_stmt.body);
             return;
         case AST_DO_STMT:
@@ -103,7 +122,7 @@ void print_ast(Ast *ast, unsigned current_indent)
             return;
         case AST_SWITCH_STMT:
             printf("SWITCH_STMT\n");
-            expr_print_sub("Expr", current_indent, ast->switch_stmt.expr);
+            print_sub_ast("Expr", current_indent, ast->switch_stmt.cond);
             print_sub_ast_list("Cases", current_indent, ast->switch_stmt.case_list);
             print_sub_ast("Default", current_indent, ast->switch_stmt.default_stmt);
             return;
@@ -144,6 +163,19 @@ void print_ast(Ast *ast, unsigned current_indent)
             if (ast->label_stmt.is_used) printf(" used");
             printf("\n");
             return;
+        case AST_COND_STMT:
+            printf("COND_STMT ");
+            printf("\n");
+            switch (ast->cond_stmt.cond_type)
+            {
+                case COND_EXPR:
+                    expr_print_sub("Expr", current_indent, ast->cond_stmt.expr);
+                    return;
+                case COND_DECL:
+                    decl_print_sub("Decl", current_indent, ast->cond_stmt.decl);
+                    return;
+            }
+            UNREACHABLE
         case AST_EXPR_STMT:
             printf("EXPR_STMT ");
             printf("\n");

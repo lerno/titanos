@@ -37,7 +37,25 @@ __thread static LLVMContextRef active_context = NULL;
 __thread static LLVMBuilderRef active_builder = NULL;
 __thread static LLVMBasicBlockRef active_break = NULL;
 __thread static LLVMBasicBlockRef active_continue = NULL;
+__thread static LLVMBasicBlockRef active_entry = NULL;
 
+static void codegen_decl_alloca(Decl *decl)
+{
+    assert(decl->type_id == DECL_VAR);
+    LLVMBasicBlockRef insert_block = LLVMGetInsertBlock(active_builder);
+    LLVMValueRef inst = LLVMGetFirstInstruction(active_entry);
+    if (inst != NULL)
+    {
+        LLVMPositionBuilderBefore(active_builder, inst);
+    }
+    else
+    {
+        LLVMPositionBuilderAtEnd(active_builder, active_entry);
+    }
+    decl->var.llvm_ref = LLVMBuildAlloca(active_builder, llvm_type(decl->var.type), "");
+    LLVMSetValueName2(decl->var.llvm_ref, decl->name.start, decl->name.length);
+    LLVMPositionBuilderAtEnd(active_builder, insert_block);
+}
 static LLVMTypeRef codegen_convert_func_decl(Decl *decl)
 {
     FuncDecl *func_decl = &decl->func_decl;
@@ -134,6 +152,7 @@ static LLVMTypeRef codegen_convert_type(Type *type)
 
 static LLVMTypeRef llvm_type(Type *type)
 {
+    assert(type);
     if (type->llvm_type) return type->llvm_type;
     type->llvm_type = codegen_convert_type(type);
     return type->llvm_type;
@@ -153,42 +172,51 @@ void codegen_function_proto(LLVMModuleRef llvm_module, Parser *parser, Decl *fun
 LLVMValueRef codegen_const_expr(Expr *expr)
 {
     assert(expr->expr_id == EXPR_CONST);
-    switch (expr->type->type_id)
+    LLVMTypeRef type = llvm_type(expr->type);
+    Value *value = &expr->const_expr.value;
+    switch (value->type)
     {
-        case TYPE_INVALID:break;
-        case TYPE_VOID:break;
-        case TYPE_POINTER:break;
-        case TYPE_ARRAY:break;
-        case TYPE_DECLARED:break;
-        case TYPE_CONST_FLOAT:
-            break;
-        case TYPE_CONST_INT:
-            // TODO this is just for test.
-            return LLVMConstInt(type_builtin_i32()->llvm_type, bigint_as_unsigned(&expr->const_expr.value.big_int), false);
-        case TYPE_OPAQUE:break;
-        case TYPE_IMPORT:
-            break;
-        case TYPE_UNRESOLVED:break;
-        case TYPE_TYPEVAL:break;
-        case TYPE_STRING:break;
-        case TYPE_BUILTIN:
-            switch (expr->type->builtin.builtin_id)
+        case VALUE_TYPE_FLOAT:
+            if (value->float_bits <= sizeof(double) * 8)
             {
-                case BUILTIN_UNSIGNED_INT:
-                    return LLVMConstInt(expr->type->llvm_type, bigint_as_unsigned(&expr->const_expr.value.big_int), false);
-                case BUILTIN_SIGNED_INT:
-                    return LLVMConstInt(expr->type->llvm_type, (uint64_t)bigint_as_signed(&expr->const_expr.value.big_int), true);
-                case BUILTIN_FLOAT:
-                    // TODO
-                    return LLVMConstReal(expr->type->llvm_type, expr->const_expr.value.f);
-                case BUILTIN_BOOL:
-                    return LLVMConstInt(expr->type->llvm_type, expr->const_expr.value.b ? 1 : 0, false);
+                return LLVMConstReal(type, (double)value->f);
             }
-            UNREACHABLE;
-        case TYPE_NIL:break;
+            else
+            {
+                char buffer[256];
+                sprintf(buffer, "%Lg", value->f);
+                return LLVMConstRealOfString(type, buffer);
+            }
+        case VALUE_TYPE_INT:
+            assert(value->int_bits && "Compile time int not allowed here");
+            if (value->big_int.digit_count == 0)
+            {
+                return LLVMConstNull(type);
+            }
+            else
+            {
+                LLVMValueRef unsigned_val;
+                if (value->big_int.digit_count == 1)
+                {
+                    unsigned_val = LLVMConstInt(type, value->big_int.digit, false);
+                }
+                else
+                {
+                    unsigned_val = LLVMConstIntOfArbitraryPrecision(type, value->big_int.digit_count, value->big_int.digits);
+                }
+                return value->big_int.is_negative ? LLVMConstNeg(unsigned_val) : unsigned_val;
+            }
+        case VALUE_TYPE_BOOL:
+            return LLVMConstInt(type, value->b ? 1 : 0, false);
+        case VALUE_TYPE_NIL:
+            return LLVMConstNull(type);
+        case VALUE_TYPE_STRING:
+            return LLVMConstStringInContext(active_context, value->str, value->str_len, false);
+        case VALUE_TYPE_ERROR:
+            UNREACHABLE
     }
-    return NULL;
 }
+
 LLVMValueRef perform_expr(LLVMValueRef left, LLVMValueRef right, token_type token, bool use_float, bool use_signed)
 {
     switch (token)
@@ -492,6 +520,18 @@ static inline LLVMValueRef codegen_ternary_expr(Expr *expr)
     return LLVMBuildSelect(active_builder, select, true_res, false_res, "");
 }
 
+static LLVMValueRef codegen_cond(Ast *ast)
+{
+    switch (ast->cond_stmt.cond_type)
+    {
+        case COND_EXPR:
+            return codegen_expr(ast->cond_stmt.expr);
+        case COND_DECL:
+            TODO;
+    }
+
+}
+
 static LLVMValueRef codegen_expr(Expr *expr)
 {
     switch (expr->expr_id)
@@ -529,8 +569,7 @@ LLVMValueRef codegen_declare(Decl *decl)
 {
     assert(decl->type_id == DECL_VAR && decl->var.kind == VARDECL_LOCAL);
     LLVMValueRef val = NULL;
-    decl->var.llvm_ref = LLVMBuildAlloca(active_builder, llvm_type(decl->var.type), "");
-    LLVMSetValueName2(decl->var.llvm_ref, decl->name.start, decl->name.length);
+    codegen_decl_alloca(decl);
     if (decl->var.init_expr)
     {
         val = codegen_expr(decl->var.init_expr);
@@ -541,6 +580,69 @@ LLVMValueRef codegen_declare(Decl *decl)
         }
     }
     return val;
+}
+
+static inline void codegen_if(Ast *stmt)
+{
+    assert(stmt->ast_id == AST_IF_STMT);
+
+    LLVMValueRef cond_value = codegen_cond(stmt->if_stmt.cond);
+
+    // Do shortcut on constant values.
+    switch (ast_cond_value(stmt->if_stmt.cond))
+    {
+        case COND_VARIABLE:
+            break;
+        case COND_TRUE:
+            codegen_block(stmt->if_stmt.then_body);
+            return;
+        case COND_FALSE:
+            if (stmt->if_stmt.else_body)
+            {
+                codegen_block(stmt->if_stmt.else_body);
+            }
+            return;
+    }
+
+    LLVMBasicBlockRef then_block = codegen_insert_block("then");
+    LLVMBasicBlockRef else_block = stmt->if_stmt.else_body ? codegen_insert_block("else") : NULL;
+
+    LLVMBasicBlockRef post_block = NULL;
+
+    if (stmt->exit != EXIT_NONE)
+    {
+        post_block = codegen_insert_block("if_post");
+    }
+
+    LLVMBuildCondBr(active_builder, cond_value, then_block, else_block ?: post_block);
+
+    // Left branch.
+    LLVMPositionBuilderAtEnd(active_builder, then_block);
+
+    codegen_block(stmt->if_stmt.then_body);
+
+    if (stmt->if_stmt.then_body->exit != EXIT_NONE)
+    {
+        LLVMBuildBr(active_builder, post_block);
+    }
+
+    if (stmt->if_stmt.else_body)
+    {
+        // Right branch.
+        LLVMMoveBasicBlockAfter(else_block, LLVMGetInsertBlock(active_builder));
+        LLVMPositionBuilderAtEnd(active_builder, else_block);
+        codegen_block(stmt->if_stmt.else_body);
+        if (stmt->if_stmt.else_body->exit != EXIT_NONE)
+        {
+            LLVMBuildBr(active_builder, post_block);
+        }
+    }
+    if (stmt->exit != EXIT_NONE)
+    {
+        // Continue in the post block.
+        LLVMMoveBasicBlockAfter(post_block, LLVMGetInsertBlock(active_builder));
+        LLVMPositionBuilderAtEnd(active_builder, post_block);
+    }
 }
 
 static inline void codegen_while(Ast *stmt)
@@ -555,12 +657,53 @@ static inline void codegen_while(Ast *stmt)
 
     LLVMBuildBr(active_builder, while_start);
     LLVMPositionBuilderAtEnd(active_builder, while_start);
-    LLVMBuildCondBr(active_builder, codegen_expr(stmt->while_stmt.expr), while_block, while_end);
+    LLVMBuildCondBr(active_builder, codegen_cond(stmt->while_stmt.cond), while_block, while_end);
     LLVMPositionBuilderAtEnd(active_builder, while_block);
     codegen_block(stmt->while_stmt.body);
 
     LLVMBuildBr(active_builder, while_start);
     LLVMPositionBuilderAtEnd(active_builder, while_end);
+
+    active_break = prev_break;
+    active_continue = prev_continue;
+}
+
+static inline void codegen_do(Ast *stmt)
+{
+    // Store break and continue statements
+    LLVMBasicBlockRef prev_break = active_break;
+    LLVMBasicBlockRef prev_continue = active_continue;
+
+
+
+    assert(stmt->exit == EXIT_RETURN || stmt->exit == EXIT_NONE);
+
+    LLVMBasicBlockRef do_end = active_break = stmt->exit == EXIT_RETURN ? NULL : codegen_insert_block("do.end");
+
+    LLVMBasicBlockRef do_cond = active_continue = do_end && !expr_is_const_false(stmt->expr_stmt.expr)
+            ? codegen_insert_block("do.cond") : do_end;
+
+    LLVMBasicBlockRef do_body = codegen_insert_block("do.body");
+
+    LLVMBuildBr(active_builder, do_body);
+    LLVMPositionBuilderAtEnd(active_builder, do_body);
+    codegen_block(stmt->do_stmt.body);
+
+    if (do_end)
+    {
+        // Skip branch to end if it ends with break or continue.
+        if (stmt->do_stmt.body->exit == EXIT_NONE) LLVMBuildBr(active_builder, do_cond);
+
+        // Emit cond if we have one
+        if (do_cond != do_end)
+        {
+            LLVMPositionBuilderAtEnd(active_builder, do_cond);
+            LLVMBuildCondBr(active_builder, codegen_expr(stmt->do_stmt.expr), do_body, do_end);
+        }
+
+        // Position to end
+        LLVMPositionBuilderAtEnd(active_builder, do_end);
+    }
 
     active_break = prev_break;
     active_continue = prev_continue;
@@ -628,7 +771,11 @@ static void codegen_block(Ast *block)
                 codegen_return(stmt);
                 break;
             case AST_IF_STMT:
+                codegen_if(stmt);
+                break;
             case AST_DO_STMT:
+                codegen_do(stmt);
+                break;
             case AST_DEFER_STMT:
             case AST_SWITCH_STMT:
             case AST_CASE_STMT:
@@ -646,8 +793,7 @@ static void codegen_block(Ast *block)
 void codegen_parameter_var(Decl *param, unsigned index)
 {
     assert(param->type_id == DECL_VAR && param->var.kind == VARDECL_PARAM);
-    param->var.llvm_ref = LLVMBuildAlloca(active_builder, llvm_type(param->var.type), "");
-    LLVMSetValueName2(param->var.llvm_ref, param->name.start, param->name.length);
+    codegen_decl_alloca(param);
     LLVMBuildStore(active_builder, LLVMGetParam(active_func->func_decl.llvm_function_proto, index), param->var.llvm_ref);
 }
 
@@ -657,6 +803,7 @@ void codegen_function(Decl *function)
 
     assert(!active_func);
     LLVMBuilderRef previous_builder = active_builder;
+    LLVMBasicBlockRef previous_entry = active_entry;
 
     active_func = function;
     active_break = NULL;
@@ -665,6 +812,7 @@ void codegen_function(Decl *function)
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(active_context, active_func->func_decl.llvm_function_proto, "entry");
 
     active_builder = LLVMCreateBuilderInContext(active_context);
+    active_entry = entry;
     LLVMPositionBuilderAtEnd(active_builder, entry);
 
     // Generate LLVMValueRef's for all parameters, so we can use them as local vars in code
@@ -681,6 +829,7 @@ void codegen_function(Decl *function)
 
     active_func = NULL;
 
+    active_entry = previous_entry;
 }
 
 void codegen_global_var(LLVMModuleRef llvm_module, Parser *parser, Ast *variable)

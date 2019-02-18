@@ -150,6 +150,7 @@ typedef struct _Expr
     ExprTypeId expr_id : 8;
     ExprConstState const_state : 2;
     bool is_evaluating : 1;
+    bool is_lvalue : 1;
     Token span;
     Type *type;
     union {
@@ -167,7 +168,6 @@ typedef struct _Expr
         ExprDesignatedInitializer designated_initializer_expr;
         ExprSizeof sizeof_expr;
         ExprCast cast_expr;
-
     };
 } Expr;
 
@@ -177,3 +177,4 @@ Expr *expr_new(ExprTypeId type, Token *span);
 Expr *expr_copy(Expr *expr);
 Expr *expr_new_type_expr(Type *type, Token *span);
 void expr_replace(Expr *target, Expr *source);
+bool expr_is_const_false(Expr *cond);

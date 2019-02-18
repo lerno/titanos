@@ -9,6 +9,25 @@
 #include "common.h"
 #include "lexer.h"
 
+typedef enum _CastResult
+{
+    CAST_INLINE,
+    CAST_FAILED,
+    CAST_PTRPTR,
+    CAST_INTPTR,
+    CAST_PTRINT,
+    CAST_FPFP,
+    CAST_FPUI,
+    CAST_FPSI,
+    CAST_UIFP,
+    CAST_UIUI,
+    CAST_UISI,
+    CAST_SIFP,
+    CAST_SISI,
+    CAST_SIUI
+} CastResult;
+
+
 // IF ORDER IS CHANGED, rewrite type_implicit_convert_ordered
 typedef enum _TypeId
 {
@@ -28,7 +47,6 @@ typedef enum _TypeId
     TYPE_CONST_INT,
     // TYPE_OPAQUE, TYPE_MODULE?, TYPE_NONNULL_PTR? VECTOR ETC
 } TypeId;
-
 
 
 typedef struct _Type Type;
@@ -65,23 +83,6 @@ typedef enum _BuiltinKind {
     BUILTIN_BOOL,
 } BuiltinKind;
 
-typedef enum _CastResult
-{
-    CAST_INLINE,
-    CAST_FAILED,
-    CAST_PTRPTR,
-    CAST_INTPTR,
-    CAST_PTRINT,
-    CAST_FPFP,
-    CAST_FPUI,
-    CAST_FPSI,
-    CAST_UIFP,
-    CAST_UIUI,
-    CAST_UISI,
-    CAST_SIFP,
-    CAST_SISI,
-    CAST_SIUI
-} CastResult;
 
 extern const CastResult builtin_casts[4][4];
 

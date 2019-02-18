@@ -12,6 +12,8 @@
 
 typedef struct _Ast Ast;
 typedef struct _Type Type;
+typedef struct _Decl Decl;
+
 typedef enum _AstType
 {
     AST_ATTRIBUTE,
@@ -19,6 +21,7 @@ typedef enum _AstType
     AST_IF_STMT,
     AST_WHILE_STMT,
     AST_DO_STMT,
+    AST_COND_STMT,
     AST_DECLARE_STMT,
     AST_DEFER_STMT,
     AST_SWITCH_STMT,
@@ -43,6 +46,20 @@ typedef struct _DeferList
     Ast *defer_end;
 } DeferList;
 
+typedef enum CondType
+{
+    COND_DECL,
+    COND_EXPR,
+} CondType;
+
+typedef struct _AstCondStmt
+{
+    CondType cond_type : 2;
+    union {
+        Decl *decl;
+        Expr *expr;
+    };
+} AstCondStmt;
 
 typedef struct _AstDeclareStmt
 {
@@ -60,7 +77,7 @@ typedef struct _AstCompoundStmt
 
 typedef struct _AstIfStmt
 {
-    Expr *expr;
+    Ast *cond;
     Ast *then_body;
     Ast *else_body;
 } AstIfStmt;
@@ -86,18 +103,22 @@ typedef struct _AstForStmt
     Ast *body;
 } AstForStmt;
 
-struct _AstDoWhileStmt
+typedef struct _AstWhileStmt
+{
+    Ast *cond;
+    Ast *body;
+} AstWhileStmt;
+
+typedef struct _AstDoStmt
 {
     Expr *expr;
     Ast *body;
-};
+} AstDoStmt;
 
-typedef struct _AstDoWhileStmt AstDoStmt;
-typedef struct _AstDoWhileStmt AstWhileStmt;
 
 typedef struct _AstSwitchStmt
 {
-    Expr *expr;
+    Ast *cond;
     Vector *case_list;
     Ast *default_stmt;
 } AstSwitchStmt;
@@ -169,9 +190,20 @@ typedef struct _AstExprStmt
     Expr *expr;
 } AstExprStmt;
 
+// Ordering here is in priority if two branches should have the same exit.
+typedef enum _ExitType
+{
+    EXIT_NONE,
+    EXIT_BREAK,
+    EXIT_CONTINUE,
+    EXIT_RETURN
+} ExitType;
+
+
 typedef struct _Ast
 {
     AstType ast_id : 8;
+    ExitType exit : 3;
     Token span;
     union {
 
@@ -191,6 +223,7 @@ typedef struct _Ast
         AstLabelStmt label_stmt;
         AstDeferReleaseStmt defer_release_stmt;
         AstExprStmt expr_stmt;
+        AstCondStmt cond_stmt;
     };
 } Ast;
 
@@ -199,5 +232,19 @@ void print_sub_ast(const char *header, unsigned current_indent, Ast *ast);
 Ast *new_ast(AstType type);
 Ast *new_ast_with_span(AstType type, Token *span);
 Ast *end_ast(Ast *ast, Token *end);
+
+typedef enum _CondValue
+{
+    COND_VARIABLE,
+    COND_TRUE,
+    COND_FALSE
+} CondValue;
+
+/**
+ * Check if condition is always true
+ * @param cond the condition to test
+ * @return COND_VARIABLE if non constant, othersie COND_TRUE / COND_FALSE
+ */
+CondValue ast_cond_value(Ast *cond_stmt);
 
 Ast *ast_compound_stmt_last(Ast *compound_stmt);

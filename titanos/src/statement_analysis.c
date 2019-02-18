@@ -13,43 +13,25 @@
 #include "constant_folding.h"
 #include "expression_analysis.h"
 
-static inline bool analyse_while(Ast *stmt)
+static inline Vector *defer_stack()
 {
-    scope_enter(SCOPE_DECL | SCOPE_CONTROL);
-    bool success = analyse_expr(stmt->while_stmt.expr, RHS);
-    scope_enter(SCOPE_BREAK | SCOPE_CONTINUE | SCOPE_DECL);
-    success = analyse_stmt(stmt->while_stmt.body) && success;
-    scope_exit(stmt->while_stmt.body);
-    // Control scope will prevent defer.
-    scope_exit(NULL);
-    return success;
+    __thread static Vector stack = { .size = 0 };
+    return &stack;
 }
 
-static inline bool analyse_do(Ast *stmt)
-{
-    scope_enter(SCOPE_BREAK | SCOPE_CONTINUE | SCOPE_DECL);
-    bool success = analyse_stmt(stmt->do_stmt.body);
-    scope_exit(stmt->while_stmt.body);
-    scope_enter(SCOPE_DECL | SCOPE_CONTROL);
-    success = analyse_expr(stmt->while_stmt.expr, RHS) || success;
-    scope_exit(NULL);
-    return success;
-}
 
-bool analyse_decl_stmt(Ast *decl_stmt)
+bool analyse_decl(Decl *decl)
 {
     LOG_FUNC
-    assert(decl_stmt->ast_id == AST_DECLARE_STMT);
 
     if (!scope_allow_decl())
     {
-        sema_error_at(&decl_stmt->span, "Declarations is not allowed here");
+        sema_error_at(&decl->span, "Declarations is not allowed here");
         return false;
     }
 
     scope_set_has_decls();
 
-    Decl *decl = decl_stmt->declare_stmt.decl;
     assert(decl->type_id == DECL_VAR);
     assert(decl->var.kind == VARDECL_LOCAL);
 
@@ -112,14 +94,34 @@ bool analyse_decl_stmt(Ast *decl_stmt)
 
     return success;
 }
+bool analyse_decl_stmt(Ast *decl_stmt)
+{
+    LOG_FUNC
+    assert(decl_stmt->ast_id == AST_DECLARE_STMT);
+
+    return analyse_decl(decl_stmt->declare_stmt.decl);
+}
 
 bool analyse_compound_stmt(Ast *compound_stmt)
 {
     assert(active_analyser->current_func);
-    for (unsigned i = 0; i < compound_stmt->compound_stmt.stmts->size; i++)
+    Vector *stmts = compound_stmt->compound_stmt.stmts;
+    int exit_found = -1;
+    for (unsigned i = 0; i < stmts->size; i++)
     {
-        analyse_stmt(compound_stmt->compound_stmt.stmts->entries[i]);
+        Ast *stmt = stmts->entries[i];
+        analyse_stmt(stmt);
         if (scope_had_errors()) return false;
+        if (exit_found == -1 && stmt->exit != EXIT_NONE)
+        {
+            exit_found = i;
+            compound_stmt->exit = stmt->exit;
+        }
+    }
+    // If we find the exit, remove the last statements even though we analysed them. Possibly we even skip analysis.
+    if (exit_found > -1)
+    {
+        stmts->size = (unsigned)exit_found + 1;
     }
     return true;
 }
@@ -135,6 +137,7 @@ bool analyse_global_var(Decl *decl)
 
 bool analyse_return(Ast *stmt)
 {
+    stmt->exit = EXIT_RETURN;
     if (!scope_allow_scope_exit())
     {
         sema_error_at(&stmt->span, "Return statement is forbidden in defer");
@@ -179,9 +182,10 @@ static inline bool analyse_break(Ast *stmt)
         sema_error_at(&stmt->span, "Break is not allowed here");
         return false;
     }
-    scope_has_breaks();
+    scope_set_has_breaks();
+    stmt->exit = EXIT_BREAK;
 //    B->deferList = scope.exitScopeDefers(Scope::BreakScope);
-
+    return true;
 }
 static inline bool analyse_continue(Ast *stmt)
 {
@@ -191,6 +195,7 @@ static inline bool analyse_continue(Ast *stmt)
         sema_error_at(&stmt->span, "Unexpected continue found");
         return false;
     }
+    stmt->exit = EXIT_CONTINUE;
     // TODO
     // C->deferList = scope.exitScopeDefers(Scope::ContinueScope);
     return true;
@@ -198,19 +203,43 @@ static inline bool analyse_continue(Ast *stmt)
 
 static inline bool analyse_condition(Ast *stmt)
 {
-    if (stmt->ast_id == AST_DECLARE_STMT)
+    assert(stmt->ast_id == AST_COND_STMT);
+    switch (stmt->cond_stmt.cond_type)
     {
-        // TODO revisit!
-        if (!analyse_decl_stmt(stmt)) return false;
-        return true;
+        case COND_DECL:
+            if (!analyse_decl(stmt->cond_stmt.decl)) return false;
+            // TODO casts!
+            FATAL_ERROR("Missing cast code");
+            return true;
+        case COND_EXPR:
+            if (!analyse_expr(stmt->cond_stmt.expr, RHS)) return false;
+            return insert_bool_cast_for_conditional_if_needed(stmt->cond_stmt.expr);
     }
-    else
-    {
-        Expr *expr = stmt->expr_stmt.expr;
-        assert(stmt->ast_id == AST_EXPR_STMT);
-        if (!analyse_expr(expr, RHS)) return false;
-        return insert_bool_cast_for_conditional_if_needed(expr);
-    }
+}
+
+static inline bool analyse_while(Ast *stmt)
+{
+    scope_enter(SCOPE_DECL | SCOPE_CONTROL);
+    bool success = analyse_condition(stmt->while_stmt.cond);
+    scope_enter(SCOPE_BREAK | SCOPE_CONTINUE | SCOPE_DECL);
+    success = analyse_stmt(stmt->while_stmt.body) && success;
+    stmt->exit = (stmt->while_stmt.body->exit == EXIT_RETURN && !scope_has_breaks() && !scope_has_continues()) ? EXIT_RETURN : EXIT_NONE;
+    scope_exit(stmt->while_stmt.body);
+    // Control scope will prevent defer.
+    scope_exit(NULL);
+    return success;
+}
+
+static inline bool analyse_do(Ast *stmt)
+{
+    scope_enter(SCOPE_BREAK | SCOPE_CONTINUE | SCOPE_DECL);
+    bool success = analyse_stmt(stmt->do_stmt.body);
+    stmt->exit = (stmt->while_stmt.body->exit == EXIT_RETURN && !scope_has_breaks() && !scope_has_continues()) ? EXIT_RETURN : EXIT_NONE;
+    scope_exit(stmt->do_stmt.body);
+    scope_enter(SCOPE_DECL | SCOPE_CONTROL);
+    success = analyse_expr(stmt->do_stmt.expr, RHS) || success;
+    scope_exit(NULL);
+    return success;
 }
 
 static inline bool analyse_case_stmt(Ast *stmt)
@@ -227,24 +256,49 @@ static inline bool analyse_if_stmt(Ast *stmt)
 {
     assert(stmt->ast_id == AST_IF_STMT);
     scope_enter(SCOPE_DECL);
-    analyse_condition(stmt->if_stmt.expr);
+    analyse_condition(stmt->if_stmt.cond);
     scope_enter(SCOPE_DECL);
     analyse_stmt(stmt->if_stmt.then_body);
+    CondValue cond_value = ast_cond_value(stmt->if_stmt.cond);
     scope_exit(stmt->if_stmt.then_body);
+
+    // Set default exit to that of the "then" body – except if the condifition is sure to evaluate to false.
+    stmt->exit = cond_value == COND_FALSE ? EXIT_NONE : stmt->if_stmt.then_body->exit;
+
+
     if (stmt->if_stmt.else_body)
     {
         scope_enter(SCOPE_DECL);
         analyse_stmt(stmt->if_stmt.else_body);
         scope_exit(stmt->if_stmt.else_body);
+
+        switch (cond_value)
+        {
+            case COND_TRUE:
+                // Else never executed, so exit status is same as then.
+                break;
+            case COND_FALSE:
+                // Always the else, so exit is same as else.
+                stmt->exit = stmt->if_stmt.else_body->exit;
+                break;
+            case COND_VARIABLE:
+                // Any result is possible, so exit is the same as min of the two possible exits:
+                if (stmt->exit > stmt->if_stmt.else_body->exit)
+                {
+                    stmt->exit = stmt->if_stmt.else_body->exit;
+                }
+                break;
+        }
     }
-    scope_exit(stmt->if_stmt.expr);
+    scope_exit(NULL);
+    return true;
 }
 
 static inline bool analyse_switch(Ast *stmt)
 {
     LOG_FUNC
     scope_enter(SCOPE_DECL | SCOPE_CONTROL);
-    if (!analyse_condition(stmt->switch_stmt.expr)) return false;
+    if (!analyse_condition(stmt->switch_stmt.cond)) return false;
     scope_enter(SCOPE_BREAK | SCOPE_SWITCH);
     for (unsigned i = 0; i < stmt->switch_stmt.case_list->size; i++)
     {
@@ -265,6 +319,7 @@ static inline bool analyse_switch(Ast *stmt)
     scope_exit(NULL);
     // Since we have control scope, we know this is empty of defers.
     scope_exit(NULL);
+    return true;
 }
 
 bool analyse_stmt(Ast *stmt)
@@ -285,6 +340,8 @@ bool analyse_stmt(Ast *stmt)
             {
   //              scope.ExitScope(Context, &S);
             }
+        case AST_IF_STMT:
+            return analyse_if_stmt(stmt);
         case AST_WHILE_STMT:
             return analyse_while(stmt);
         case AST_CONTINUE_STMT:
@@ -298,6 +355,9 @@ bool analyse_stmt(Ast *stmt)
         case AST_CASE_STMT:
         case AST_DEFAULT_STMT:
             // These are handled inside of the switch stmt
+            UNREACHABLE
+        case AST_COND_STMT:
+            // Handled inside of for/while/switch
             UNREACHABLE
 
 #ifdef TODOX

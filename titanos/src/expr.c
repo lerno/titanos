@@ -151,3 +151,7 @@ void expr_replace(Expr *target, Expr *source)
     target->span = original_span;
 }
 
+bool expr_is_const_false(Expr *cond)
+{
+    return cond->expr_id == EXPR_CONST && !value_as_bool(&cond->const_expr.value);
+}

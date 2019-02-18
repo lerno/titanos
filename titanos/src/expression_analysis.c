@@ -9,11 +9,20 @@
 #include "diagnostics.h"
 #include "builtins.h"
 
-static bool analyse_cast_expr(Expr *expr);
+static bool analyse_cast_expr(Expr *expr, Side side);
 
 static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool implicit);
 
 
+static bool is_rvalue(Expr *expr)
+{
+    if (expr->is_lvalue)
+    {
+        sema_error_at(&expr->span, "Expression is not assignable");
+        return false;
+    }
+    return true;
+}
 static inline bool is_castable(Type *type)
 {
     switch (type->type_id)
@@ -243,7 +252,7 @@ static inline bool is_both_const(Expr *left, Expr *right)
 }
 
 
-static inline bool analyse_minus_expr(Expr *binary)
+static inline bool analyse_minus_expr(Expr *binary, Side side)
 {
     Expr *left = binary->binary_expr.left;
     Expr *right = binary->binary_expr.right;
@@ -267,7 +276,7 @@ static inline bool analyse_minus_expr(Expr *binary)
 }
 
 
-static inline bool analyse_plus_expr(Expr *binary)
+static inline bool analyse_plus_expr(Expr *binary, Side side)
 {
     Expr *left = binary->binary_expr.left;
     Expr *right = binary->binary_expr.right;
@@ -349,32 +358,52 @@ static inline bool analyse_mod_expr(Expr *binary)
     return true;
 }
 
+static inline bool analyse_eq_expr(Expr *binary)
+{
+    Expr *left = binary->binary_expr.left;
+    Expr *right = binary->binary_expr.right;
+
+    // TODO
+    return false;
+}
+
 bool analyse_binary_expr(Expr *expr, Side side)
 {
     LOG_FUNC
     Expr *left = expr->binary_expr.left;
     Expr *right = expr->binary_expr.right;
-    bool success = analyse_expr(left, RHS);
-    success = analyse_expr(right, RHS) & success;
-    if (!success) return false;
-
     switch (expr->binary_expr.operator)
     {
         case TOKEN_EQ:
             // Make sure types match, otherwise try inserting a cast.
-            left->identifier_expr.is_ref = true;
-            return insert_implicit_cast_if_needed(right, left->type);
+            return analyse_expr(left, LHS)
+                   && analyse_expr(right, side)
+                   && insert_implicit_cast_if_needed(right, left->type);
         case TOKEN_MINUS:
-            return analyse_minus_expr(expr);
+            return analyse_expr(left, RHS)
+                   && analyse_expr(right, RHS)
+                   && analyse_minus_expr(expr, side);
         case TOKEN_PLUS:
-            return analyse_plus_expr(expr);
+            return analyse_expr(left, RHS)
+                   && analyse_expr(right, RHS)
+                   && analyse_plus_expr(expr, side);
         case TOKEN_DIV:
-            return analyse_div_expr(expr);
+            return analyse_expr(left, RHS)
+                   && analyse_expr(right, RHS)
+                   && analyse_div_expr(expr) && is_rvalue(expr);
         case TOKEN_STAR:
-            return analyse_mult_expr(expr);
+            return analyse_expr(left, RHS)
+                   && analyse_expr(right, RHS)
+                   && analyse_mult_expr(expr) && is_rvalue(expr);
         case TOKEN_MOD:
-            return analyse_mod_expr(expr);
+            return analyse_expr(left, RHS)
+                   && analyse_expr(right, RHS)
+                   &&
+                   analyse_mod_expr(expr) && is_rvalue(expr);
         case TOKEN_EQEQ:
+            return analyse_expr(left, RHS)
+                   && analyse_expr(right, RHS)
+                   && analyse_eq_expr(expr) && is_rvalue(expr);
         case TOKEN_NOT_EQUAL:
         case TOKEN_GREATER:
         case TOKEN_GREATER_EQ:
@@ -456,79 +485,6 @@ static inline bool analyse_ternary_expr(Expr *expr, Side side)
 }
 
 
-static bool is_assignable(Expr *expr)
-{
-    return true;
-    /*
-    switch (expr->expr_id)
-    {
-        case EXPR_TYPE:
-            break;
-        case EXPR_CONST:
-            break;
-        case EXPR_BINARY:
-            return is_assignable(expr->binary_expr.left) && is_assignable(expr->binary_expr.right);
-        case EXPR_TERNARY:
-            return returnis_assignable(expr->ternary_expr.true_expr) && is_assignable(expr->ternary_expr.false_expr);
-        case EXPR_UNARY:
-            // &x = ... and *x = ... are valid, the rest (-, --, ++, !, ~) are not.
-            return expr->unary_expr.operator == TOKEN_STAR || expr->unary_expr.operator == TOKEN_AMP;
-            break;
-        case EXPR_POST:break;
-        case EXPR_IDENTIFIER:break;
-        case EXPR_CALL:break;
-        case EXPR_SIZEOF:break;
-        case EXPR_CAST:break;
-        case EXPR_SUBSCRIPT:break;
-        case EXPR_ACCESS:break;
-        case EXPR_STRUCT_INIT_VALUES:break;
-        case EXPR_DESIGNATED_INITIALIZED:break;
-    }
-    bool FunctionAnalyser::checkAssignee(Expr* expr) const {
-        switch (expr->getKind()) {
-            case EXPR_INTEGER_LITERAL:
-            case EXPR_FLOAT_LITERAL:
-            case EXPR_BOOL_LITERAL:
-            case EXPR_CHAR_LITERAL:
-            case EXPR_STRING_LITERAL:
-            case EXPR_NIL:
-                break;
-            case EXPR_CALL:
-            case EXPR_IDENTIFIER:
-                // ok
-                return true;
-            case EXPR_INITLIST:
-            case EXPR_DESIGNATOR_INIT:
-            case EXPR_TYPE:
-                break;
-            case EXPR_BINOP:
-                // ok
-                return true;
-            case EXPR_CONDOP:
-                break;
-            case EXPR_UNARYOP:
-                // sometimes... (&)
-                return true;
-            case EXPR_BUILTIN:
-                break;
-            case EXPR_ARRAYSUBSCRIPT:
-            case EXPR_MEMBER:
-            case EXPR_PAREN:
-            case EXPR_BITOFFSET:
-                // ok
-                return true;
-            case EXPR_CAST:
-                TODO;
-                break;
-        }
-        // expr is not assignable
-        // TODO test (also ternary)
-        Diag(expr->getLocation(), diag::err_typecheck_expression_not_modifiable_lvalue);
-        return false;
-    }
-*/
-}
-
 static bool cast_const_type_expression(Expr *expr, Type *target_type, bool is_implicit)
 {
     switch (expr->expr_id)
@@ -600,17 +556,26 @@ static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool 
             UNREACHABLE
         case TYPE_VOID:
         case TYPE_NIL:
-        case TYPE_CONST_FLOAT:
-        case TYPE_CONST_INT:
         case TYPE_OPAQUE:
         case TYPE_TYPEVAL:
         case TYPE_ARRAY:
+        case TYPE_CONST_INT:
         {
             char *name = type_to_string(target_type);
             sema_error_at(&expr->span, "Cannot cast expression to '%s'", name);
             free(name);
             return CAST_FAILED;
         }
+        case TYPE_CONST_FLOAT:
+            if (source_type->type_id == TYPE_CONST_INT)
+            {
+                expr->const_expr.value.f = bigint_as_float(&expr->const_expr.value.big_int);
+                expr->const_expr.value.float_bits = 0;
+                expr->type = target_type;
+                expr->const_expr.value.type = VALUE_TYPE_FLOAT;
+                return CAST_INLINE;
+            }
+            break;
         case TYPE_STRING:
             if (is_same_type)
             {
@@ -695,9 +660,9 @@ static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool 
     return CAST_FAILED;
 }
 
-static bool analyse_cast_expr(Expr *expr)
+static bool analyse_cast_expr(Expr *expr, Side side)
 {
-    if (!analyse_expr(expr->cast_expr.expr, RHS)) return false;
+    if (!analyse_expr(expr->cast_expr.expr, side)) return false;
     if (!resolve_type(&expr->cast_expr.type, false)) return false;
     Type *target_type = expr->cast_expr.type;
     Type *source_type = expr->cast_expr.expr->type;
@@ -792,21 +757,20 @@ bool analyse_const_expr(Expr *expr)
     return true;
 }
 
+
+
 bool analyse_expr(Expr *expr, Side side)
 {
     LOG_FUNC
-    if (side == LHS)
-    {
-        if (!is_assignable(expr)) return false;
-    }
+    expr->is_lvalue = side == LHS;
     switch (expr->expr_id)
     {
         case EXPR_TYPE:
-            return analyse_type_expr(expr);
+            return analyse_type_expr(expr) && is_rvalue(expr);
         case EXPR_CAST:
-            return analyse_cast_expr(expr);
+            return analyse_cast_expr(expr, side);
         case EXPR_CONST:
-            return analyse_const_expr(expr);
+            return analyse_const_expr(expr) && is_rvalue(expr);
         case EXPR_BINARY:
             return analyse_binary_expr(expr, side);
         case EXPR_TERNARY:

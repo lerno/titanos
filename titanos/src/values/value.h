@@ -60,11 +60,11 @@ Value value_div(Value lhs, Value rhs);
 Value value_not(Value value);
 Value value_nil();
 void value_update_to_float(Value *value, long double f, uint16_t bits);
-
 const char *value_type_name(const Value *value);
 typedef struct _Type Type;
 Type *value_find_type(const Value *value);
 void value_print(Value value);
+bool value_as_bool(Value *value);
 
 bool value_convert_to_type(Value *value1, Value *value2);
 bool value_convert(Value *value, ValueType type, uint16_t bits, bool is_unsigned, bool allow_trunc);

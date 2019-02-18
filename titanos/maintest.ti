@@ -41,14 +41,31 @@ type kex struct
 
 public func i32 main(i32 xwok) @(foo = 1 + 2) {
 
+f64 ef = 1 + 0.023;
     i8[10 + 1] buffer2;
     i32 a = 21 + cast(21, i32);
     i32 b = 10;
     i64 c = 38;
+    bool d = false;
+    (d ? a : b) = 10;
+    do {
+
+      b = b + 1;
+      return 1;
+    } while (d);
+
+    if (true)
+    {
+        b = 11;
+    }
+    else
+    {
+       c = 12;
+       return 1;
+    }
+
     bool e = true;
 //    const u8* name = "bas";
-    a = c ? 1 : 2;
-
     while (e)
 {
  i32 x = 0;

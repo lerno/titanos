@@ -260,7 +260,7 @@ Make sure this is set!
             label_defer_top = label_defer_top->defer_stmt.prev_defer;
         }
     }
-
+    return true;
 }
 
 static bool analyse_func_body(Decl *func)

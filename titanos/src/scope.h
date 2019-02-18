@@ -22,6 +22,7 @@ typedef enum _ScopeFlags
 
     SCOPE_HAS_DECLS = 0x800000, // Set if scope has decls
     SCOPE_HAS_BREAKS = 0x1000000, // Set if there are breaks
+    SCOPE_HAS_CONTINUE = 0x2000000, // Set if there are continues
 
 } ScopeFlags;
 
@@ -73,7 +74,16 @@ static inline void scope_set_has_decls()
     active_scope->cur_scope->flags |= SCOPE_HAS_DECLS;
 }
 bool scope_had_errors(void);
-void scope_set_has_breaks(void);
+static inline void scope_set_has_breaks(void)
+{
+    active_scope->cur_scope->flags |= SCOPE_HAS_BREAKS;
+}
+
+static inline void scope_set_has_continues(void)
+{
+    active_scope->cur_scope->flags |= SCOPE_HAS_CONTINUE;
+}
+
 bool scope_has_error(void);
 static inline bool scope_allow_break()
 {
@@ -94,6 +104,10 @@ static inline bool scope_has_decls()
 static inline bool scope_has_breaks()
 {
     return (active_scope->cur_scope->flags & SCOPE_HAS_BREAKS) != 0;
+}
+static inline bool scope_has_continues()
+{
+    return (active_scope->cur_scope->flags & SCOPE_HAS_CONTINUE) != 0;
 }
 static inline bool scope_allow_scope_exit()
 {

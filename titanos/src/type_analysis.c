@@ -61,7 +61,7 @@ bool resolve_array_size(Type *type)
                       "Array size cannot exceed %d", MAX_ARRAY_SIZE);
         return false;
     }
-    DEBUG_LOG("Array size %d", array_size);
+    DEBUG_LOG("Array size %d", (int)array_size);
     type->array.is_len_resolved = true;
     type->array.len = (uint32_t)array_size;
     return true;

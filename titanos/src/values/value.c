@@ -149,6 +149,25 @@ Value value_new_string(const char *string, uint32_t len)
     return (Value) { .str = string, .str_len = len, .type = VALUE_TYPE_STRING };
 }
 
+bool value_as_bool(Value *value)
+{
+    switch (value->type)
+    {
+        case VALUE_TYPE_FLOAT:
+            return value->f != 0.0;
+        case VALUE_TYPE_INT:
+            return bigint_cmp_zero(&value->big_int) != INT_EQ;
+        case VALUE_TYPE_BOOL:
+            return value->b;
+        case VALUE_TYPE_NIL:
+            return false;
+        case VALUE_TYPE_STRING:
+            return true;
+        case VALUE_TYPE_ERROR:
+            return false;
+    }
+}
+
 Value value_to_bool(Value value)
 {
     switch (value.type)
