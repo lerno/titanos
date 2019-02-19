@@ -12,6 +12,9 @@
 #include "expr.h"
 #include "constant_folding.h"
 #include "expression_analysis.h"
+#include "arena_allocator.h"
+
+
 
 static inline Vector *defer_stack()
 {
@@ -102,8 +105,9 @@ bool analyse_decl_stmt(Ast *decl_stmt)
     return analyse_decl(decl_stmt->declare_stmt.decl);
 }
 
-bool analyse_compound_stmt(Ast *compound_stmt)
+bool analyse_compound_stmt_inner(Ast *compound_stmt)
 {
+    assert(compound_stmt->ast_id == AST_COMPOUND_STMT);
     assert(active_analyser->current_func);
     Vector *stmts = compound_stmt->compound_stmt.stmts;
     int exit_found = -1;
@@ -111,7 +115,10 @@ bool analyse_compound_stmt(Ast *compound_stmt)
     {
         Ast *stmt = stmts->entries[i];
         analyse_stmt(stmt);
-        if (scope_had_errors()) return false;
+        if (scope_had_errors())
+        {
+            return false;
+        }
         if (exit_found == -1 && stmt->exit != EXIT_NONE)
         {
             exit_found = i;
@@ -125,6 +132,20 @@ bool analyse_compound_stmt(Ast *compound_stmt)
     }
     return true;
 }
+
+bool analyse_compound_stmt_no_scope(Ast *compound_stmt)
+{
+    return analyse_compound_stmt_inner(compound_stmt);
+}
+
+bool analyse_compound_stmt_scoped(Ast *compound_stmt)
+{
+    scope_enter(SCOPE_DECL);
+    bool success = analyse_compound_stmt_inner(compound_stmt);
+    scope_exit(success ? compound_stmt : NULL);
+    return success;
+}
+
 
 bool analyse_global_var(Decl *decl)
 {
@@ -222,7 +243,7 @@ static inline bool analyse_while(Ast *stmt)
     scope_enter(SCOPE_DECL | SCOPE_CONTROL);
     bool success = analyse_condition(stmt->while_stmt.cond);
     scope_enter(SCOPE_BREAK | SCOPE_CONTINUE | SCOPE_DECL);
-    success = analyse_stmt(stmt->while_stmt.body) && success;
+    success = analyse_compound_stmt_no_scope(stmt->while_stmt.body) && success;
     stmt->exit = (stmt->while_stmt.body->exit == EXIT_RETURN && !scope_has_breaks() && !scope_has_continues()) ? EXIT_RETURN : EXIT_NONE;
     scope_exit(stmt->while_stmt.body);
     // Control scope will prevent defer.
@@ -233,7 +254,7 @@ static inline bool analyse_while(Ast *stmt)
 static inline bool analyse_do(Ast *stmt)
 {
     scope_enter(SCOPE_BREAK | SCOPE_CONTINUE | SCOPE_DECL);
-    bool success = analyse_stmt(stmt->do_stmt.body);
+    bool success = analyse_compound_stmt_no_scope(stmt->do_stmt.body);
     stmt->exit = (stmt->while_stmt.body->exit == EXIT_RETURN && !scope_has_breaks() && !scope_has_continues()) ? EXIT_RETURN : EXIT_NONE;
     scope_exit(stmt->do_stmt.body);
     scope_enter(SCOPE_DECL | SCOPE_CONTROL);
@@ -242,14 +263,42 @@ static inline bool analyse_do(Ast *stmt)
     return success;
 }
 
+static inline bool analyse_switch_cast_stmts(Ast *case_stmt, Vector *stmts)
+{
+    int exit_found = -1;
+    for (unsigned i = 0; i < stmts->size; i++)
+    {
+        Ast *stmt = stmts->entries[i];
+        analyse_stmt(stmt);
+        if (scope_had_errors()) return false;
+        if (exit_found == -1 && stmt->exit != EXIT_NONE)
+        {
+            exit_found = i;
+            case_stmt->exit = stmt->exit;
+        }
+    }
+    // If we find the exit, remove the last statements even though we analysed them. Possibly we even skip analysis.
+    if (exit_found > -1)
+    {
+        stmts->size = (unsigned)exit_found + 1;
+    }
+    return true;
+}
+
 static inline bool analyse_case_stmt(Ast *stmt)
 {
-    return false;
+    if (!analyse_expr(stmt->case_stmt.expr, RHS)) return false;
+    if (stmt->case_stmt.expr->expr_id != EXPR_CONST)
+    {
+        sema_error_at(&stmt->case_stmt.expr->span, "Case branches must be constant");
+        return false;
+    }
+    return analyse_switch_cast_stmts(stmt, stmt->case_stmt.stmts);
 }
 
 static inline bool analyse_default_stmt(Ast *stmt)
 {
-    return false;
+    return analyse_switch_cast_stmts(stmt, stmt->default_stmt.stmts);
 }
 
 static inline bool analyse_if_stmt(Ast *stmt)
@@ -258,9 +307,9 @@ static inline bool analyse_if_stmt(Ast *stmt)
     scope_enter(SCOPE_DECL);
     analyse_condition(stmt->if_stmt.cond);
     scope_enter(SCOPE_DECL);
-    analyse_stmt(stmt->if_stmt.then_body);
-    CondValue cond_value = ast_cond_value(stmt->if_stmt.cond);
+    analyse_compound_stmt_no_scope(stmt->if_stmt.then_body);
     scope_exit(stmt->if_stmt.then_body);
+    CondValue cond_value = ast_cond_value(stmt->if_stmt.cond);
 
     // Set default exit to that of the "then" body – except if the condifition is sure to evaluate to false.
     stmt->exit = cond_value == COND_FALSE ? EXIT_NONE : stmt->if_stmt.then_body->exit;
@@ -269,7 +318,7 @@ static inline bool analyse_if_stmt(Ast *stmt)
     if (stmt->if_stmt.else_body)
     {
         scope_enter(SCOPE_DECL);
-        analyse_stmt(stmt->if_stmt.else_body);
+        analyse_compound_stmt_no_scope(stmt->if_stmt.else_body);
         scope_exit(stmt->if_stmt.else_body);
 
         switch (cond_value)
@@ -322,6 +371,141 @@ static inline bool analyse_switch(Ast *stmt)
     return true;
 }
 
+
+bool analyse_for(Ast *stmt)
+{
+    assert(stmt->ast_id == AST_FOR_STMT);
+    scope_enter(SCOPE_BREAK | SCOPE_CONTINUE | SCOPE_DECL | SCOPE_CONTROL);
+    if (stmt->for_stmt.init && !analyse_stmt(stmt->for_stmt.init)) return false;
+    if (stmt->for_stmt.cond)
+    {
+        if (!analyse_expr(stmt->for_stmt.cond, RHS)) return false;
+        // Check booleaness
+        if (!analyse_implicit_bool_cast(stmt->for_stmt.cond)) return false;
+    }
+    if (stmt->for_stmt.incr && !analyse_expr(stmt->for_stmt.incr, RHS)) return false;
+    // A new scope is necessary for defer.
+    analyse_compound_stmt_scoped(stmt->for_stmt.body);
+    scope_exit(NULL);
+}
+
+
+static Label *find_or_insert_label(Token *name)
+{
+    Vector *labels = &active_analyser->labels;
+    for (unsigned i = 0; i < labels->size; i++)
+    {
+        Label *other_label = labels->entries[i];
+        if (token_compare(&other_label->name, name))
+        {
+            return other_label;
+        }
+    }
+    Label *label = malloc_arena(sizeof(Label));
+    label->name = *name;
+    label->label_stmt = NULL;
+    vector_add(labels, label);
+    return label;
+}
+
+static inline void error_goto_into_defer(Ast *goto_stmt, Ast *label_stmt)
+{
+    sema_error_at(&goto_stmt->span, "Goto label '%.*s' jumps into defer", SPLAT_TOK(label_stmt->span));
+    prev_at(&label_stmt->span, "Label is defined here");
+}
+
+static inline void error_goto_out_of_defer(Ast *goto_stmt, Ast *label_stmt)
+{
+    sema_error_at(&goto_stmt->span, "Goto label '%.*s' jumps out of defer", SPLAT_TOK(label_stmt->span));
+    prev_at(&label_stmt->span, "Label is defined here");
+}
+
+static inline bool analyse_goto(Ast *stmt)
+{
+    assert(stmt->ast_id == AST_GOTO_STMT);
+
+    Label *label = find_or_insert_label(&stmt->goto_stmt.label_name);
+    stmt->goto_stmt.label = label;
+    label->first_goto = stmt;
+    stmt->goto_stmt.type = label->label_stmt ? GOTO_JUMP_BACK : GOTO_JUMP_FORWARD;
+
+    Ast *defer = scope_active_defer();
+    // We have a label found, so check that the goto does not have a different defer
+    if (label->label_stmt && label->defer != defer)
+    {
+        if (defer)
+        {
+            error_goto_out_of_defer(label->first_goto, stmt);
+        }
+        else
+        {
+            error_goto_into_defer(label->first_goto, stmt);
+        }
+        return false;
+    }
+    label->defer = defer;
+}
+
+static inline bool analyse_defer(Ast *stmt)
+{
+    assert(stmt->ast_id == AST_DEFER_STMT);
+    if (scope_is_defer())
+    {
+        sema_error_at(&stmt->span, "Nested defer statements is not allowed");
+        return false;
+    }
+    if (scope_is_control())
+    {
+        sema_error_at(&stmt->span, "Defer is not allowed here");
+        return false;
+    }
+
+    // Defer allows break but not continue.
+    scope_enter(SCOPE_DEFER | SCOPE_BREAK);
+    scope_set_defer(stmt);
+
+    analyse_compound_stmt_no_scope(stmt->defer_stmt.body);
+    scope_exit(NULL);
+    scope_push_defer(stmt);
+    return true;
+}
+
+static inline bool analyse_label(Ast *stmt)
+{
+    assert(stmt->ast_id == AST_LABEL);
+    LOG_FUNC
+    Label *label = find_or_insert_label(&stmt->label_stmt.label_name);
+    if (label->label_stmt)
+    {
+        sema_error_at(&stmt->span, "Redefinition of label '%.*s'", SPLAT_TOK(label->name));
+        prev_at(&label->label_stmt->span, "Previous definition was here");
+        return false;
+    }
+    Ast *defer = scope_active_defer();
+
+    // We have a goto, so check that the goto does not have a different defer
+    if (label->first_goto && label->defer != defer)
+    {
+        if (defer)
+        {
+            error_goto_into_defer(label->first_goto, stmt);
+        }
+        else
+        {
+            error_goto_out_of_defer(label->first_goto, stmt);
+        }
+        return false;
+    }
+
+    // We're fine to update, because either the goto isn't found yet, or the defer isn't set.
+    label->defer = defer;
+}
+
+bool analyse_asm(Ast *stmt)
+{
+    TODO;
+}
+
 bool analyse_stmt(Ast *stmt)
 {
     LOG_FUNC
@@ -334,12 +518,7 @@ bool analyse_stmt(Ast *stmt)
         case AST_EXPR_STMT:
             return analyse_expr(stmt->expr_stmt.expr, RHS);
         case AST_COMPOUND_STMT:
-//            if (!haveScope) scope.EnterScope(Scope::DeclScope);
-            return analyse_compound_stmt(stmt);
-    //        if (!haveScope)
-            {
-  //              scope.ExitScope(Context, &S);
-            }
+            return analyse_compound_stmt_scoped(stmt);
         case AST_IF_STMT:
             return analyse_if_stmt(stmt);
         case AST_WHILE_STMT:
@@ -352,31 +531,29 @@ bool analyse_stmt(Ast *stmt)
             return analyse_break(stmt);
         case AST_SWITCH_STMT:
             return analyse_switch(stmt);
+        case AST_FOR_STMT:
+            return analyse_for(stmt);
         case AST_CASE_STMT:
         case AST_DEFAULT_STMT:
             // These are handled inside of the switch stmt
             UNREACHABLE
-        case AST_COND_STMT:
-            // Handled inside of for/while/switch
-            UNREACHABLE
-
-#ifdef TODOX
-        case AST_FOR_STMT:
-            return analyse_for(stmt);
         case AST_LABEL:
             return analyse_label(stmt);
         case AST_GOTO_STMT:
             return analyse_goto(stmt);
+        case AST_COND_STMT:
+            // Handled inside of for/while/switch
+            UNREACHABLE
         case AST_DEFER_STMT:
             return analyse_defer(stmt);
-        case AST_ASM:
+        case AST_ASM_STMT:
             return analyse_asm(stmt);
-        case AST_COMPOUND_STMT:
-            break;
+        case AST_ATTRIBUTE:
+            // Handled elsewhere
+            UNREACHABLE
         case AST_DEFER_RELASE:
-        case STMT_COMPOUND:
-            break;
-#endif
+            // Emitted during analysis
+            UNREACHABLE
     }
     FATAL_ERROR("Unhandled stmt type %d", stmt->ast_id);
 return false;

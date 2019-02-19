@@ -14,6 +14,14 @@ typedef struct _Ast Ast;
 typedef struct _Type Type;
 typedef struct _Decl Decl;
 
+typedef struct _Label
+{
+    Ast *label_stmt;
+    Token name;
+    Ast *first_goto;
+    Ast *defer;
+} Label;
+
 typedef enum _AstType
 {
     AST_ATTRIBUTE,
@@ -135,12 +143,20 @@ typedef struct _AstFuncDefinition
     Vector *defers; // NULL unless defers
 } AstFuncDefinition;
 
+typedef enum _GotoType
+{
+    GOTO_NOT_ANALYSED,
+    GOTO_JUMP_FORWARD,
+    GOTO_JUMP_BACK
+} GotoType;
+
 typedef struct _AstGotoStmt
 {
+    GotoType type : 1;
     union
     {
-        Expr *label;
-        Ast *label_stmt;
+        Token label_name;
+        Label *label;
     };
     DeferList defer_list;
 
@@ -155,7 +171,7 @@ typedef struct _AstReturnStmt
 typedef struct _AstDeferStmt
 {
     bool emit_boolean : 1;
-    Ast *body;
+    Ast *body; // Compound statement
     Ast *prev_defer;
 } AstDeferStmt;
 
@@ -164,8 +180,9 @@ typedef struct _AstDeferStmt
 typedef struct _AstLabel
 {
     bool is_used : 1;
+    bool in_defer : 1;
     Token label_name;
-    Ast *defer_top;
+    Ast *defer;
 } AstLabelStmt;
 
 

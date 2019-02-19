@@ -184,7 +184,6 @@ uint64_t decl_size(Decl *decl)
             return type_size(decl->enum_decl.type);
         case DECL_ARRAY_VALUE:
         case DECL_IMPORT:
-        case DECL_LABEL:
             FATAL_ERROR("Cannot have size");
     }
 }
@@ -204,7 +203,6 @@ bool decl_is_type(Decl *decl)
         case DECL_ENUM_CONSTANT:
         case DECL_ARRAY_VALUE:
         case DECL_IMPORT:
-        case DECL_LABEL:
             return false;
     }
 }

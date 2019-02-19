@@ -7,12 +7,6 @@
 #include "parser.h"
 #include "scope.h"
 
-typedef struct _Label
-{
-    Ast *gotoAst;
-    Ast *labelAst;
-} Label;
-
 typedef struct _Analyser
 {
     Module *module;

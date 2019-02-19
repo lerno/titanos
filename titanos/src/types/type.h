@@ -145,3 +145,4 @@ uint64_t type_size(Type *type);
 bool type_is_same(Type *type1, Type *type2);
 char *type_to_string(Type *type);
 Type *type_unfold_opaque(Type *type);
+bool type_may_convert_to_bool(Type *type);

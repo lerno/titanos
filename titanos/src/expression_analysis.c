@@ -437,6 +437,16 @@ bool analyse_binary_expr(Expr *expr, Side side)
 }
 
 
+bool analyse_implicit_bool_cast(Expr *expr)
+{
+    if (type_may_convert_to_bool(expr->type))
+    {
+        sema_error_at(&expr->span, "The expression cannot be implictly converted to boolean");
+        return false;
+    }
+    return true;
+}
+
 bool insert_bool_cast_for_conditional_if_needed(Expr *expr)
 {
     // TODO warn on if (a = foo)

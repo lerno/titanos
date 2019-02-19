@@ -827,7 +827,7 @@ static Ast *parse_defer_stmt()
 	Ast *defer_stmt = new_ast_with_span(AST_DEFAULT_STMT, &prev_tok);
 	Ast *defer_body = parse_stmt();
 	if (!defer_body) return NULL;
-	defer_stmt->defer_stmt.body = defer_body;
+	defer_stmt->defer_stmt.body = stmt_to_compound(defer_body);
 	defer_stmt->defer_stmt.emit_boolean = false;
 	defer_stmt->defer_stmt.prev_defer = NULL;
 	UPDATE_AND_RETURN(defer_stmt);
@@ -980,9 +980,10 @@ static Ast *parse_goto_stmt()
 	advance_and_verify(TOKEN_GOTO);
 	Ast *ast = new_ast_with_span(AST_GOTO_STMT, &prev_tok);
 
-	Expr *expression = parse_expression();
-	if (!expression) return NULL;
-	ast->goto_stmt.label = expression;
+	if (!consume(TOKEN_IDENTIFIER, "Expected a label as destination for goto")) return false;
+
+	ast->goto_stmt.label_name = prev_tok;
+	ast->goto_stmt.type = GOTO_NOT_ANALYSED;
 
 	CONSUME_REQ_EOS_AND_RETURN(ast);
 }
@@ -1142,7 +1143,7 @@ static Ast *parse_label_stmt()
 	Ast *ast = new_ast_with_span(AST_LABEL, &prev_tok);
 	ast->label_stmt.label_name = prev_tok;
 	ast->label_stmt.is_used = false;
-	ast->label_stmt.defer_top = NULL;
+//	ast->label_stmt.defer_top = NULL;
 	// Already checked!
 	advance_and_verify(TOKEN_COLON);
 

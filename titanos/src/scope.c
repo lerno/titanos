@@ -256,12 +256,16 @@ static inline bool should_skip_exit_defer_stmt(Ast *stmt)
     }
 }
 
+void scope_set_defer(Ast *defer_stmt)
+{
+    active_scope->cur_scope->active_defer = defer_stmt;
+}
+
 void scope_enter(unsigned flags)
 {
     if (active_scope->scope_index >= MAX_SCOPE_DEPTH) FATAL_ERROR("Out of scopes");
     DynamicScope *parent = active_scope->cur_scope;
     active_scope->cur_scope = &active_scope->scopes[active_scope->scope_index++];
-
     active_scope->cur_scope->errors = errors();
     if (!active_scope->cur_scope->local_decls)
     {
@@ -286,6 +290,14 @@ void scope_enter(unsigned flags)
         active_scope->cur_scope->flags &= ~SCOPE_CONTINUE;
     }
 }
+
+Ast *scope_active_defer(void)
+{
+    return scope_is_defer() ? active_scope->cur_scope->active_defer : NULL;
+}
+
+void scope_push_defer(Ast *defer_stmt)
+{}
 
 void scope_exit(Ast *stmt)
 {

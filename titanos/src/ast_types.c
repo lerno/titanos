@@ -146,8 +146,16 @@ void print_ast(Ast *ast, unsigned current_indent)
             expr_print_sub("Expr", current_indent, ast->return_stmt.expr);
             return;
         case AST_GOTO_STMT:
-            printf("GOTO STMT\n");
-            expr_print_sub("Target", current_indent, ast->goto_stmt.label);
+            printf("GOTO STMT ");
+            if (ast->goto_stmt.type == GOTO_NOT_ANALYSED)
+            {
+                print_token(&ast->goto_stmt.label_name);
+            }
+            else
+            {
+                print_token(&ast->goto_stmt.label->name);
+            }
+            printf("\n");
             return;
         case AST_FOR_STMT:
             printf("FOR_STMT\n");

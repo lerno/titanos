@@ -268,6 +268,30 @@ Type *type_unfold_opaque(Type *type)
     }
     return type;
 }
+
+bool type_may_convert_to_bool(Type *type)
+{
+    switch (type->type_id)
+    {
+        case TYPE_INVALID:
+        case TYPE_UNRESOLVED:
+        case TYPE_IMPORT:
+        case TYPE_VOID:
+        case TYPE_STRING:
+        case TYPE_OPAQUE:
+        case TYPE_TYPEVAL:
+            return false;
+        case TYPE_POINTER:
+        case TYPE_ARRAY:
+        case TYPE_CONST_FLOAT:break;
+        case TYPE_CONST_INT:break;
+        case TYPE_NIL:
+            return true;
+        default:
+            TODO;
+    }
+}
+
 bool type_is_same(Type *type1, Type *type2)
 {
     type1 = type_unfold_opaque(type1);

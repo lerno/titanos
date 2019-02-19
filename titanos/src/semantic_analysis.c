@@ -161,7 +161,7 @@ static inline bool analyse_body(Decl *func)
 
     if (func->func_decl.body)
     {
-        analyse_compound_stmt(func->func_decl.body);
+        analyse_compound_stmt_no_scope(func->func_decl.body);
     }
     if (scope_had_errors()) return false;
 
@@ -196,7 +196,7 @@ static bool analyse_defer_goto()
     for (unsigned i = 0; i < active_analyser->gotos.size; i++)
     {
         Ast *goto_stmt = active_analyser->gotos.entries[i];
-        Ast *label_defer_top = goto_stmt->goto_stmt.label_stmt->label_stmt.defer_top;;
+        Ast *label_defer_top = NULL; //goto_stmt->goto_stmt.labellabel_stmt->label_stmt.defer_top;;
         Ast *goto_defer_top = goto_stmt->goto_stmt.defer_list.defer_start;
 
         // First we need to search for the common depth.
@@ -296,12 +296,12 @@ static bool analyse_func_body(Decl *func)
     for (unsigned i = 0; i < active_analyser->labels.size; i++)
     {
         Label *label = active_analyser->labels.entries[i];
-        if (label->labelAst)
+        if (label->label_stmt)
         {
-            if (!label->gotoAst)
+            if (!label->first_goto)
             {
-                sema_warn_at(DIAG_UNUSED_LABEL, &label->labelAst->span, "Unused label '%.*s'",
-                             SPLAT_TOK(label->labelAst->label_stmt.label_name));
+                sema_warn_at(DIAG_UNUSED_LABEL, &label->label_stmt->span, "Unused label '%.*s'",
+                             SPLAT_TOK(label->name));
             }
         }
         else

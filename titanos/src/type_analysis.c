@@ -379,7 +379,6 @@ static inline bool analyse_type_decl(Decl *decl)
         case DECL_ARRAY_VALUE:
         case DECL_ENUM_CONSTANT:
         case DECL_IMPORT:
-        case DECL_LABEL:
             FATAL_ERROR("Does not have type");
         case DECL_BUILTIN:
             // Always resolved.

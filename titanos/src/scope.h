@@ -35,6 +35,7 @@ typedef struct _DynamicScope
     Vector *local_decls;
     Ast *last_defer;
     unsigned errors;
+    Ast *active_defer;
 } DynamicScope;
 
 typedef struct _Import Import;
@@ -64,9 +65,11 @@ Module *scope_find_used_module(Token *name, bool used_public);
 Decl *scope_find_symbol(Token *token, bool is_type, bool used_public);
 Decl *scope_find_symbol_in_module(Token *token, Module *module);
 void scope_check_access(Ast *decl, Token *loc);
-void scope_push_defer(Scope *scope, Ast *defer_stmt);
+void scope_push_defer(Ast *defer_stmt);
 void scope_enter(unsigned flags);
 void scope_exit(Ast *stmt);
+void scope_set_defer(Ast *defer_stmt);
+Ast *scope_active_defer(void);
 Ast *scope_defer_top();
 Ast **exit_scope_defers(unsigned flags);
 static inline void scope_set_has_decls()
