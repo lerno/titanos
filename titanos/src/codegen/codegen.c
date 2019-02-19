@@ -391,12 +391,12 @@ LLVMValueRef perform_expr(LLVMValueRef left, LLVMValueRef right, token_type toke
 
 static inline bool is_float(Expr *expr)
 {
-    return expr->type->type_id == TYPE_BUILTIN && expr->type->builtin.builtin_id == BUILTIN_FLOAT;
+    return expr->type->type_id == TYPE_FLOAT || expr->type->type_id == TYPE_CONST_FLOAT;
 }
 
 static inline bool is_signed(Expr *expr)
 {
-    return expr->type->type_id == TYPE_BUILTIN && expr->type->builtin.builtin_id == BUILTIN_SIGNED_INT;
+    return expr->type->type_id == TYPE_INT || expr->type->type_id == TYPE_CONST_INT;
 }
 
 LLVMValueRef codegen_binary_expr(Expr *expr)
@@ -445,11 +445,11 @@ LLVMValueRef codegen_cast(Expr *expr)
         case CAST_PTRINT:
             return LLVMBuildPtrToInt(active_builder, value, type, "");
         case CAST_FPFP:
-            if (target_type->builtin.bits > source_type->builtin.bits)
+            if (target_type->float_bits > source_type->float_bits)
             {
                 return LLVMBuildFPExt(active_builder, value, type, "");
             }
-            if (target_type->builtin.bits < source_type->builtin.bits)
+            if (target_type->float_bits < source_type->float_bits)
             {
                 return LLVMBuildFPTrunc(active_builder, value, type, "");
             }
@@ -462,22 +462,22 @@ LLVMValueRef codegen_cast(Expr *expr)
         case CAST_UIFP:
             return LLVMBuildUIToFP(active_builder, value, type, "");
         case CAST_UIUI:
-            if (target_type->builtin.bits > source_type->builtin.bits)
+            if (target_type->integer.bits > source_type->integer.bits)
             {
                 return LLVMBuildZExt(active_builder, value, type, "");
             }
-            if (target_type->builtin.bits < source_type->builtin.bits)
+            if (target_type->integer.bits < source_type->integer.bits)
             {
                 return LLVMBuildTrunc(active_builder, value, type, "");
             }
             assert(false && "UI cast to same type");
             return value;
         case CAST_UISI:
-            if (target_type->builtin.bits > source_type->builtin.bits)
+            if (target_type->integer.bits > source_type->integer.bits)
             {
                 return LLVMBuildZExt(active_builder, value, type, "");
             }
-            if (target_type->builtin.bits < source_type->builtin.bits)
+            if (target_type->integer.bits < source_type->integer.bits)
             {
                 return LLVMBuildTrunc(active_builder, value, type, "");
             }
@@ -486,22 +486,22 @@ LLVMValueRef codegen_cast(Expr *expr)
         case CAST_SIFP:
             return LLVMBuildSIToFP(active_builder, value, type, "");
         case CAST_SISI:
-            if (target_type->builtin.bits > source_type->builtin.bits)
+            if (target_type->integer.bits > source_type->integer.bits)
             {
                 return LLVMBuildSExt(active_builder, value, type, "");
             }
-            if (target_type->builtin.bits < source_type->builtin.bits)
+            if (target_type->integer.bits < source_type->integer.bits)
             {
                 return LLVMBuildTrunc(active_builder, value, type, "");
             }
             assert(false && "SI cast to same type");
             return value;
         case CAST_SIUI:
-            if (target_type->builtin.bits > source_type->builtin.bits)
+            if (target_type->integer.bits > source_type->integer.bits)
             {
                 return LLVMBuildSExt(active_builder, value, type, "");
             }
-            if (target_type->builtin.bits > source_type->builtin.bits)
+            if (target_type->integer.bits > source_type->integer.bits)
             {
                 return LLVMBuildTrunc(active_builder, value, type, "");
             }

@@ -42,7 +42,9 @@ static inline bool is_castable(Type *type)
         case TYPE_ARRAY:
         case TYPE_DECLARED:
         case TYPE_TYPEVAL:
-        case TYPE_BUILTIN:
+        case TYPE_FLOAT:
+        case TYPE_INT:
+        case TYPE_BOOL:
             return true;
     }
 }
@@ -118,17 +120,14 @@ Type *try_upcasting_for_pointer_arithmetics(Expr *left, Expr *right)
 
     if (non_pointer_type->type_id == TYPE_NIL) return pointer_expr->type;
 
-    if (non_pointer_type->type_id != TYPE_BUILTIN) return NULL;
-
-    switch (non_pointer_type->builtin.builtin_id)
+    switch (non_pointer_type->type_id)
     {
-        case BUILTIN_FLOAT:
-            return NULL;
-        case BUILTIN_SIGNED_INT:
-        case BUILTIN_UNSIGNED_INT:
+        case TYPE_INT:
             return pointer_expr->type;
-        case BUILTIN_BOOL:
+        case TYPE_BOOL:
             return insert_implicit_cast_if_needed(non_pointer_expr, type_builtin_u8()) ? pointer_expr->type : NULL;
+        default:
+            return NULL;
     }
 }
 
@@ -161,7 +160,9 @@ bool is_arithmetics_type(Type *type)
         case TYPE_NIL:
         case TYPE_CONST_FLOAT:
         case TYPE_CONST_INT:
-        case TYPE_BUILTIN:
+        case TYPE_INT:
+        case TYPE_FLOAT:
+        case TYPE_BOOL:
             return true;
     }
 }
@@ -180,11 +181,11 @@ bool is_real_arithmetics_type(Type *type)
         case TYPE_ARRAY:
         case TYPE_DECLARED:
         case TYPE_TYPEVAL:
-            return false;
-        case TYPE_BUILTIN:
-            return type->builtin.builtin_id != BUILTIN_BOOL;
+        case TYPE_BOOL:
         case TYPE_NIL:
             return false;
+        case TYPE_INT:
+        case TYPE_FLOAT:
         case TYPE_CONST_FLOAT:
         case TYPE_CONST_INT:
             return true;
@@ -200,30 +201,7 @@ static inline Type *try_upcasting_for_arithmetics(Expr *left, Expr *right)
 
     if (type_is_same(left_type, right_type)) return left_type;
 
-    bool reverse_order = false;
-    if (left_type->type_id > right_type->type_id)
-    {
-        reverse_order = true;
-    }
-    else if (right_type->type_id == left_type->type_id && left_type->type_id == TYPE_BUILTIN)
-    {
-        int bit_diff = (int)left_type->builtin.bits - (int)right_type->builtin.bits;
-        switch (left_type->builtin.builtin_id)
-        {
-            case BUILTIN_FLOAT:
-                reverse_order = right_type->builtin.builtin_id == BUILTIN_FLOAT && bit_diff < 0;
-                break;
-            case BUILTIN_UNSIGNED_INT:
-                reverse_order = right_type->builtin.builtin_id == BUILTIN_FLOAT || bit_diff < 0;
-                break;
-            case BUILTIN_SIGNED_INT:
-                reverse_order = right_type->builtin.builtin_id == BUILTIN_FLOAT || bit_diff <= 0;
-                break;
-            case BUILTIN_BOOL:
-                reverse_order = right_type->builtin.builtin_id != BUILTIN_BOOL;
-                break;
-        }
-    }
+    bool order = type_order(left_type, right_type);
 
     if (!is_real_arithmetics_type(left_type) && !is_real_arithmetics_type(right_type))
     {
@@ -231,8 +209,14 @@ static inline Type *try_upcasting_for_arithmetics(Expr *left, Expr *right)
                 insert_implicit_cast_if_needed(right, type_builtin_i32())) return NULL;
         return type_builtin_i32();
     }
-    if (reverse_order) return insert_implicit_cast_if_needed(left, right_type) ? right_type : NULL;
-    return insert_implicit_cast_if_needed(right, left_type) ? left_type : NULL;
+    if (order)
+    {
+        return insert_implicit_cast_if_needed(right, left_type) ? left_type : NULL;
+    }
+    else
+    {
+        return insert_implicit_cast_if_needed(left, right_type) ? right_type : NULL;
+    }
 }
 
 static inline bool try_upcasting_binary_for_arithmetics(Expr *binary_expr)
@@ -525,26 +509,33 @@ static bool cast_const_type_expression(Expr *expr, Type *target_type, bool is_im
         case TYPE_TYPEVAL:
         case TYPE_NIL:
             UNREACHABLE
-        case TYPE_BUILTIN:
-            switch (target_type->builtin.builtin_id)
-            {
-                case BUILTIN_FLOAT:
-                    return value_convert(value, VALUE_TYPE_FLOAT, target_type->builtin.bits, false, allow_trunc);
-                case BUILTIN_UNSIGNED_INT:
-                    return value_convert(value, VALUE_TYPE_INT, target_type->builtin.bits, true, allow_trunc);
-                case BUILTIN_SIGNED_INT:
-                    return value_convert(value, VALUE_TYPE_INT, target_type->builtin.bits, false, allow_trunc);
-                case BUILTIN_BOOL:
-                    return value_convert(value, VALUE_TYPE_BOOL, target_type->builtin.bits, true, allow_trunc);
-            }
-            UNREACHABLE
-            break;
+        case TYPE_INT:
+            return value_convert(value, VALUE_TYPE_INT, target_type->integer.bits, !target_type->integer.is_signed, allow_trunc);
+        case TYPE_FLOAT:
+            return value_convert(value, VALUE_TYPE_FLOAT, target_type->float_bits, false, allow_trunc);
+        case TYPE_BOOL:
+            return value_convert(value, VALUE_TYPE_BOOL, 1, true, allow_trunc);
         case TYPE_CONST_FLOAT:
             return value_convert(value, VALUE_TYPE_FLOAT, 0, false, allow_trunc);
         case TYPE_CONST_INT:
             return value_convert(value, VALUE_TYPE_INT, 0, false, allow_trunc);
     }
     UNREACHABLE
+}
+
+static CastResult perform_compile_time_cast_on_const(Expr *expr, Type *target_type, bool implicit)
+{
+    if (!cast_const_type_expression(expr, target_type, implicit))
+    {
+        assert(expr->cast_expr.implicit);
+        char *type_name = type_to_string(expr->cast_expr.type);
+        sema_error_at(&expr->span, "Cannot implicitly cast '%.*s' to '%s'",
+                      expr->cast_expr.expr, type_name);
+        free(type_name);
+        return CAST_FAILED;
+    }
+    expr->type = target_type;
+    return CAST_INLINE;
 }
 
 static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool implicit)
@@ -610,57 +601,76 @@ static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool 
                 return CAST_INLINE;
             }
             break;
-        case TYPE_BUILTIN:
-            if (!is_same_type)
-            {
-                // Inline nil
-                switch (source_type->type_id)
-                {
-                    case TYPE_NIL:
-                    case TYPE_CONST_FLOAT:
-                    case TYPE_CONST_INT:
-                        if (!cast_const_type_expression(expr, target_type, implicit))
-                        {
-                            char *type_name = type_to_string(target_type);
-                            sema_error_at(&expr->span, "Cannot implicitly cast '%.*s' to '%s'", expr, type_name);
-                            free(type_name);
-                            return CAST_FAILED;
-                        }
-                        expr->type = target_type;
-                        return CAST_INLINE;
-                    case TYPE_POINTER:
-                    case TYPE_ARRAY:
-                        // Any pointers can be cast to the non-float builtins.
-                        if (!implicit && target_type->builtin.builtin_id != BUILTIN_FLOAT) return CAST_PTRINT;
-                        break;
-                    default:
-                        break;
-                }
-                break;
-            }
+        case TYPE_INT:
             // Make casts on const expression compile time resolved:
             if (expr->expr_id == EXPR_CONST)
             {
-                if (!cast_const_type_expression(expr, target_type, implicit))
-                {
-                    assert(expr->cast_expr.implicit);
-                    char *type_name = type_to_string(expr->cast_expr.type);
-                    sema_error_at(&expr->span, "Cannot implicitly cast '%.*s' to '%s'",
-                                  expr->cast_expr.expr, type_name);
-                    free(type_name);
-                    return CAST_FAILED;
-                }
-                expr->type = target_type;
-                return CAST_INLINE;
+                return perform_compile_time_cast_on_const(expr, target_type, implicit);
             }
-            if (source_type->builtin.builtin_id == target_type->builtin.builtin_id &&
-                source_type->builtin.bits == target_type->builtin.bits)
+            switch (source_type->type_id)
             {
-                DEBUG_LOG("Same but different");
-                return CAST_INLINE;
+                case TYPE_NIL:
+                case TYPE_CONST_FLOAT:
+                case TYPE_CONST_INT:
+                    UNREACHABLE
+                case TYPE_FLOAT:
+                    return target_type->integer.is_signed ? CAST_FPSI : CAST_FPUI;
+                case TYPE_INT:
+                    assert(target_type->integer.bits != source_type->integer.bits || target_type->integer.is_signed != source_type->integer.is_signed);
+                    if (source_type->integer.is_signed) return target_type->integer.is_signed ? CAST_SISI : CAST_SIUI;
+                    return target_type->integer.is_signed ? CAST_UISI : CAST_UIUI;
+                case TYPE_BOOL:
+                    return target_type->integer.is_signed ? CAST_UISI : CAST_UIUI;
+                case TYPE_POINTER:
+                case TYPE_ARRAY:
+                    // Any pointers can be cast to the non-float builtins.
+                    if (!implicit) return CAST_PTRINT;
+                    break;
+                default:
+                    break;
             }
-            // Any cast between builtin types are ok (even though some means truncating)
-            return builtin_casts[source_type->builtin.builtin_id][target_type->builtin.builtin_id];
+        case TYPE_FLOAT:
+            // Make casts on const expression compile time resolved:
+            if (expr->expr_id == EXPR_CONST)
+            {
+                return perform_compile_time_cast_on_const(expr, target_type, implicit);
+            }
+            switch (source_type->type_id)
+            {
+                case TYPE_NIL:
+                case TYPE_CONST_FLOAT:
+                case TYPE_CONST_INT:
+                    UNREACHABLE
+                case TYPE_FLOAT:
+                    return CAST_FPFP;
+                case TYPE_INT:
+                    return source_type->integer.is_signed ? CAST_SIFP : CAST_UIFP;
+                case TYPE_BOOL:
+                    return CAST_UIFP;
+                default:
+                    break;
+            }
+        case TYPE_BOOL:
+            // Make casts on const expression compile time resolved:
+            if (expr->expr_id == EXPR_CONST)
+            {
+                return perform_compile_time_cast_on_const(expr, target_type, implicit);
+            }
+            switch (source_type->type_id)
+            {
+                case TYPE_NIL:
+                case TYPE_CONST_FLOAT:
+                case TYPE_CONST_INT:
+                    UNREACHABLE
+                case TYPE_FLOAT:
+                    return CAST_FPUI;
+                case TYPE_INT:
+                    return source_type->integer.is_signed ? CAST_SIUI : CAST_UIUI;
+                case TYPE_BOOL:
+                    UNREACHABLE
+                default:
+                    break;
+            }
     }
     char *target_name = type_to_string(target_type);
     char *source_name = type_to_string(source_type);

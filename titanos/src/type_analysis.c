@@ -161,7 +161,9 @@ bool resolve_type(Type **type, bool used_public)
         case TYPE_CONST_INT:
         case TYPE_NIL:
         case TYPE_IMPORT:
-        case TYPE_BUILTIN:
+        case TYPE_INT:
+        case TYPE_BOOL:
+        case TYPE_FLOAT:
         case TYPE_STRING:
             return true;
         case TYPE_POINTER:
@@ -264,7 +266,7 @@ static inline bool analyse_enum_type(Decl *decl)
             is_first_value = false;
             continue;
         }
-        if (!bigint_fits_in_bits(big_int, type->builtin.bits, type_is_signed(type)))
+        if (!bigint_fits_in_bits(big_int, type->integer.bits, type_is_signed(type)))
         {
             sema_error_at(&value->span, "Enum value '%.*s' exceeds the type size", SPLAT_TOK(entry->name));
             success = false;

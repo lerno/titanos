@@ -139,16 +139,13 @@ void decl_print(Decl *decl, unsigned current_indent)
             printf("\n");
             printf("TODO\n");
             return;
-        case DECL_LABEL:
-            printf("LABEL ");
-            decl_print_name_visibility(decl);
-            printf("\n");
-            printf("TODO\n");
-            return;
         case DECL_BUILTIN:
             printf("BUILTIN TODO ");
             decl_print_name_visibility(decl);
             printf("\n");
+            return;
+        case DECL_LABEL:
+            printf("LABEL\n");
             return;
     }
     FATAL_ERROR("TODO %d", decl->type_id);
@@ -169,7 +166,6 @@ uint64_t decl_size(Decl *decl)
         case DECL_FUNC_TYPE:
             // TODO pointer size
             return 8;
-            break;
         case DECL_VAR:
             return type_size(decl->var.type);
         case DECL_ENUM_CONSTANT:
@@ -184,6 +180,7 @@ uint64_t decl_size(Decl *decl)
             return type_size(decl->enum_decl.type);
         case DECL_ARRAY_VALUE:
         case DECL_IMPORT:
+        case DECL_LABEL:
             FATAL_ERROR("Cannot have size");
     }
 }
@@ -203,6 +200,7 @@ bool decl_is_type(Decl *decl)
         case DECL_ENUM_CONSTANT:
         case DECL_ARRAY_VALUE:
         case DECL_IMPORT:
+        case DECL_LABEL:
             return false;
     }
 }

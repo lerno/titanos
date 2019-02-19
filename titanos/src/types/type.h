@@ -41,7 +41,9 @@ typedef enum _TypeId
     TYPE_ARRAY,
     TYPE_DECLARED,
     TYPE_TYPEVAL,
-    TYPE_BUILTIN,
+    TYPE_FLOAT, // Note that ordering here is important since it doubles as precedence order during conversion.
+    TYPE_INT,
+    TYPE_BOOL,
     TYPE_NIL,
     TYPE_CONST_FLOAT,
     TYPE_CONST_INT,
@@ -62,8 +64,8 @@ typedef struct _TypePointer
 
 typedef struct _TypeInt
 {
-    uint32_t bits;
-    bool is_signed : 1;
+    uint16_t bits;
+    bool is_signed;
 } TypeInt;
 
 typedef struct _TypeUnresolved
@@ -76,21 +78,6 @@ typedef struct _TypeOpaque
     Type *base;
 } TypeOpaque;
 
-typedef enum _BuiltinKind {
-    BUILTIN_FLOAT,
-    BUILTIN_UNSIGNED_INT,
-    BUILTIN_SIGNED_INT,
-    BUILTIN_BOOL,
-} BuiltinKind;
-
-
-extern const CastResult builtin_casts[4][4];
-
-typedef struct _TypeBuiltin
-{
-    BuiltinKind builtin_id : 16;
-    uint16_t bits;
-} TypeBuiltin;
 
 typedef struct _TypeArray
 {
@@ -124,7 +111,9 @@ typedef struct _Type
         TypeUnresolved unresolved;
         Type *type_of_type;
         Decl *decl;
-        TypeBuiltin builtin;
+        TypeInt integer;
+        uint16_t float_bits;
+
     };
 } Type;
 
@@ -132,12 +121,12 @@ Type *new_unresolved_type(Expr *expr, bool public);
 Type *new_type(TypeId type_id, bool public);
 
 void type_print_sub(const char *header, unsigned int current_indent, Type *type);
-Type *void_type();
-Type *type_nil();
-Type *type_string();
-Type *type_invalid();
-Type *type_compint();
-Type *type_compfloat();
+Type *void_type(void);
+Type *type_nil(void);
+Type *type_string(void);
+Type *type_invalid(void);
+Type *type_compint(void);
+Type *type_compfloat(void);
 Type *type_to_type(Type *type);
 bool type_is_int(Type *type);
 bool type_is_signed(Type *type);
@@ -146,3 +135,11 @@ bool type_is_same(Type *type1, Type *type2);
 char *type_to_string(Type *type);
 Type *type_unfold_opaque(Type *type);
 bool type_may_convert_to_bool(Type *type);
+
+/**
+ * Return types in conversion order.
+ * @param first
+ * @param second
+ * @return true if first should be ordered first, false otherwise
+ */
+bool type_order(Type *first, Type *second);

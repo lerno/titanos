@@ -12,13 +12,6 @@
 #include <llvm-c/Core.h>
 #include "diagnostics.h"
 
-const CastResult builtin_casts[4][4] = {
-        { CAST_FPFP, CAST_FPUI, CAST_FPSI, CAST_FPUI },
-        { CAST_UIFP, CAST_UIUI, CAST_UISI, CAST_UIUI },
-        { CAST_SIFP, CAST_SIUI, CAST_SISI, CAST_SISI },
-        { CAST_UIFP, CAST_UIUI, CAST_UISI, CAST_UIUI },
-};
-
 
 Type *new_unresolved_type(Expr *expr, bool public)
 {
@@ -83,15 +76,13 @@ Type *type_compfloat()
 
 bool type_is_int(Type *type)
 {
-    if (type->type_id == TYPE_CONST_INT) return true;
-    return type->type_id == TYPE_BUILTIN &&
-           (type->builtin.builtin_id == BUILTIN_UNSIGNED_INT || type->builtin.builtin_id == BUILTIN_SIGNED_INT);
+    return type->type_id == TYPE_CONST_INT || type->type_id == TYPE_INT;
 }
 
 bool type_is_signed(Type *type)
 {
     if (type->type_id == TYPE_CONST_INT) return true;
-    return type->type_id == TYPE_BUILTIN && type->builtin.builtin_id == BUILTIN_SIGNED_INT;
+    return type->type_id == TYPE_INT && type->integer.is_signed;
 }
 
 uint64_t type_size(Type *type)
@@ -120,8 +111,12 @@ uint64_t type_size(Type *type)
             FATAL_ERROR("Should never happen");
         case TYPE_TYPEVAL:
             return type_size(type->type_of_type);
-        case TYPE_BUILTIN:
-            return (uint64_t) ((type->builtin.bits + 7) / 8);
+        case TYPE_FLOAT:
+            return (uint64_t) ((type->float_bits + 7) / 8);
+        case TYPE_BOOL:
+            return 1;
+        case TYPE_INT:
+            return (uint64_t) ((type->integer.bits + 7) / 8);
         case TYPE_CONST_FLOAT:
             return 16; // TODO
         case TYPE_CONST_INT:
@@ -290,6 +285,7 @@ bool type_may_convert_to_bool(Type *type)
         default:
             TODO;
     }
+    UNREACHABLE
 }
 
 bool type_is_same(Type *type1, Type *type2)
@@ -306,13 +302,14 @@ bool type_is_same(Type *type1, Type *type2)
         case TYPE_CONST_FLOAT:
         case TYPE_CONST_INT:
         case TYPE_NIL:
+        case TYPE_BOOL:
             return true;
         case TYPE_TYPEVAL:
             return type_is_same(type1->type_of_type, type2->type_of_type);
-            break;
-        case TYPE_BUILTIN:
-            return type1->builtin.builtin_id == type2->builtin.builtin_id
-                   && type1->builtin.bits == type2->builtin.bits;
+        case TYPE_INT:
+            return type1->integer.is_signed == type2->integer.is_signed && type1->integer.bits == type2->integer.bits;
+        case TYPE_FLOAT:
+            return type1->float_bits == type2->float_bits;
         case TYPE_POINTER:
             return type_is_same(type1->pointer.base, type2->pointer.base);
         case TYPE_ARRAY:
@@ -360,19 +357,17 @@ static inline char *copy_token(Token *token)
 char *type_to_string(Type *type)
 {
     if (!type) return copy_constant_string("<missing>");
+    char *result = NULL;
     switch (type->type_id)
     {
         case TYPE_INVALID:
             return copy_constant_string("<invalid>");
         case TYPE_UNRESOLVED:
-        {
-            char *result = NULL;
             if (asprintf(&result, "[\"%.*s\"]", SPLAT_TOK(type->unresolved.type_expr->span)) == -1)
             {
                 return copy_constant_string("ERROR");
             }
             return result;
-        }
         case TYPE_IMPORT:
             return copy_constant_string("<import>");
         case TYPE_VOID:
@@ -391,27 +386,21 @@ char *type_to_string(Type *type)
             return copy_token(&type->decl->name);
         case TYPE_TYPEVAL:
             return get_embedded_type_name("type", type->type_of_type);
-        case TYPE_BUILTIN:
-        {
-            char *result = NULL;
-            switch (type->builtin.builtin_id)
+        case TYPE_INT:
+            if (type->integer.is_signed)
             {
-                case BUILTIN_FLOAT:
-                    asprintf(&result, "f%d", type->builtin.bits);
-                    return result;
-                case BUILTIN_UNSIGNED_INT:
-                    asprintf(&result, "u%d", type->builtin.bits);
-                    return result;
-                case BUILTIN_SIGNED_INT:
-                    asprintf(&result, "i%d", type->builtin.bits);
-                    return result;
-                case BUILTIN_BOOL:
-                    return copy_constant_string("bool");
-                default:
-                    UNREACHABLE
+                asprintf(&result, "u%d", type->integer.bits);
             }
-
-        }
+            else
+            {
+                asprintf(&result, "i%d", type->integer.bits);
+            }
+            return result;
+        case TYPE_BOOL:
+            return copy_constant_string("bool");
+        case TYPE_FLOAT:
+            asprintf(&result, "f%d", type->float_bits);
+            return result;
         case TYPE_NIL:
             return copy_constant_string("nil");
         case TYPE_CONST_FLOAT:
@@ -420,4 +409,21 @@ char *type_to_string(Type *type)
             return copy_constant_string("const_int");
     }
     UNREACHABLE
+}
+
+bool type_order(Type *first, Type *second)
+{
+    if (first->type_id < second->type_id) return true;
+    if (first->type_id > second->type_id) return false;
+    switch (first->type_id)
+    {
+        case TYPE_FLOAT:
+            return first->float_bits >= second->float_bits;
+        case TYPE_INT:
+            if (first->integer.bits > second->integer.bits) return true;
+            if (first->integer.bits < second->integer.bits) return false;
+            return !second->integer.is_signed && first->integer.is_signed;
+        default:
+            return true;
+    }
 }
