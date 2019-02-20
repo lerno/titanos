@@ -579,7 +579,7 @@ static void register_c2_constant(const char *name, const char *type, Value value
     Expr *type_expr = expr_new(EXPR_IDENTIFIER, &type_token);
     type_expr->identifier_expr.identifier = type_token;
     Decl *decl = decl_new(DECL_VAR, &token, &token, true);
-    decl->var.type = new_unresolved_type(type_expr, true);
+    decl->type = new_unresolved_type(type_expr, true);
     decl->var.init_expr = expr_value;
     decl->var.kind = VARDECL_GLOBAL;
     decl->is_exported = true;

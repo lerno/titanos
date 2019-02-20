@@ -93,7 +93,15 @@ uint64_t type_size(Type *type)
             return 0;
         case TYPE_VOID:
             return 1;
-        case TYPE_DECLARED:
+            return decl_size(type->decl);
+        case TYPE_ENUM:
+            return type_size(type->decl->enum_decl.type);
+        case TYPE_FUNC:
+        case TYPE_FUNC_TYPE:
+            // TODO pointer size
+            return sizeof(void *);
+        case TYPE_STRUCT:
+        case TYPE_UNION:
             return decl_size(type->decl);
         case TYPE_NIL:
         case TYPE_STRING:
@@ -105,8 +113,6 @@ uint64_t type_size(Type *type)
             return type_size(type->array.base) * (type->array.is_empty ? 1 : type->array.len);
         case TYPE_OPAQUE:
             return type_size(type->opaque.base);
-        case TYPE_IMPORT:
-            return 0;
         case TYPE_UNRESOLVED:
             FATAL_ERROR("Should never happen");
         case TYPE_TYPEVAL:
@@ -270,7 +276,6 @@ bool type_may_convert_to_bool(Type *type)
     {
         case TYPE_INVALID:
         case TYPE_UNRESOLVED:
-        case TYPE_IMPORT:
         case TYPE_VOID:
         case TYPE_STRING:
         case TYPE_OPAQUE:
@@ -315,10 +320,13 @@ bool type_is_same(Type *type1, Type *type2)
         case TYPE_ARRAY:
             assert(type1->array.is_len_resolved && type2->array.is_len_resolved);
             return type_is_same(type1->array.base, type2->array.base) && type1->array.len == type2->array.len;
-        case TYPE_DECLARED:
+        case TYPE_UNION:
+        case TYPE_ENUM:
+        case TYPE_STRUCT:
+        case TYPE_FUNC_TYPE:
+        case TYPE_FUNC:
             return decl_type_is_same(type1->decl, type2->decl);
         case TYPE_OPAQUE:
-        case TYPE_IMPORT:
             UNREACHABLE
         case TYPE_UNRESOLVED:
             FATAL_ERROR("Should be resolved at this point in time");
@@ -368,8 +376,6 @@ char *type_to_string(Type *type)
                 return copy_constant_string("ERROR");
             }
             return result;
-        case TYPE_IMPORT:
-            return copy_constant_string("<import>");
         case TYPE_VOID:
             return copy_constant_string("void");
         case TYPE_STRING:
@@ -382,7 +388,11 @@ char *type_to_string(Type *type)
         case TYPE_ARRAY:
             // len
             return get_embedded_type_name("array", type->array.base);
-        case TYPE_DECLARED:
+        case TYPE_STRUCT:
+        case TYPE_FUNC:
+        case TYPE_FUNC_TYPE:
+        case TYPE_UNION:
+        case TYPE_ENUM:
             return copy_token(&type->decl->name);
         case TYPE_TYPEVAL:
             return get_embedded_type_name("type", type->type_of_type);

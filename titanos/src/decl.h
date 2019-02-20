@@ -43,7 +43,6 @@ typedef struct _VarDecl
     // Type *original_type;
     Expr *init_expr;
     LLVMValueRef llvm_ref;
-    Type *type;
 } VarDecl;
 
 typedef struct _ArrayValueDecl
@@ -113,10 +112,6 @@ typedef struct _ImportDecl
 } ImportDecl;
 
 
-typedef struct _AliasDecl
-{
-    Type *type;
-} AliasDecl;
 typedef struct _LabelDecl
 {
     Ast *label_stmt;
@@ -140,7 +135,7 @@ typedef struct _Decl
     Token name;
     struct _Module *module;
     struct _Vector *attributes;
-    Type type;
+    Type *type;
     union
     {
         StructDecl struct_decl;
@@ -151,7 +146,6 @@ typedef struct _Decl
         FuncTypeDecl func_type;
         ImportDecl import;
         ArrayDecl array_decl;
-        AliasDecl alias_decl;
     };
 } Decl;
 

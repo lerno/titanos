@@ -8,12 +8,11 @@
 #include "types/type.h"
 #include "diagnostics.h"
 #include "constant_folding.h"
-
+#include "expression_analysis.h"
 const static uint64_t MAX_ARRAY_SIZE = UINT32_MAX;
 
-bool update_decl(Type *type, bool used_public)
+bool update_decl(Decl *decl, bool used_public)
 {
-    Decl *decl = type->decl;
     assert(decl && "Should only be used on type with decl!");
 
     decl->is_used = true;
@@ -72,7 +71,7 @@ static bool resolve_unresolved_type(Type **type_ref, bool used_public)
     assert((*type_ref)->type_id == TYPE_UNRESOLVED);
     Decl *decl = NULL;
     Expr *type_expr = (*type_ref)->unresolved.type_expr;
-    evaluate_constant(type_expr);
+    if (!analyse_expr(type_expr, RHS)) return false;
     Token module_name = { .length = 0 };
     Token name;
     switch (type_expr->expr_id)
@@ -124,21 +123,21 @@ static bool resolve_unresolved_type(Type **type_ref, bool used_public)
     }
     if (decl->type_id == DECL_ALIAS_TYPE)
     {
-        if (!resolve_type(&decl->alias_decl.type, used_public))
+        if (!resolve_type(&decl->type, used_public))
         {
             (*type_ref)->type_id = TYPE_INVALID;
             return false;
         }
         // FOR NOW JUST COPY
-        decl = decl->alias_decl.type->decl;
+        decl = decl->type->decl;
     }
     if (!decl_is_type(decl))
     {
         sema_error_at(&type_expr->span, "No type with that name found");
         (*type_ref)->type_id = TYPE_INVALID;
     }
-    *type_ref = &decl->type;
-    if (!update_decl(*type_ref, used_public))
+    *type_ref = decl->type;
+    if (!update_decl(decl, used_public))
     {
         sema_error_at(&type_expr->span, "'%.*s' is not a public type", SPLAT_TOK(decl->name));
         return false;
@@ -160,7 +159,6 @@ bool resolve_type(Type **type, bool used_public)
         case TYPE_CONST_FLOAT:
         case TYPE_CONST_INT:
         case TYPE_NIL:
-        case TYPE_IMPORT:
         case TYPE_INT:
         case TYPE_BOOL:
         case TYPE_FLOAT:
@@ -172,7 +170,11 @@ bool resolve_type(Type **type, bool used_public)
             return resolve_type(&(*type)->array.base, used_public) && resolve_array_size(*type);
         case TYPE_TYPEVAL:
             return resolve_type(&(*type)->type_of_type, used_public);
-        case TYPE_DECLARED:
+        case TYPE_ENUM:
+        case TYPE_FUNC:
+        case TYPE_FUNC_TYPE:
+        case TYPE_STRUCT:
+        case TYPE_UNION:
             if (!update_decl(*type, used_public))
             {
                 FATAL_ERROR("Should not fail!");
@@ -348,8 +350,8 @@ bool analyse_func_decl(Decl *decl, bool is_public)
     {
         Decl *param_decl = decl->func_decl.args->entries[i];
         assert(param_decl->type_id == DECL_VAR && param_decl->var.kind == VARDECL_PARAM);
-        success = resolve_type(&param_decl->var.type, is_public) && success;
-        if (param_decl->var.type->type_id == TYPE_INVALID) continue;
+        success = resolve_type(&param_decl->type, is_public) && success;
+        if (param_decl->type->type_id == TYPE_INVALID) continue;
     }
     return success;
 }
@@ -381,12 +383,13 @@ static inline bool analyse_type_decl(Decl *decl)
         case DECL_ARRAY_VALUE:
         case DECL_ENUM_CONSTANT:
         case DECL_IMPORT:
+        case DECL_LABEL:
             FATAL_ERROR("Does not have type");
         case DECL_BUILTIN:
             // Always resolved.
             return true;
         case DECL_ALIAS_TYPE:
-            return resolve_type(&decl->alias_decl.type, decl->is_public);
+            return resolve_type(&decl->type, decl->is_public);
         case DECL_STRUCT_TYPE:
             return analyse_struct_type(decl);
         case DECL_ENUM_TYPE:

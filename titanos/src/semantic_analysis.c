@@ -139,7 +139,7 @@ static inline bool analyse_body(Decl *func)
     {
         Decl *param_decl = func_decl->args->entries[i];
 
-        assert(param_decl->type.type_id != TYPE_UNRESOLVED && param_decl->type.type_id != TYPE_INVALID);
+        assert(param_decl->type->type_id != TYPE_UNRESOLVED && param_decl->type->type_id != TYPE_INVALID);
         if (skip_unused_params_check)
         {
             param_decl->is_used = true;
@@ -272,7 +272,7 @@ static bool analyse_func_body(Decl *func)
     {
         Decl *param_decl = func->func_decl.args->entries[i];
         assert(param_decl->type_id == DECL_VAR && param_decl->var.kind == VARDECL_PARAM);
-        if (param_decl->var.type->type_id == TYPE_INVALID) continue;
+        if (param_decl->type->type_id == TYPE_INVALID) continue;
         if (param_decl->var.init_expr)
         {
             if (evaluate_constant(param_decl->var.init_expr) != CONST_FULL)

@@ -17,9 +17,9 @@ void decl_init(Decl *decl, DeclType decl_type, Token *span, Token *name, bool pu
     decl->name = *name;
     decl->span = *span;
     decl->is_public = public;
-    decl->type.decl = decl;
-    decl->type.type_id = TYPE_DECLARED;
+    decl->type = NULL;
 }
+
 Decl *decl_new(DeclType decl_type, Token *span, Token *name, bool public)
 {
     Decl *decl = malloc_arena(sizeof(Decl));
@@ -113,7 +113,7 @@ void decl_print(Decl *decl, unsigned current_indent)
             printf("ALIAS_TYPE ");
             decl_print_name_visibility(decl);
             printf("\n");
-            type_print_sub("Alias", current_indent, decl->alias_decl.type);
+            type_print_sub("Alias", current_indent, decl->type);
             return;
         case DECL_STRUCT_TYPE:
             printf("STRUCT_TYPE ");
@@ -161,18 +161,18 @@ uint64_t decl_size(Decl *decl)
     switch (decl->type_id)
     {
         case DECL_BUILTIN:
-            return type_size(&decl->type);
+            return type_size(decl->type);
         case DECL_FUNC:
         case DECL_FUNC_TYPE:
             // TODO pointer size
             return 8;
         case DECL_VAR:
-            return type_size(decl->var.type);
+            return type_size(decl->type);
         case DECL_ENUM_CONSTANT:
             // Go to parent
-            return type_size(&decl->type);
+            return type_size(decl->type);
         case DECL_ALIAS_TYPE:
-            return type_size(decl->alias_decl.type);
+            return type_size(decl->type);
         case DECL_STRUCT_TYPE:
             // TODO
             return 16;

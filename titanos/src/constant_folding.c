@@ -194,7 +194,7 @@ ExprConstState evaluate_constant_identifer(Expr *identifier)
     {
         case DECL_BUILTIN:
             identifier->expr_id = EXPR_TYPE;
-            identifier->type_expr.type = &decl->type;
+            identifier->type_expr.type = decl->type;
             return CONST_FULL;
         case DECL_FUNC:
             // TODO revisit
@@ -213,7 +213,7 @@ ExprConstState evaluate_constant_identifer(Expr *identifier)
             return CONST_FULL;
         case DECL_ALIAS_TYPE:
             identifier->expr_id = EXPR_TYPE;
-            identifier->type_expr.type = decl->alias_decl.type;
+            identifier->type_expr.type = decl->type;
             return CONST_FULL;
         case DECL_STRUCT_TYPE:
         case DECL_ENUM_TYPE:

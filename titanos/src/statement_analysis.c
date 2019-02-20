@@ -39,7 +39,7 @@ bool analyse_decl(Decl *decl)
     assert(decl->var.kind == VARDECL_LOCAL);
 
     // Resolve the type as local (non public)
-    bool success = resolve_type(&decl->var.type, false);
+    bool success = resolve_type(&decl->type, false);
 
     if (success && !active_analyser->parser->is_interface)
     {
@@ -50,22 +50,22 @@ bool analyse_decl(Decl *decl)
         }
     }
 
-    if (decl->var.type->type_id == TYPE_ARRAY)
+    if (decl->type->type_id == TYPE_ARRAY)
     {
-        if (!decl->var.type->array.is_len_resolved)
+        if (!decl->type->array.is_len_resolved)
         {
-            sema_error_at(&decl->var.type->array.len_expr->span, "Could not resolve array length");
+            sema_error_at(&decl->type->array.len_expr->span, "Could not resolve array length");
             success = false;
         }
-        if (decl->var.type->array.is_empty && !decl->var.init_expr)
+        if (decl->type->array.is_empty && !decl->var.init_expr)
         {
             sema_error_at(&decl->span, "Array without fixed size needs initializer");
             success = false;
         }
     }
-    if (decl->var.type->type_id == TYPE_OPAQUE)
+    if (decl->type->type_id == TYPE_OPAQUE)
     {
-        if (scope_is_external_module(decl->var.type->module))
+        if (scope_is_external_module(decl->type->module))
         {
             sema_error_at(&decl->span, "Cannot create opaque type");
             success = false;
@@ -88,7 +88,7 @@ bool analyse_decl(Decl *decl)
         decl->var.in_init = false;
     }
 
-    if (decl->var.type->is_const && !decl->var.init_expr)
+    if (decl->type->is_const && !decl->var.init_expr)
     {
         sema_error_at(&decl->span, "Declaration of constant '%.*s' is missing initial value", SPLAT_TOK(decl->name));
         success = false;
@@ -191,7 +191,8 @@ bool analyse_return(Ast *stmt)
             return false;
         }
     }
-    stmt->return_stmt.defer_top = scope_defer_top();
+    // TODO
+    //stmt->return_stmt.defer_top = scope_defer_top();
     return true;
 }
 
@@ -385,8 +386,9 @@ bool analyse_for(Ast *stmt)
     }
     if (stmt->for_stmt.incr && !analyse_expr(stmt->for_stmt.incr, RHS)) return false;
     // A new scope is necessary for defer.
-    analyse_compound_stmt_scoped(stmt->for_stmt.body);
+    if (!analyse_compound_stmt_scoped(stmt->for_stmt.body)) return false;
     scope_exit(NULL);
+    return true;
 }
 
 

@@ -32,7 +32,7 @@ Token prev_tok;
 static inline Decl *new_var_decl(Token *start, Token *name, VarDeclKind kind, Type *type, bool public)
 {
 	Decl *declaration = decl_new(DECL_VAR, start, name, false);
-	declaration->var.type = type;
+	declaration->type = type;
 	declaration->var.kind = kind;
 	declaration->var.in_init = false;
 	return declaration;
@@ -689,6 +689,8 @@ static inline Decl *parse_func_decl(bool public, bool type_only)
 	if (!consume(TOKEN_IDENTIFIER, "Expected function name but got '%.*s'", SPLAT_TOK(tok))) return NULL;
 
     Decl *decl = decl_new(DECL_FUNC, &start, &prev_tok, public);
+    decl->type = new_type(TYPE_FUNC, public);
+    decl->type->decl = decl;
 	decl->func_decl.rtype = return_type;
 
 	if (try_consume(TOKEN_DOT))
@@ -1400,6 +1402,8 @@ bool parse_struct_block(Decl *struct_members)
 		{
 			Decl *member = decl_new(DECL_STRUCT_TYPE, &tok, &tok, struct_members->is_public);
 			member->struct_decl.struct_type = tok.type == TOKEN_STRUCT ? ST_STRUCT : ST_UNION;
+			member->type = new_type(tok.type == TOKEN_STRUCT ? TYPE_STRUCT : TYPE_UNION, struct_members->is_public);
+			member->type->decl = member;
 			advance();
 			if (try_consume(TOKEN_IDENTIFIER))
 			{
@@ -1440,6 +1444,8 @@ static Decl *parse_struct_or_union_type(bool public, Token *initial_token)
 
 	bool is_struct = tok.type == TOKEN_STRUCT;
 	Decl *struct_decl = decl_new(DECL_STRUCT_TYPE, initial_token, &prev_tok, public);
+	struct_decl->type = new_type(TOKEN_STRUCT ? TYPE_STRUCT : TYPE_UNION, public);
+	struct_decl->type->decl = struct_decl;
 
 	struct_decl->struct_decl.struct_type = is_struct ? ST_STRUCT : ST_UNION;
 	struct_decl->struct_decl.is_global = true;
@@ -1466,7 +1472,7 @@ static Decl *parse_alias_type(bool public, Token *initial_token)
 	Decl *alias = decl_new(DECL_ALIAS_TYPE, initial_token, &prev_tok, public);
 	Type *type = parse_type(true, public);
 	if (!type) return NULL;
-	alias->alias_decl.type = type;
+	alias->type = type;
 
     // TODO parse attributes?
 	CONSUME_REQ_EOS_AND_RETURN(alias);
@@ -1484,6 +1490,8 @@ static Decl *parse_function_type(bool public, Token *initial_token)
 	if (!func_decl) return NULL;
 
 	Decl *type = decl_new(DECL_FUNC_TYPE, initial_token, &prev_tok, public);
+	type->type = new_type(TYPE_FUNC_TYPE, public);
+	type->type->decl = type;
 	type->func_type.func_decl = func_decl;
 
 	CONSUME_REQ_EOS_AND_RETURN(type);
@@ -1507,6 +1515,10 @@ static Decl *parse_enum_type(bool public, Token *initial_token)
 {
 	Decl *enum_decl = decl_new(DECL_ENUM_TYPE, initial_token, &prev_tok, public);
 
+	Type *enum_type = new_type(TYPE_ENUM, public);
+	enum_decl->type = enum_type;
+	enum_decl->type->decl = enum_decl;
+
 	advance_and_verify(TOKEN_ENUM);
 
 	Expr *type = parse_full_identifier();
@@ -1526,7 +1538,7 @@ static Decl *parse_enum_type(bool public, Token *initial_token)
     {
 	    if (!consume(TOKEN_IDENTIFIER, "Expected enum name")) return NULL;
 	    Decl *enum_constant = decl_new(DECL_ENUM_CONSTANT, &prev_tok, &prev_tok, public);
-	    enum_constant->type.decl = enum_decl;
+	    enum_constant->type = enum_decl->type;
 	    vector_add(entries, enum_constant);
         vector_add(current_parser->enum_values, enum_constant);
         if (try_consume(TOKEN_EQ))

@@ -52,7 +52,7 @@ static void codegen_decl_alloca(Decl *decl)
     {
         LLVMPositionBuilderAtEnd(active_builder, active_entry);
     }
-    decl->var.llvm_ref = LLVMBuildAlloca(active_builder, llvm_type(decl->var.type), "");
+    decl->var.llvm_ref = LLVMBuildAlloca(active_builder, llvm_type(decl->type), "");
     LLVMSetValueName2(decl->var.llvm_ref, decl->name.start, decl->name.length);
     LLVMPositionBuilderAtEnd(active_builder, insert_block);
 }
@@ -64,9 +64,9 @@ static LLVMTypeRef codegen_convert_func_decl(Decl *decl)
     for (unsigned i = 0; i < func_decl->args->size; i++)
     {
         Decl *param_decl = func_decl->args->entries[i];
-        params[i] = codegen_convert_decl(param_decl);
+        params[i] = llvm_type(param_decl->type);
     }
-    return decl->type.llvm_type = LLVMFunctionType(return_type, params, func_decl->args->size, func_decl->variadic);
+    return decl->type->llvm_type = LLVMFunctionType(return_type, params, func_decl->args->size, func_decl->variadic);
 }
 
 static LLVMTypeRef codegen_convert_struct_decl(Decl *decl)
@@ -79,7 +79,7 @@ static LLVMTypeRef codegen_convert_struct_decl(Decl *decl)
         members[i] = codegen_convert_decl(param_decl);
     }
     // TODO handle align
-    return decl->type.llvm_type = LLVMStructType(members, struct_decl->members->size, false);
+    return decl->type->llvm_type = LLVMStructType(members, struct_decl->members->size, false);
 }
 
 LLVMBasicBlockRef codegen_insert_block(char *name)
@@ -98,7 +98,7 @@ LLVMBasicBlockRef codegen_insert_block(char *name)
 
 static LLVMTypeRef codegen_convert_decl(Decl *decl)
 {
-    assert(!decl->type.llvm_type);
+    assert(!decl->type->llvm_type);
     switch (decl->type_id)
     {
         case DECL_BUILTIN:
@@ -107,9 +107,9 @@ static LLVMTypeRef codegen_convert_decl(Decl *decl)
         case DECL_FUNC:
             return codegen_convert_func_decl(decl);
         case DECL_VAR:
-            return llvm_type(decl->var.type);
+            return llvm_type(decl->type);
         case DECL_ALIAS_TYPE:
-            return codegen_convert_type(decl->alias_decl.type);
+            return codegen_convert_type(decl->type);
         case DECL_STRUCT_TYPE:
             return codegen_convert_struct_decl(decl);
         case DECL_ENUM_TYPE:
@@ -134,7 +134,12 @@ static LLVMTypeRef codegen_convert_type(Type *type)
             return type->llvm_type = LLVMVoidType();
         case TYPE_POINTER:
             return type->llvm_type = LLVMPointerType(llvm_type(type->pointer.base), 0);
-        case TYPE_DECLARED:
+        case TYPE_ENUM:
+            return type->llvm_type = codegen_convert_type(type->decl->enum_decl.type);
+        case TYPE_FUNC:
+        case TYPE_FUNC_TYPE:
+        case TYPE_STRUCT:
+        case TYPE_UNION:
             return type->llvm_type = codegen_convert_decl(type->decl);
         case TYPE_ARRAY:
             return type->llvm_type = LLVMArrayType(llvm_type(type->array.base), type->array.len);
@@ -162,7 +167,7 @@ void codegen_function_proto(LLVMModuleRef llvm_module, Parser *parser, Decl *fun
 {
     __thread static char buffer[128];
     strncpy(buffer, function->name.start, MIN(function->name.length, 127));
-    LLVMValueRef fun = LLVMAddFunction(llvm_module, buffer, llvm_type(&function->type));
+    LLVMValueRef fun = LLVMAddFunction(llvm_module, buffer, llvm_type(function->type));
     bool single_module = false;
     bool external = (function->is_public && !single_module) || token_compare_str(&function->name, "main");
     LLVMSetLinkage(fun, external ? LLVMExternalLinkage : LLVMLinkerPrivateLinkage);

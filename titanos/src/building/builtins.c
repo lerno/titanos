@@ -7,6 +7,7 @@
 #include "error.h"
 #include "builtins.h"
 #include <llvm-c/Core.h>
+#include "types/type.h"
 
 static void register_c2_builtin(Module *module, Decl *decl)
 {
@@ -42,15 +43,15 @@ TYPES(REG)
   if (!decl) { \
     Token token = token_wrap(#__name); \
     decl = decl_new(DECL_BUILTIN, &token, &token, true); \
-    decl->type.type_id = __type; \
-    if (__type == TYPE_INT)  decl->type.integer = (TypeInt) { (uint16_t)__bits, __signed }; \
-    if (__type == TYPE_FLOAT) decl->type.float_bits = (uint16_t)__bits; \
-    decl->type.llvm_type = __init; \
+    decl->type = new_type(__type, true); \
+    if (__type == TYPE_INT)  decl->type->integer = (TypeInt) { (uint16_t)__bits, __signed }; \
+    if (__type == TYPE_FLOAT) decl->type->float_bits = (uint16_t)__bits; \
+    decl->type->llvm_type = __init; \
   } \
   return decl; \
 }
 
-#define TYPE(__name, __type, __signed, __bits, __init) Type *type_builtin_ ## __name() { return &decl_builtin_ ## __name()->type; }
+#define TYPE(__name, __type, __signed, __bits, __init) Type *type_builtin_ ## __name() { return decl_builtin_ ## __name()->type; }
 
 TYPES(DECL)
 TYPES(TYPE)

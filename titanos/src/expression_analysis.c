@@ -30,7 +30,6 @@ static inline bool is_castable(Type *type)
         case TYPE_INVALID:
             return false;
         case TYPE_UNRESOLVED:
-        case TYPE_IMPORT:
             UNREACHABLE;
         case TYPE_CONST_FLOAT:
         case TYPE_CONST_INT:
@@ -40,11 +39,15 @@ static inline bool is_castable(Type *type)
         case TYPE_OPAQUE:
         case TYPE_POINTER:
         case TYPE_ARRAY:
-        case TYPE_DECLARED:
         case TYPE_TYPEVAL:
         case TYPE_FLOAT:
         case TYPE_INT:
         case TYPE_BOOL:
+        case TYPE_ENUM:
+        case TYPE_FUNC:
+        case TYPE_FUNC_TYPE:
+        case TYPE_STRUCT:
+        case TYPE_UNION:
             return true;
     }
 }
@@ -89,9 +92,9 @@ bool insert_implicit_cast_if_needed(Expr *expr, Type *type)
 bool analyse_init_expr(Decl *decl)
 {
     if (!analyse_expr(decl->var.init_expr, RHS)) return false;
-    if (!insert_implicit_cast_if_needed(decl->var.init_expr, decl->var.type))
+    if (!insert_implicit_cast_if_needed(decl->var.init_expr, decl->type))
     {
-        char *type_name = type_to_string(decl->var.type);
+        char *type_name = type_to_string(decl->type);
         sema_error_at(&decl->span, "Cannot implictly cast expression to '%s'", type_name);
         return false;
     }
@@ -148,15 +151,18 @@ bool is_arithmetics_type(Type *type)
     {
         case TYPE_INVALID:
         case TYPE_UNRESOLVED:
-        case TYPE_IMPORT:
         case TYPE_VOID:
         case TYPE_STRING:
         case TYPE_OPAQUE:
         case TYPE_POINTER:
         case TYPE_ARRAY:
-        case TYPE_DECLARED:
         case TYPE_TYPEVAL:
+        case TYPE_FUNC:
+        case TYPE_FUNC_TYPE:
+        case TYPE_STRUCT:
+        case TYPE_UNION:
             return false;
+        case TYPE_ENUM:
         case TYPE_NIL:
         case TYPE_CONST_FLOAT:
         case TYPE_CONST_INT:
@@ -173,21 +179,24 @@ bool is_real_arithmetics_type(Type *type)
     {
         case TYPE_INVALID:
         case TYPE_UNRESOLVED:
-        case TYPE_IMPORT:
         case TYPE_VOID:
         case TYPE_STRING:
         case TYPE_OPAQUE:
         case TYPE_POINTER:
         case TYPE_ARRAY:
-        case TYPE_DECLARED:
         case TYPE_TYPEVAL:
         case TYPE_BOOL:
         case TYPE_NIL:
+        case TYPE_FUNC:
+        case TYPE_FUNC_TYPE:
+        case TYPE_STRUCT:
+        case TYPE_UNION:
             return false;
         case TYPE_INT:
         case TYPE_FLOAT:
         case TYPE_CONST_FLOAT:
         case TYPE_CONST_INT:
+        case TYPE_ENUM:
             return true;
     }
 }
@@ -499,14 +508,16 @@ static bool cast_const_type_expression(Expr *expr, Type *target_type, bool is_im
     {
         case TYPE_INVALID:
         case TYPE_UNRESOLVED:
-        case TYPE_IMPORT:
         case TYPE_VOID:
         case TYPE_STRING:
         case TYPE_OPAQUE:
         case TYPE_POINTER:
         case TYPE_ARRAY:
-        case TYPE_DECLARED:
         case TYPE_TYPEVAL:
+        case TYPE_FUNC:
+        case TYPE_FUNC_TYPE:
+        case TYPE_STRUCT:
+        case TYPE_UNION:
         case TYPE_NIL:
             UNREACHABLE
         case TYPE_INT:
@@ -519,6 +530,8 @@ static bool cast_const_type_expression(Expr *expr, Type *target_type, bool is_im
             return value_convert(value, VALUE_TYPE_FLOAT, 0, false, allow_trunc);
         case TYPE_CONST_INT:
             return value_convert(value, VALUE_TYPE_INT, 0, false, allow_trunc);
+        case TYPE_ENUM:
+            return cast_const_type_expression(expr, target_type->decl->enum_decl.type, is_implicit);
     }
     UNREACHABLE
 }
@@ -551,9 +564,6 @@ static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool 
         case TYPE_INVALID:
         case TYPE_UNRESOLVED:
             // Since we resolved the type successfully
-            UNREACHABLE
-        case TYPE_IMPORT:
-            // Can't occur here
             UNREACHABLE
         case TYPE_VOID:
         case TYPE_NIL:
@@ -592,15 +602,18 @@ static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool 
             if (type_is_int(target_type) && !implicit) return CAST_INTPTR;
             // Default error
             break;
-        case TYPE_DECLARED:
-            // TODO enum!
+        case TYPE_UNION:
+        case TYPE_STRUCT:
+        case TYPE_FUNC_TYPE:
+        case TYPE_FUNC:
             if (is_same_type && source_type->decl == target_type->decl)
             {
                 // Inline cast
                 expr->type = target_type;
                 return CAST_INLINE;
             }
-            break;
+        case TYPE_ENUM:
+            return perform_compile_time_cast(expr, target_type->decl->enum_decl.type, implicit);
         case TYPE_INT:
             // Make casts on const expression compile time resolved:
             if (expr->expr_id == EXPR_CONST)
@@ -742,7 +755,7 @@ static bool resolve_identifier(Expr *expr, Side side)
                 sema_error_at(&expr->span, "Only variables can be assigned to");
                 return false;
             }
-            expr->type = &decl->type;
+            expr->type = decl->type;
             expr->const_state = CONST_FULL;
             break;
         case DECL_VAR:
@@ -751,13 +764,13 @@ static bool resolve_identifier(Expr *expr, Side side)
                 sema_error_at(&expr->span, "Used '%.*s' in own initialization", SPLAT_TOK(expr->identifier_expr.identifier));
                 return false;
             }
-            if (side == LHS && decl->var.type->is_const)
+            if (side == LHS && decl->type->is_const)
             {
                 sema_error_at(&expr->span, "Cannot assign to constant value");
                 return false;
             }
-            expr->const_state = decl->var.type->is_const ? CONST_FULL : CONST_NONE;
-            expr->type = decl->var.type;
+            expr->const_state = decl->type->is_const ? CONST_FULL : CONST_NONE;
+            expr->type = decl->type;
             expr->identifier_expr.is_ref = side == LHS;
             break;
     }
