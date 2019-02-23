@@ -8,11 +8,50 @@
 #include "builtins.h"
 #include <llvm-c/Core.h>
 #include "types/type.h"
+#include <string.h>
 
 static void register_c2_builtin(Module *module, Decl *decl)
 {
     decl->module = module;
-    module_add_symbol(module, &decl->name, decl);
+    module_add_symbol(module, decl->name, decl);
+}
+
+Type *type_get_signed(Type *type)
+{
+    assert(type->type_id == TYPE_INT);
+    if (type->integer.is_signed) return type;
+    switch (type->integer.bits)
+    {
+        case 8:
+            return type_builtin_i8();
+        case 16:
+            return type_builtin_i16();
+        case 32:
+            return type_builtin_i32();
+        case 64:
+            return type_builtin_i64();
+        default:
+            UNREACHABLE
+    }
+}
+
+Type *type_get_unsigned(Type *type)
+{
+    assert(type->type_id == TYPE_INT);
+    if (!type->integer.is_signed) return type;
+    switch (type->integer.bits)
+    {
+        case 8:
+            return type_builtin_u8();
+        case 16:
+            return type_builtin_u16();
+        case 32:
+            return type_builtin_u32();
+        case 64:
+            return type_builtin_u64();
+        default:
+            UNREACHABLE
+    }
 }
 
 #define TYPES(X) \
@@ -33,7 +72,7 @@ static void register_c2_builtin(Module *module, Decl *decl)
 void register_builtins(Module *module)
 {
 #define REG(__name, __type, __signed, __bits, __init) register_c2_builtin(module, decl_builtin_ ## __name());
-TYPES(REG)
+    TYPES(REG)
 #undef REG
 }
 
@@ -41,8 +80,9 @@ TYPES(REG)
 #define DECL(__name, __type, __signed, __bits, __init) Decl *decl_builtin_ ## __name() { \
   static Decl *decl = NULL; \
   if (!decl) { \
-    Token token = token_wrap(#__name); \
-    decl = decl_new(DECL_BUILTIN, &token, &token, true); \
+    const char *x = #__name; \
+    const char *name = symtab_add(x, strlen(x)); \
+    decl = decl_new(DECL_BUILTIN, (SourceRange) { .loc.id = UINT32_MAX }, name, true); \
     decl->type = new_type(__type, true); \
     if (__type == TYPE_INT)  decl->type->integer = (TypeInt) { (uint16_t)__bits, __signed }; \
     if (__type == TYPE_FLOAT) decl->type->float_bits = (uint16_t)__bits; \
@@ -59,3 +99,4 @@ TYPES(TYPE)
 #undef TYPES
 #undef DECL
 #undef TYPE
+

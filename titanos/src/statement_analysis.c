@@ -10,7 +10,6 @@
 #include "types/type.h"
 #include "type_analysis.h"
 #include "expr.h"
-#include "constant_folding.h"
 #include "expression_analysis.h"
 #include "arena_allocator.h"
 
@@ -29,7 +28,7 @@ bool analyse_decl(Decl *decl)
 
     if (!scope_allow_decl())
     {
-        sema_error_at(&decl->span, "Declarations is not allowed here");
+        sema_error_at(decl->span, "Declarations is not allowed here");
         return false;
     }
 
@@ -43,9 +42,9 @@ bool analyse_decl(Decl *decl)
 
     if (success && !active_analyser->parser->is_interface)
     {
-        if (!is_lower(&decl->name))
+        if (!is_lower(decl->name))
         {
-            sema_error_at(&decl->name, "Variables should start with lower case");
+            sema_error_at(decl->span, "Variables should start with lower case");
             success = false;
         }
     }
@@ -54,12 +53,12 @@ bool analyse_decl(Decl *decl)
     {
         if (!decl->type->array.is_len_resolved)
         {
-            sema_error_at(&decl->type->array.len_expr->span, "Could not resolve array length");
+            sema_error_at(decl->type->array.len_expr->span, "Could not resolve array length");
             success = false;
         }
         if (decl->type->array.is_empty && !decl->var.init_expr)
         {
-            sema_error_at(&decl->span, "Array without fixed size needs initializer");
+            sema_error_at(decl->span, "Array without fixed size needs initializer");
             success = false;
         }
     }
@@ -67,17 +66,17 @@ bool analyse_decl(Decl *decl)
     {
         if (scope_is_external_module(decl->type->module))
         {
-            sema_error_at(&decl->span, "Cannot create opaque type");
+            sema_error_at(decl->span, "Cannot create opaque type");
             success = false;
         }
     }
 
     // check name
-    Decl *shadowed = scope_check_scoped_symbol(&decl->name);
+    Decl *shadowed = scope_check_scoped_symbol(decl->name);
     if (shadowed)
     {
-        sema_error_at(&decl->name, "Declaration of '%.*s' shadows a previous symbol", SPLAT_TOK(decl->name));
-        prev_at(&decl->name, "Shadowed declaration");
+        sema_error_at(decl->span, "Declaration of '%s' shadows a previous symbol", decl->name);
+        prev_at(shadowed->span, "Shadowed declaration");
         return false;
     }
 
@@ -88,9 +87,9 @@ bool analyse_decl(Decl *decl)
         decl->var.in_init = false;
     }
 
-    if (decl->type->is_const && !decl->var.init_expr)
+    if ((decl->var.qualifier & TYPE_QUALIFIER_CONST) && !decl->var.init_expr)
     {
-        sema_error_at(&decl->span, "Declaration of constant '%.*s' is missing initial value", SPLAT_TOK(decl->name));
+        sema_error_at(decl->span, "Declaration of constant '%s' is missing initial value", decl->name);
         success = false;
     }
     scope_add_scoped_symbol(decl);
@@ -161,7 +160,7 @@ bool analyse_return(Ast *stmt)
     stmt->exit = EXIT_RETURN;
     if (!scope_allow_scope_exit())
     {
-        sema_error_at(&stmt->span, "Return statement is forbidden in defer");
+        sema_error_at(stmt->span, "Return statement is forbidden in defer");
         return false;
     }
     Expr *r_value = stmt->return_stmt.expr;
@@ -169,7 +168,7 @@ bool analyse_return(Ast *stmt)
     {
         if (active_analyser->current_func->func_decl.rtype->type_id == TYPE_VOID)
         {
-            sema_error_at(&r_value->span, "Return value is invalid for void function");
+            sema_error_at(r_value->span, "Return value is invalid for void function");
             return false;
         }
         if (!analyse_expr(r_value, RHS))
@@ -179,7 +178,7 @@ bool analyse_return(Ast *stmt)
         if (!insert_implicit_cast_if_needed(r_value, active_analyser->current_func->func_decl.rtype))
         {
             // IMPROVE type
-            sema_error_at(&r_value->span, "Return value does not match function return type");
+            sema_error_at(r_value->span, "Return value does not match function return type");
             return false;
         }
     }
@@ -187,7 +186,7 @@ bool analyse_return(Ast *stmt)
     {
         if (active_analyser->current_func->func_decl.rtype->type_id != TYPE_VOID)
         {
-            sema_error_at(&stmt->span, "Expected return value");
+            sema_error_at(stmt->span, "Expected return value");
             return false;
         }
     }
@@ -201,7 +200,7 @@ static inline bool analyse_break(Ast *stmt)
     LOG_FUNC
     if (!scope_allow_break())
     {
-        sema_error_at(&stmt->span, "Break is not allowed here");
+        sema_error_at(stmt->span, "Break is not allowed here");
         return false;
     }
     scope_set_has_breaks();
@@ -214,7 +213,7 @@ static inline bool analyse_continue(Ast *stmt)
     LOG_FUNC
     if (!scope_allow_continue())
     {
-        sema_error_at(&stmt->span, "Unexpected continue found");
+        sema_error_at(stmt->span, "Unexpected continue found");
         return false;
     }
     stmt->exit = EXIT_CONTINUE;
@@ -291,7 +290,7 @@ static inline bool analyse_case_stmt(Ast *stmt)
     if (!analyse_expr(stmt->case_stmt.expr, RHS)) return false;
     if (stmt->case_stmt.expr->expr_id != EXPR_CONST)
     {
-        sema_error_at(&stmt->case_stmt.expr->span, "Case branches must be constant");
+        sema_error_at(stmt->case_stmt.expr->span, "Case branches must be constant");
         return false;
     }
     return analyse_switch_cast_stmts(stmt, stmt->case_stmt.stmts);
@@ -392,19 +391,19 @@ bool analyse_for(Ast *stmt)
 }
 
 
-static Label *find_or_insert_label(Token *name)
+static Label *find_or_insert_label(const char *name)
 {
     Vector *labels = &active_analyser->labels;
     for (unsigned i = 0; i < labels->size; i++)
     {
         Label *other_label = labels->entries[i];
-        if (token_compare(&other_label->name, name))
+        if (other_label->name == name)
         {
             return other_label;
         }
     }
     Label *label = malloc_arena(sizeof(Label));
-    label->name = *name;
+    label->name = name;
     label->label_stmt = NULL;
     vector_add(labels, label);
     return label;
@@ -412,21 +411,21 @@ static Label *find_or_insert_label(Token *name)
 
 static inline void error_goto_into_defer(Ast *goto_stmt, Ast *label_stmt)
 {
-    sema_error_at(&goto_stmt->span, "Goto label '%.*s' jumps into defer", SPLAT_TOK(label_stmt->span));
-    prev_at(&label_stmt->span, "Label is defined here");
+    sema_error_at(goto_stmt->span, "Goto label '%s' jumps into defer", label_stmt->label_stmt.label_name);
+    prev_at(label_stmt->span, "Label is defined here");
 }
 
 static inline void error_goto_out_of_defer(Ast *goto_stmt, Ast *label_stmt)
 {
-    sema_error_at(&goto_stmt->span, "Goto label '%.*s' jumps out of defer", SPLAT_TOK(label_stmt->span));
-    prev_at(&label_stmt->span, "Label is defined here");
+    sema_error_at(goto_stmt->span, "Goto label '%s' jumps out of defer", label_stmt->label_stmt.label_name);
+    prev_at(label_stmt->span, "Label is defined here");
 }
 
 static inline bool analyse_goto(Ast *stmt)
 {
     assert(stmt->ast_id == AST_GOTO_STMT);
 
-    Label *label = find_or_insert_label(&stmt->goto_stmt.label_name);
+    Label *label = find_or_insert_label(stmt->goto_stmt.label_name);
     stmt->goto_stmt.label = label;
     label->first_goto = stmt;
     stmt->goto_stmt.type = label->label_stmt ? GOTO_JUMP_BACK : GOTO_JUMP_FORWARD;
@@ -453,12 +452,12 @@ static inline bool analyse_defer(Ast *stmt)
     assert(stmt->ast_id == AST_DEFER_STMT);
     if (scope_is_defer())
     {
-        sema_error_at(&stmt->span, "Nested defer statements is not allowed");
+        sema_error_at(stmt->span, "Nested defer statements is not allowed");
         return false;
     }
     if (scope_is_control())
     {
-        sema_error_at(&stmt->span, "Defer is not allowed here");
+        sema_error_at(stmt->span, "Defer is not allowed here");
         return false;
     }
 
@@ -476,11 +475,11 @@ static inline bool analyse_label(Ast *stmt)
 {
     assert(stmt->ast_id == AST_LABEL);
     LOG_FUNC
-    Label *label = find_or_insert_label(&stmt->label_stmt.label_name);
+    Label *label = find_or_insert_label(stmt->label_stmt.label_name);
     if (label->label_stmt)
     {
-        sema_error_at(&stmt->span, "Redefinition of label '%.*s'", SPLAT_TOK(label->name));
-        prev_at(&label->label_stmt->span, "Previous definition was here");
+        sema_error_at(stmt->span, "Redefinition of label '%s'", label->name);
+        prev_at(label->label_stmt->span, "Previous definition was here");
         return false;
     }
     Ast *defer = scope_active_defer();
@@ -501,6 +500,7 @@ static inline bool analyse_label(Ast *stmt)
 
     // We're fine to update, because either the goto isn't found yet, or the defer isn't set.
     label->defer = defer;
+    return true;
 }
 
 bool analyse_asm(Ast *stmt)

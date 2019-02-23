@@ -9,8 +9,8 @@
 
 typedef enum
 {
-    RHS,
-    LHS
+    RHS = 0x01,
+    LHS = 0x02
 } Side;
 
 bool analyse_expr(Expr *expr, Side side);

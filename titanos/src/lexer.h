@@ -9,8 +9,8 @@
 
 
 #include "common.h"
-
 #define TOKEN_MAX_LENGTH 0xFFFF
+#define MAX_IDENTIFIER_LENGTH 31
 
 typedef enum
 {
@@ -105,51 +105,73 @@ const char *token_type_to_string(token_type type);
 
 static_assert(TOKEN_EOF < 128, "Too many different token types");
 
-#define SPLAT_TOK(_tok) (int)((_tok).length), (_tok).start
+#define SPLAT_TOK(_tok) (int)((_tok).span.length), (_tok).start
+
+
+typedef struct _SourceLoc
+{
+	uint32_t id;
+} SourceLoc;
+
+typedef struct _SourceRange
+{
+    SourceLoc loc;
+    uint16_t length;
+} SourceRange;
+
+typedef struct
+{
+    uint32_t start;
+    uint16_t length;
+    uint16_t number;
+} Line;
 
 typedef struct _Token
 {
     const char* start;
-	uint16_t length;
-	uint16_t source_file;
+    SourceRange span;
 	token_type type : 8;
-    unsigned line : 24;
+    union {
+        const char *string;
+    };
 } Token;
 
 typedef struct _File
 {
 	const char *contents;
 	const char *name;
+	SourceLoc start;
+	SourceLoc end;
+	struct _Array *line_start;
 } File;
 
-static_assert(sizeof(Token) == 16, "Invalid size of token");
+static_assert(sizeof(Token) == 32, "Invalid size of token");
 
-void init_lexer(const char *filename, const char *source);
+void init_lexer(const char *filename, const char *source, size_t size);
 File *token_get_file(Token *token);
 Token scan_token(void);
 Token lookahead(int steps);
-const char *line_start(Token *token);
 bool token_compare(const Token *token1, const Token *token2);
 bool token_compare_str(const Token *token1, const char *string);
-void token_expand(Token *to_expand, Token *end_token);
+void range_expand(SourceRange *to_update, Token *end_token);
 void token_to_buffer(Token *token, char *buffer, unsigned len);
 const char *skip_to_end_of_previous_line(const char *file_start, const char *start);
-const char *find_line_start(const char *file_start, const char *start);
 const char *find_line_end(const char *line_start);
+
+File *source_get_file(SourceLoc loc);
+Line *file_source_line(File *file, SourceLoc loc);
 
 Token token_wrap(const char *string);
 
-static inline bool is_lower(Token *token)
+
+static inline bool is_lower(const char *text)
 {
-    return token->start[0] >= 'a' && token->start[0] <= 'z';
+    return text[0] >= 'a' && text[0] <= 'z';
 }
 
-static inline bool is_upper(Token *token)
+static inline bool is_upper(const char *text)
 {
-    return token->start[0] >= 'A' && token->start[0] <= 'Z';
+    return text[0] >= 'A' && text[0] <= 'Z';
 }
 
-static inline bool exceeds_identifier_len(const Token *token)
-{
-	return token->length > 31;
-}
+

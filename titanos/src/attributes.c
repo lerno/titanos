@@ -1,3 +1,4 @@
+#include <string.h>
 #include "attributes.h"
 
 
@@ -18,11 +19,11 @@ static const AttributeInfo attribute_info[] = {
 };
 
 
-AttributeType attribute_type_from_token(Token *token)
+AttributeType attribute_type_from_string(const char *name)
 {
     for (unsigned i = 0; i < ATTRIBUTE_UNKNOWN; i++)
     {
-        if (token_compare_str(token, attribute_info[i].name))
+        if (strcmp(name, attribute_info[i].name) == 0)
         {
             return attribute_info[i].type;
         }

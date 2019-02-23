@@ -29,7 +29,7 @@ typedef struct _Analyser
 
 extern __thread Analyser *active_analyser;
 void select_analyser(Analyser *current_analyser);
-Table *push_scratch_table();
-void pop_scratch_table(Table *table);
+STable *push_scratch_table();
+void pop_scratch_table(STable *table);
 Vector *push_scratch_vector();
 void pop_scratch_vector(Vector *vector);

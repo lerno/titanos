@@ -95,11 +95,11 @@ bool component_has_dependency(Component *this, const Component* other)
     return false;
 }
 
-static bool component_is_exported(Component *component, Token *module_name)
+static bool component_is_exported(Component *component, const char *module_name)
 {
     for (unsigned i = 0; i < component->exports->count; i++)
     {
-        if (token_compare(module_name, component->exports->entries[i]))
+        if (module_name == component->exports->entries[i])
         {
             return true;
         }
@@ -107,27 +107,27 @@ static bool component_is_exported(Component *component, Token *module_name)
     return false;
 }
 
-Module *component_get_module(Component *component, Token *token)
+Module *component_get_module(Component *component, const char *name)
 {
     for (unsigned i = 0; i < component->modules.size; i++)
     {
         Module *module = component->modules.entries[i];
-        if (token_compare(token, &module->name)) return module;
+        if (name == module->name) return module;
     }
     Module *module = malloc_arena(sizeof(Module));
-    module_init(module, token, component->is_external, component->is_c_library);
-    module->is_exported = component_is_exported(component, token);
+    module_init(module, name, component->is_external, component->is_c_library);
+    module->is_exported = component_is_exported(component, name);
     vector_add(&component->modules, module);
     return module;
 }
 
 
-Module *component_find_module(Component *component, const Token *token)
+Module *component_find_module(Component *component, const char *name)
 {
     for (unsigned i = 0; i < component->modules.size; i++)
     {
         Module *module = component->modules.entries[i];
-        if (token_compare(&module->name, token)) return module;
+        if (module->name == name) return module;
     }
     return NULL;
 }

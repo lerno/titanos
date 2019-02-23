@@ -35,3 +35,6 @@ Decl *decl_builtin_f16();
 Decl *decl_builtin_f32();
 Decl *decl_builtin_f64();
 Decl *decl_builtin_f128();
+
+Type *type_get_signed(Type *type);
+Type *type_get_unsigned(Type *type);

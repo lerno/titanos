@@ -48,22 +48,22 @@ typedef struct _Scope
     DynamicScope *cur_scope;
     DynamicScope scopes[MAX_SCOPE_DEPTH];
     unsigned scope_index;    // first free scope (= count of scopes)
-    Table *all_modules;
-    Table imported_modules;
-    Table symbol_cache;
+    STable *all_modules;
+    STable imported_modules;
+    STable symbol_cache;
     Vector *locals; // Module list
 } Scope;
 
 extern __thread Scope *active_scope;
-void scope_init(Scope *scope, const Token *name, Table *modules);
+void scope_init(Scope *scope, const char *name, STable *modules);
 
 
 void scope_add_import_declaration(Decl *import);
-Decl *scope_check_scoped_symbol(Token *token);
+Decl *scope_check_scoped_symbol(const char *symbol);
 void scope_add_scoped_symbol(Decl *var_decl);
-Module *scope_find_used_module(Token *name, bool used_public);
-Decl *scope_find_symbol(Token *token, bool is_type, bool used_public);
-Decl *scope_find_symbol_in_module(Token *token, Module *module);
+Module *scope_find_used_module(const char *name, SourceRange span, bool used_public);
+Decl *scope_find_symbol(const char *symbol, bool is_type, bool used_public, SourceRange span);
+Decl *scope_find_symbol_in_module(Module *module, const char *symbol, SourceRange span);
 void scope_check_access(Ast *decl, Token *loc);
 void scope_push_defer(Ast *defer_stmt);
 void scope_enter(unsigned flags);
@@ -132,7 +132,7 @@ static inline bool scope_is_external_module(Module *module)
     return module && active_scope->module != module;
 }
 
-Module *scope_find_any_module(const Token *token);
+Module *scope_find_any_module(const char *token);
 
 static Ast *find_own_module(Token *symbol);
 

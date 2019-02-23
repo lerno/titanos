@@ -7,12 +7,14 @@
 #include "parsing.h"
 #include "component.h"
 #include "module.h"
+#include "table.h"
+#include "arena_allocator.h"
 
 void init_parser(Parser *parser, const char *filename, bool is_interface)
 {
 	setup_parse_rules();
 	parser->is_interface = is_interface;
-	parser->current_module.length = 0;
+	parser->current_module = NULL;
 	parser->imports = new_vector(16);
 	parser->types = new_vector(32);
 	parser->enum_values = new_vector(32);

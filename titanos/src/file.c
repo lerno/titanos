@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-char *read_file(const char *path)
+char *read_file(const char *path, size_t *return_size)
 {
     FILE *file = fopen(path, "rb");
     
@@ -23,7 +23,7 @@ char *read_file(const char *path)
     
     fseek(file, 0L, SEEK_END);
     size_t file_size = (size_t)ftell(file);
-    
+    *return_size = file_size;
     rewind(file);
     
     char *buffer = (char *)malloc((size_t)file_size + 1);

@@ -22,7 +22,7 @@ static inline void print_color(const char *str)
 }
 static inline void print_token(Token *token)
 {
-    printf("%.*s", token->length, token->start);
+    printf("%.*s", token->span.length, token->start);
 }
 
 static inline  void println_indent(const char *string, int current_indent)

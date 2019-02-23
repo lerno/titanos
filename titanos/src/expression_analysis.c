@@ -3,22 +3,22 @@
 //
 
 #include "expression_analysis.h"
-#include "constant_folding.h"
 #include "error.h"
 #include "type_analysis.h"
 #include "diagnostics.h"
 #include "builtins.h"
+#include "expr.h"
+#include "printer.h"
 
 static bool analyse_cast_expr(Expr *expr, Side side);
 
 static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool implicit);
 
-
 static bool is_rvalue(Expr *expr)
 {
     if (expr->is_lvalue)
     {
-        sema_error_at(&expr->span, "Expression is not assignable");
+        sema_error_at(expr->span, "Expression is not assignable");
         return false;
     }
     return true;
@@ -94,8 +94,7 @@ bool analyse_init_expr(Decl *decl)
     if (!analyse_expr(decl->var.init_expr, RHS)) return false;
     if (!insert_implicit_cast_if_needed(decl->var.init_expr, decl->type))
     {
-        char *type_name = type_to_string(decl->type);
-        sema_error_at(&decl->span, "Cannot implictly cast expression to '%s'", type_name);
+        sema_error_at(decl->span, "Cannot implictly cast expression to '%s'", type_to_string(decl->type));
         return false;
     }
     return true;
@@ -256,7 +255,7 @@ static inline bool analyse_minus_expr(Expr *binary, Side side)
     }
     if (!try_upcasting_for_arithmetics(left, right))
     {
-        sema_error_at(&binary->span, "Can't subtract '%s' from '%s'", type_to_string(right->type), type_to_string(left->type));
+        sema_error_at(binary->span, "Can't subtract '%s' from '%s'", type_to_string(right->type), type_to_string(left->type));
         return false;
     }
     if (is_both_const(left, right))
@@ -280,7 +279,7 @@ static inline bool analyse_plus_expr(Expr *binary, Side side)
     }
     if (!try_upcasting_binary_for_arithmetics(binary))
     {
-        sema_error_at(&binary->span, "Can't add '%s' to '%s'", type_to_string(right->type), type_to_string(left->type));
+        sema_error_at(binary->span, "Can't add '%s' to '%s'", type_to_string(right->type), type_to_string(left->type));
         return false;
     }
     if (is_both_const(left, right))
@@ -298,7 +297,7 @@ static inline bool analyse_mult_expr(Expr *binary)
     Expr *right = binary->binary_expr.right;
     if (!try_upcasting_binary_for_arithmetics(binary))
     {
-        sema_error_at(&binary->span, "Can't multiply '%s' by '%s'", type_to_string(left->type), type_to_string(right->type));
+        sema_error_at(binary->span, "Can't multiply '%s' by '%s'", type_to_string(left->type), type_to_string(right->type));
         return false;
     }
     if (is_both_const(left, right))
@@ -316,7 +315,7 @@ static inline bool analyse_div_expr(Expr *binary)
     Expr *right = binary->binary_expr.right;
     if (!try_upcasting_binary_for_arithmetics(binary))
     {
-        sema_error_at(&binary->span, "Can't divide '%s' by '%s'", type_to_string(left->type), type_to_string(right->type));
+        sema_error_at(binary->span, "Can't divide '%s' by '%s'", type_to_string(left->type), type_to_string(right->type));
         return false;
     }
     if (is_both_const(left, right))
@@ -334,7 +333,7 @@ static inline bool analyse_mod_expr(Expr *binary)
     Expr *right = binary->binary_expr.right;
     if (!type_is_int(left->type) || !type_is_int(right->type))
     {
-        sema_error_at(&binary->span, "Can't take remainder of '%s' from '%s'", type_to_string(left->type), type_to_string(right->type));
+        sema_error_at(binary->span, "Can't take remainder of '%s' from '%s'", type_to_string(left->type), type_to_string(right->type));
         return false;
     }
     if (!try_upcasting_binary_for_arithmetics(binary))
@@ -434,7 +433,7 @@ bool analyse_implicit_bool_cast(Expr *expr)
 {
     if (type_may_convert_to_bool(expr->type))
     {
-        sema_error_at(&expr->span, "The expression cannot be implictly converted to boolean");
+        sema_error_at(expr->span, "The expression cannot be implictly converted to boolean");
         return false;
     }
     return true;
@@ -461,9 +460,8 @@ static inline bool analyse_ternary_expr(Expr *expr, Side side)
         Type *type = try_upcasting_for_arithmetics(then_expr, else_expr);
         if (!type)
         {
-            char *t1 = type_to_string(else_expr->type);
-            char *t2 = type_to_string(then_expr->type);
-            sema_error_at(&expr->span, "Ternary expression result has incompatible types '%s' and '%s'", t1, t2);
+            sema_error_at(expr->span, "Ternary expression result has incompatible types '%s' and '%s'",
+                    type_to_string(else_expr->type), type_to_string(then_expr->type));
             return false;
         }
         expr->type = type;
@@ -541,10 +539,8 @@ static CastResult perform_compile_time_cast_on_const(Expr *expr, Type *target_ty
     if (!cast_const_type_expression(expr, target_type, implicit))
     {
         assert(expr->cast_expr.implicit);
-        char *type_name = type_to_string(expr->cast_expr.type);
-        sema_error_at(&expr->span, "Cannot implicitly cast '%.*s' to '%s'",
-                      expr->cast_expr.expr, type_name);
-        free(type_name);
+        sema_error_at(expr->span, "Cannot implicitly cast '%s' to '%s'",
+                      type_to_string(expr->cast_expr.type), type_to_string(target_type));
         return CAST_FAILED;
     }
     expr->type = target_type;
@@ -571,12 +567,8 @@ static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool 
         case TYPE_TYPEVAL:
         case TYPE_ARRAY:
         case TYPE_CONST_INT:
-        {
-            char *name = type_to_string(target_type);
-            sema_error_at(&expr->span, "Cannot cast expression to '%s'", name);
-            free(name);
+            sema_error_at(expr->span, "Cannot cast expression to '%s'", type_to_string(target_type));
             return CAST_FAILED;
-        }
         case TYPE_CONST_FLOAT:
             if (source_type->type_id == TYPE_CONST_INT)
             {
@@ -685,11 +677,7 @@ static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool 
                     break;
             }
     }
-    char *target_name = type_to_string(target_type);
-    char *source_name = type_to_string(source_type);
-    sema_error_at(&expr->span, "Cannot cast '%s' to '%s'", source_name, target_name);
-    free(target_name);
-    free(source_name);
+    sema_error_at(expr->span, "Cannot cast '%s' to '%s'", type_to_string(source_type), type_to_string(target_type));
     return CAST_FAILED;
 }
 
@@ -728,10 +716,33 @@ static bool analyse_type_expr(Expr *expr)
     return true;
 }
 
+static inline bool force_cast_to_signed(Expr *sub_expr)
+{
+    Type *type = sub_expr->type;
+    switch (type->type_id)
+    {
+        case TYPE_CONST_FLOAT:
+        case TYPE_CONST_INT:
+        case TYPE_FLOAT:
+            return true;
+        case TYPE_INT:
+            if (!type->integer.is_signed)
+            {
+                Type *target_type = type_get_signed(type);
+                return insert_cast_if_needed(sub_expr, target_type, false);
+            }
+            return true;
+        case TYPE_BOOL:
+            insert_cast_if_needed(sub_expr, type_builtin_i8(), false);
+            return true;
+        default:
+            return false;
+    }
+}
 static bool resolve_identifier(Expr *expr, Side side)
 {
     LOG_FUNC
-    Decl *decl = scope_find_symbol(&expr->identifier_expr.identifier, false, false);
+    Decl *decl = scope_find_symbol(expr->identifier_expr.identifier, false, false, expr->span);
     if (!decl)
     {
         return false;
@@ -752,26 +763,36 @@ static bool resolve_identifier(Expr *expr, Side side)
         case DECL_LABEL:
             if (side == LHS)
             {
-                sema_error_at(&expr->span, "Only variables can be assigned to");
+                sema_error_at(expr->span, "Only variables can be assigned to");
                 return false;
             }
             expr->type = decl->type;
-            expr->const_state = CONST_FULL;
             break;
         case DECL_VAR:
+            decl->var.in_init = true;
+            if (!resolve_type(&decl->type, decl->is_public)) return false;
+            if (!analyse_expr(decl->var.init_expr, RHS)) return false;
+            decl->var.in_init = false;
             if (decl->var.in_init)
             {
-                sema_error_at(&expr->span, "Used '%.*s' in own initialization", SPLAT_TOK(expr->identifier_expr.identifier));
+                sema_error_at(expr->span, "Used '%s' in own initialization", expr->identifier_expr.identifier);
                 return false;
             }
-            if (side == LHS && decl->type->is_const)
+            if (side == LHS && (decl->var.qualifier & TYPE_QUALIFIER_CONST))
             {
-                sema_error_at(&expr->span, "Cannot assign to constant value");
+                sema_error_at(expr->span, "Cannot assign to constant value");
                 return false;
             }
-            expr->const_state = decl->type->is_const ? CONST_FULL : CONST_NONE;
-            expr->type = decl->type;
-            expr->identifier_expr.is_ref = side == LHS;
+            if (decl->var.qualifier & TYPE_QUALIFIER_CONST)
+            {
+                expr_replace(expr, decl->var.init_expr);
+                expr->type = decl->type;
+            }
+            else
+            {
+                expr->type = decl->type;
+                expr->identifier_expr.is_ref = side == LHS;
+            }
             break;
     }
     if (side == RHS)
@@ -780,17 +801,104 @@ static bool resolve_identifier(Expr *expr, Side side)
         // TODO
         // if (usedPublicly) decl->is_used_public = true;
     }
-    return expr->const_state;
+    return true;
 }
 
 bool analyse_const_expr(Expr *expr)
 {
-    assert(expr->const_state == CONST_FULL);
+    assert(EXPR_CONST == expr->expr_id);
     assert(expr->type != NULL);
     return true;
 }
 
+bool analyse_unary_expr(Expr *expr, Side side)
+{
+    LOG_FUNC
+    Expr *sub_expr = expr->unary_expr.expr;
+    switch (expr->unary_expr.operator)
+    {
+        case TOKEN_PLUSPLUS:
+        case TOKEN_MINUSMINUS:
+            if (!analyse_expr(sub_expr, LHS | side)) return false;
+/*            if (LType.isNull()) return 0;
+            checkAssignment(SubExpr, LType);
+            expr->setType(LType);*/
+            return true;
+        case TOKEN_AMP:
+            if (!analyse_expr(sub_expr, side | RHS)) return false;
+            expr->type = new_type(TYPE_POINTER, false);
+            // TODO constness copy qualifier if variable.
+            expr->type->pointer.base = sub_expr->type;
+            return true;
+        case TOKEN_STAR:
+            if (!analyse_expr(sub_expr, side | RHS)) return false;
+            if (expr->type->type_id != TYPE_POINTER)
+            {
+                sema_error_at(sub_expr->span, "Expected a pointer, not a '%s'", type_to_string(expr->type));
+                return false;
+            }
+            // TODO constness;
+            expr->type = expr->type->pointer.base;
+            return true;
+        case TOKEN_MINUS:
+            if (!analyse_expr(sub_expr, side | RHS)) return false;
+            if (!force_cast_to_signed(sub_expr)) return false;
+            if (sub_expr->expr_id == EXPR_CONST)
+            {
+                sub_expr->const_expr.value = value_negate(sub_expr->const_expr.value);
+                expr_replace(expr, sub_expr);
+            }
+            expr->type = sub_expr->type;
+            return true;
+        case TOKEN_BIT_NOT:
+            if (!analyse_expr(sub_expr, side | RHS)) return false;
+            switch (sub_expr->type->type_id)
+            {
+                case TYPE_INT:
+                case TYPE_BOOL:
+                    break;
+                default:
+                    sema_error_at(sub_expr->span,
+                                  "Cannot bitwise negate an expression of type '%s'",
+                                  type_to_string(expr->type));
+                    return false;
+            }
+            if (sub_expr->expr_id == EXPR_CONST)
+            {
+                sub_expr->const_expr.value = value_bit_not(sub_expr->const_expr.value);
+                assert(sub_expr->const_expr.value.type != VALUE_TYPE_ERROR);
+                expr_replace(expr, sub_expr);
+                return true;
+            }
+            expr->type = sub_expr->type;
+            return true;
+        case TOKEN_NOT:
+            if (!analyse_expr(sub_expr, side | RHS)) return false;
+            switch (sub_expr->type->type_id)
+            {
+                case TYPE_CONST_INT:
+                case TYPE_FLOAT:
+                case TYPE_POINTER:
+                case TYPE_NIL:
+                case TYPE_INT:
+                case TYPE_BOOL:
+                    break;
+                default:
+                    sema_error_at(sub_expr->span, "Cannot negate '%s'", type_to_string(sub_expr->type));
+                    return false;
+            }
+            if (sub_expr->expr_id == EXPR_CONST)
+            {
+                expr->const_expr.value = value_not(sub_expr->const_expr.value);
+                expr->expr_id = EXPR_CONST;
+            }
+            expr->type = type_builtin_bool();
+            return true;
+        default:
+            UNREACHABLE
+    }
 
+}
 
 bool analyse_expr(Expr *expr, Side side)
 {
@@ -809,7 +917,7 @@ bool analyse_expr(Expr *expr, Side side)
         case EXPR_TERNARY:
             return analyse_ternary_expr(expr, side);
         case EXPR_UNARY:
-            //return analyse_unary_expr(expr, side);
+            return analyse_unary_expr(expr, side);
         case EXPR_POST:
             //return analyse_post_expr(expr, side);
         case EXPR_IDENTIFIER:

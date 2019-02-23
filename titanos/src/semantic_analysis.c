@@ -10,15 +10,14 @@
 #include "arena_allocator.h"
 #include "scope.h"
 #include "attributes.h"
-#include "constant_folding.h"
 #include "analyser.h"
 #include "statement_analysis.h"
 #include "decl.h"
 #include "type_analysis.h"
+#include "expression_analysis.h"
+#include "expr.h"
 
 const static uint64_t MAX_ARRAY_SIZE = UINT32_MAX;
-
-
 
 
 
@@ -43,11 +42,11 @@ unsigned check_attributes(Ast *ast_attribute_list)
         // Improve: check that same attribute does not appear more than once?
         Ast *attribute = attributes->entries[a];
         assert(attribute->ast_id == AST_ATTRIBUTE);
-        Token *name = &attribute->attribute.name;
-        AttributeType attribute_type = attribute_type_from_token(name);
+        const char *name = attribute->attribute.name;
+        AttributeType attribute_type = attribute_type_from_string(name);
         if (attribute_type == ATTRIBUTE_UNKNOWN)
         {
-            sema_error_at(&attribute->attribute.name, "Unknown attribute '%.*s'", SPLAT_TOK(*name));
+            sema_error_at(attribute->span, "Unknown attribute '%s'", name);
             errors++;
             continue;
         }
@@ -55,9 +54,14 @@ unsigned check_attributes(Ast *ast_attribute_list)
         Expr *value = attribute->attribute.value;
         if (value)
         {
-            if (evaluate_constant(attribute->attribute.value) == CONST_FULL)
+            if (!analyse_expr(value, RHS))
             {
-                sema_error_at(&attribute->attribute.value->span, "Value must be a constant");
+                errors++;
+                continue;
+            }
+            if (value->expr_id != EXPR_CONST)
+            {
+                sema_error_at(attribute->attribute.value->span, "Value must be a constant");
                 errors++;
                 continue;
             }
@@ -66,7 +70,7 @@ unsigned check_attributes(Ast *ast_attribute_list)
         {
             if (info->argument != ATTR_ARG_NONE)
             {
-                sema_error_at(&attribute->attribute.name, "Attribute '%s' requires an argument", info->name);
+                sema_error_at(attribute->span, "Attribute '%s' requires an argument", info->name);
                 errors++;
             }
             continue;
@@ -75,13 +79,13 @@ unsigned check_attributes(Ast *ast_attribute_list)
         switch (info->argument)
         {
             case ATTR_ARG_NONE:
-                sema_error_at(&attribute->span, "Attribute '%s' cannot have arguments", info->name);
+                sema_error_at(attribute->span, "Attribute '%s' cannot have arguments", info->name);
                 errors++;
                 break;
             case ATTR_ARG_STRING:
 //                if (value->ast_id != AST_CONST_EXPR || value->const_expr.value.type != VALUE_TYPE_STRING)
                 {
-                    sema_error_at(&value->span, "Expected a string argument");
+                    sema_error_at(value->span, "Expected a string argument");
                     errors++;
                 }
                 break;
@@ -90,28 +94,28 @@ unsigned check_attributes(Ast *ast_attribute_list)
     //                || value->const_expr.value.type != VALUE_TYPE_INT
       //              || value->const_expr.value.big_int.is_negative)
                 {
-                    sema_error_at(&value->span, "Expected a unsigned int value");
+                    sema_error_at(value->span, "Expected a unsigned int value");
                     errors++;
                 }
                 break;
             case ATTR_ARG_INT:
         //        if (value->ast_id != AST_CONST_EXPR || value->const_expr.value.type != VALUE_TYPE_INT)
                 {
-                    sema_error_at(&value->span, "Expected an integer value");
+                    sema_error_at(value->span, "Expected an integer value");
                     errors++;
                 }
                 break;
             case ATTR_ARG_NUMBER:
           //      if (value->ast_id != AST_CONST_EXPR || !value_is_number(&value->const_expr.value))
                 {
-                    sema_error_at(&value->span, "Expected a numeric value");
+                    sema_error_at(value->span, "Expected a numeric value");
                     errors++;
                 }
                 break;
             case ATTR_ARG_BOOL:
             //    if (value->ast_id != AST_CONST_EXPR || value->const_expr.value.type != VALUE_TYPE_INT)
                 {
-                    sema_error_at(&value->span, "Expected a boolean value");
+                    sema_error_at(value->span, "Expected a boolean value");
                     errors++;
                 }
                 break;
@@ -144,13 +148,13 @@ static inline bool analyse_body(Decl *func)
         {
             param_decl->is_used = true;
         }
-        if (param_decl->name.length)
+        if (param_decl->name)
         {
-            Decl *old = scope_check_scoped_symbol(&param_decl->name);
+            Decl *old = scope_check_scoped_symbol(param_decl->name);
             if (old)
             {
-                sema_error_at(&param_decl->name, "Parameter %.*s shadows global identifier", SPLAT_TOK(param_decl->name));
-                prev_at(&old->span, "Previous declaration was here");
+                sema_error_at(param_decl->span, "Parameter %s shadows global identifier", param_decl->name);
+                prev_at(old->span, "Previous declaration was here");
                 continue;
             }
             scope_add_scoped_symbol(param_decl);
@@ -173,7 +177,7 @@ static inline bool analyse_body(Decl *func)
         Ast *last_stmt = ast_compound_stmt_last(func_decl->body);
         if (!last_stmt || last_stmt->ast_id != AST_RETURN_STMT)
         {
-            sema_error_at(last_stmt ? &last_stmt->span : &func_decl->body->span, "Expected a return at the end of a non void function");
+            sema_error_at(last_stmt ? last_stmt->span : func_decl->body->span, "Expected a return at the end of a non void function");
             return false;
         }
     }
@@ -275,9 +279,10 @@ static bool analyse_func_body(Decl *func)
         if (param_decl->type->type_id == TYPE_INVALID) continue;
         if (param_decl->var.init_expr)
         {
-            if (evaluate_constant(param_decl->var.init_expr) != CONST_FULL)
+            if (!analyse_expr(param_decl->var.init_expr, RHS)) return false;
+            if (param_decl->var.init_expr->expr_id != EXPR_CONST)
             {
-                sema_error_at(&param_decl->var.init_expr->span,
+                sema_error_at(param_decl->var.init_expr->span,
                               "Default value must be a compile time constant");
                 success = false;
             }
@@ -300,8 +305,7 @@ static bool analyse_func_body(Decl *func)
         {
             if (!label->first_goto)
             {
-                sema_warn_at(DIAG_UNUSED_LABEL, &label->label_stmt->span, "Unused label '%.*s'",
-                             SPLAT_TOK(label->name));
+                sema_warn_at(DIAG_UNUSED_LABEL, label->label_stmt->span, "Unused label '%s'", label->name);
             }
         }
         else
@@ -342,15 +346,15 @@ static inline void add_symbols()
     {
         Decl *import = active_analyser->parser->imports->entries[i];
         assert(import->type_id == DECL_IMPORT);
-        Token *name;
+        const char *name;
         switch (import->import.type)
         {
             case IMPORT_TYPE_LOCAL:
             case IMPORT_TYPE_FULL:
-                name = &import->name;
+                name = import->name;
                 break;
             case IMPORT_TYPE_ALIAS:
-                name = &import->import.alias;
+                name = import->import.alias;
                 break;
             default:
                 FATAL_ERROR("Unknown type");
@@ -358,8 +362,8 @@ static inline void add_symbols()
         Decl *old = module_add_symbol(active_analyser->module, name, import);
         if (old)
         {
-            sema_error_at(name, "Identifier '%.*s' already in use", name->length, name->start);
-            prev_at(&old->span, "Old definition was here");
+            sema_error_at(import->span, "Identifier '%s' already in use", name);
+            prev_at(old->span, "Old definition was here");
         }
     }
 
@@ -368,12 +372,12 @@ static inline void add_symbols()
     {
         Decl *type = active_analyser->parser->types->entries[i];
         type->module = active_analyser->module;
-        Decl *old = module_add_symbol(active_analyser->module, &type->name, type);
-        printf("Adding %.*s\n", SPLAT_TOK(type->name));
+        Decl *old = module_add_symbol(active_analyser->module, type->name, type);
+        printf("Adding %s\n", type->name);
         if (old)
         {
-            sema_error_at(&type->span, "Type '%.*s' redefines identifier", SPLAT_TOK(type->name));
-            prev_at(&old->span, "Old definition was here");
+            sema_error_at(type->span, "Type '%s' redefines identifier", type->name);
+            prev_at(old->span, "Old definition was here");
         }
         if (type->is_public && active_analyser->module->is_exported)
         {
@@ -385,13 +389,12 @@ static inline void add_symbols()
     for (unsigned i = 0; i < active_analyser->parser->variables->size; i++)
     {
         Decl *var = active_analyser->parser->variables->entries[i];
-        printf("Added %.*s\n", SPLAT_TOK(var->span));
         assert(var->type_id == DECL_VAR);
-        Decl *old = module_add_symbol(active_analyser->module, &var->name, var);
+        Decl *old = module_add_symbol(active_analyser->module, var->name, var);
         if (old)
         {
-            sema_error_at(&var->name, "Global variable '%.*s' redefines identifier", SPLAT_TOK(var->name));
-            prev_at(&old->span, "Old definition was here");
+            sema_error_at(var->span, "Global variable '%s' redefines identifier", var->name);
+            prev_at(old->span, "Old definition was here");
         }
         if (var->is_public && active_analyser->module->is_exported)
         {
@@ -406,20 +409,20 @@ static inline void add_symbols()
 
         if (type->func_decl.is_static_struct_func)
         {
-            Decl *old = module_add_struct_function(active_analyser->module, &type->func_decl.full_name, type);
+            Decl *old = module_add_struct_function(active_analyser->module, type->func_decl.full_name, type);
             if (old)
             {
-                sema_error_at(&type->span, "Function '%.*s' redefines identifier", SPLAT_TOK(type->func_decl.full_name));
-                prev_at(&old->span, "The old definition was here");
+                sema_error_at(type->span, "Function '%s' redefines identifier", type->func_decl.full_name);
+                prev_at(old->span, "The old definition was here");
             }
         }
         else
         {
-            Decl *old = module_add_symbol(active_analyser->module, &type->name, type);
+            Decl *old = module_add_symbol(active_analyser->module, type->name, type);
             if (old)
             {
-                sema_error_at(&type->span, "Function '%.*s' redefines identifier", SPLAT_TOK(type->name));
-                prev_at(&old->span, "The old definition was here");
+                sema_error_at(type->span, "Function '%s' redefines identifier", type->name);
+                prev_at(old->span, "The old definition was here");
             }
         }
 
@@ -440,9 +443,9 @@ static void analyse_variables()
     }
 }
 
-static inline void init_analyser(Analyser *analyser, Module *module, Table *modules, Parser *parser)
+static inline void init_analyser(Analyser *analyser, Module *module, STable *modules, Parser *parser)
 {
-    scope_init(&analyser->scope, &module->name, modules);
+    scope_init(&analyser->scope, module->name, modules);
     analyser->module = module;
     analyser->parser = parser;
     vector_init(&analyser->labels, 16);
@@ -451,7 +454,7 @@ static inline void init_analyser(Analyser *analyser, Module *module, Table *modu
 }
 
 
-bool analyse(Component *component, Table *modules)
+bool analyse(Component *component, STable *modules)
 {
     Vector *analysers = new_vector(128);
     for (unsigned i = 0; i < component->modules.size; i++)

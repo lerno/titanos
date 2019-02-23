@@ -58,7 +58,7 @@ typedef struct _ExprTernary
 
 typedef struct _ExprIdentifier
 {
-    Token identifier;
+    const char *identifier;
     bool is_ref;
     Decl *resolved;
 } ExprIdentifier;
@@ -151,7 +151,7 @@ typedef struct _Expr
     ExprConstState const_state : 2;
     bool is_evaluating : 1;
     bool is_lvalue : 1;
-    Token span;
+    SourceRange span;
     Type *type;
     union {
         ExprType type_expr;
@@ -173,8 +173,8 @@ typedef struct _Expr
 
 void expr_print(Expr *expr, unsigned current_indent);
 void expr_print_sub(const char *header, unsigned current_indent, Expr *expr);
-Expr *expr_new(ExprTypeId type, Token *span);
+Expr *expr_new(ExprTypeId type, SourceRange span);
 Expr *expr_copy(Expr *expr);
-Expr *expr_new_type_expr(Type *type, Token *span);
+Expr *expr_new_type_expr(Type *type, SourceRange span);
 void expr_replace(Expr *target, Expr *source);
 bool expr_is_const_false(Expr *cond);

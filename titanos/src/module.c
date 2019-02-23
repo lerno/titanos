@@ -2,14 +2,14 @@
 #include "printer.h"
 #include "parser.h"
 
-void module_init(Module *module, Token *name, bool is_external, bool is_c_lib)
+void module_init(Module *module, const char *name, bool is_external, bool is_c_lib)
 {
-    module->name = *name;
+    module->name = name;
     module->is_c_library = is_c_lib;
     module->is_exported = false;
     module->is_external = is_external;
-    table_init(&module->symbols, 128);
-    table_init(&module->struct_functions, 8);
+    stable_init(&module->symbols, 128);
+    stable_init(&module->struct_functions, 8);
     module->files = new_vector(4);
 }
 
@@ -22,27 +22,27 @@ const std::string& Module::getCName() const {
 
 
 
-Decl *module_find_symbol(Module *module, Token *symbol)
+Decl *module_find_symbol(Module *module, const char *symbol)
 {
-    return table_get_token(&module->symbols, symbol);
+    return stable_get(&module->symbols, symbol);
 }
 
-Decl *module_add_symbol(Module *module, Token *symbol, Decl *value)
+Decl *module_add_symbol(Module *module, const char *symbol, Decl *value)
 {
-    assert(symbol->length > 0);
-    return table_set_token(&module->symbols, symbol, value);
+    assert(symbol);
+    return stable_set(&module->symbols, symbol, value);
 }
 
-Decl *module_add_struct_function(Module *module, Token *symbol, Decl *value)
+Decl *module_add_struct_function(Module *module, const char *symbol, Decl *value)
 {
-    return table_set_token(&module->struct_functions, symbol, value);
+    return stable_set(&module->struct_functions, symbol, value);
 }
 
 void module_print_files(Module *module)
 {
     if (module->files->size == 0) print_color(ANSI_GREY);
     indent(1);
-    print_token(&module->name);
+    printf("%s", module->name);
     print_color(ANSI_NORMAL);
     printf("\n");
     for (unsigned i = 0; i < module->files->size; i++)
@@ -56,13 +56,13 @@ void module_print_files(Module *module)
 void module_print_symbols(Module *module)
 {
     indent(1);
-    printf("module %.*s\n", module->name.length, module->name.start);
+    printf("module %s\n", module->name);
     for (unsigned i = 0; i < module->symbols.capacity; i++)
     {
-        Entry *entry = &module->symbols.entries[i];
+        SEntry *entry = &module->symbols.entries[i];
         if (!entry->key) continue;
         indent(2);
-        printf("[%.*s]\n", entry->key_len, entry->key);
+        printf("[%s]\n", entry->key);
         decl_print(entry->value, 3);
     }
 }

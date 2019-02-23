@@ -10,22 +10,25 @@
 #include "array.h"
 #include "error.h"
 #include "diagnostics.h"
+#include "table.h"
+#include "symtab.h"
 
 #include <string.h>
 
 #define MAX_FILES (0xFFFF - 1)
 #define MAX_LINE (0xFFFFFF - 1)
-#define MIN(a, b) ((a) > (b) ? (a) : (b))
 
 Array files;
 File pseudo_file;
+SourceLoc current_file_start;
+File *current_file = NULL;
+Line *current_line;
 
 typedef struct
 {
     const char *begin;
     const char *start;
     const char *current;
-    unsigned line;
     uint16_t source_file;
 } Lexer;
 
@@ -392,19 +395,32 @@ static char advance()
     return *(lexer.current++);
 }
 
-
-
-
+static void add_line()
+{
+    uint32_t loc = (uint32_t) (lexer.current - lexer.begin + current_file_start.id);
+    if (loc < current_line->start)
+    {
+        // It can happen that we add a line we already added.
+        return;
+    }
+    current_line->length = (uint16_t) (loc - current_line->start);
+    Line *new_line = malloc(sizeof(Line));
+    new_line->start = loc + 1;
+    new_line->length = UINT16_MAX;
+    new_line->number = (uint16_t) (current_line->number + 1);
+    current_line = new_line;
+    array_add(current_file->line_start, new_line);
+    assert(current_line->number == current_file->line_start->count);
+}
 
 Token error_token(const char *message)
 {
     Token token;
     token.type = TOKEN_ERROR;
     token.start = lexer.start;
-    token.length = 1;
-    token.line = lexer.line;
-    token.source_file = lexer.source_file;
-    error_at(&token, message);
+    token.span.length = 1;
+    token.span.loc.id = (uint32_t) (current_file_start.id + (lexer.begin - lexer.start));
+    error_at(token.span, message);
     return token;
 }
 
@@ -415,9 +431,9 @@ static Token make_token(token_type type)
     Token token;
     token.type = type;
     token.start = lexer.start;
-    token.length = (uint16_t)token_size;
-    token.line = lexer.line;
-    token.source_file = lexer.source_file;
+    token.span = (SourceRange)
+            { .loc.id = (uint32_t) (current_file_start.id + (lexer.start - lexer.begin)),
+                    .length = (uint16_t) token_size };
     return token;
 }
 
@@ -435,7 +451,7 @@ bool skip_whitespace()
         switch (c)
         {
             case '\n':
-                lexer.line++;
+                add_line();
             case ' ':
             case '\t':
             case '\r':
@@ -453,7 +469,7 @@ bool skip_whitespace()
                     while (1)
                     {
                         advance();
-                        if (peek() == '\n') lexer.line++;
+                        if (peek() == '\n') add_line();
                         if (reached_end()) return false;
                         if (peek() == '*' && peek_next() == '/')
                         {
@@ -469,7 +485,7 @@ bool skip_whitespace()
                     while (1)
                     {
                         advance();
-                        if (peek() == '\n') lexer.line++;
+                        if (peek() == '\n') add_line();
                         if (reached_end()) return false;
                         if (peek() == '/' && peek_next() == '+')
                         {
@@ -510,7 +526,7 @@ static inline Token scan_string()
             advance();
             continue;
         }
-        if (c == '\n') lexer.line++;
+        if (c == '\n') add_line();
         if (reached_end())
         {
             return error_token("Unterminated string.");
@@ -525,7 +541,14 @@ static inline Token scan_ident()
     {
         advance();
     }
-    return make_token(indentifier_type());
+    token_type type = indentifier_type();
+    Token token = make_token(type);
+    if (type == TOKEN_IDENTIFIER)
+    {
+        uint32_t len = (uint32_t) (lexer.current - lexer.start);
+        token.string = symtab_add(lexer.start, len);
+    }
+    return token;
 }
 
 static inline bool match(char expected)
@@ -657,7 +680,7 @@ const char *skip_to_end_of_previous_line(const char *file_start, const char *sta
     return start;
 }
 
-const char *find_line_start(const char *file_start, const char *start)
+const char *source_line_start(const char *file_start, const char *start)
 {
     if (start < file_start) return file_start;
     while (start > file_start && start[0] != '\n')
@@ -679,11 +702,7 @@ const char *find_line_start(const char *file_start, const char *start)
     }
 }
 
-const char *line_start(Token *token)
-{
-    File *file = token_get_file(token);
-    return find_line_start(file->contents, token->start);
-}
+
 
 const char *find_line_end(const char *begin)
 {
@@ -718,7 +737,6 @@ Token lookahead(int steps)
     assert(steps > 0 && "Lookahead cannot be 0 or less");
     const char *current = lexer.current;
     const char *begin = lexer.begin;
-    unsigned line = lexer.line;
     for (unsigned i = 0; i < steps - 1; i++)
     {
         scan_token();
@@ -726,7 +744,6 @@ Token lookahead(int steps)
     Token token = scan_token();
     lexer.current = current;
     lexer.begin = begin;
-    lexer.line = line;
     return token;
 }
 
@@ -827,76 +844,136 @@ Token scan_token(void)
             if (c == '_' || is_alphabet(c)) return scan_ident();
             return error_token("Unexpected character.");
     }
-    
 }
 
-void init_lexer(const char *filename, const char *source)
+void init_lexer(const char *filename, const char *source, size_t size)
 {
     static bool files_initialized = false;
     if (!files_initialized)
     {
         array_init(&files);
         files_initialized = true;
+        current_file_start.id = 0;
     }
     if (files.count > MAX_FILES)
     {
         PRINT_ERROR("Exceeded max number of files %d", MAX_FILES);
     }
-    File *file = malloc(sizeof(File));
-    file->contents = source;
-    file->name = filename;
-    array_add(&files, file);
+    current_file = malloc(sizeof(File));
+    current_file->contents = source;
+    current_file->name = filename;
+    current_file->line_start = malloc(sizeof(Array));
+    current_file->start.id = files.count == 0 ? 0 : ((File *)files.entries[files.count - 1])->end.id;
+    assert(current_file->start.id + size < UINT32_MAX);
+    current_file->end.id = (unsigned)(current_file->start.id + size);
+    array_init(current_file->line_start);
+    array_add(&files, current_file);
+    current_line = malloc(sizeof(Line));
+    array_add(current_file->line_start, current_line);
+    current_line->start = current_file->start.id;
+    current_line->length = UINT16_MAX;
+    current_line->number = 1;
     lexer.source_file = (uint16_t)files.count;
     lexer.begin = source;
     lexer.start = source;
     lexer.current = source;
-    lexer.line = 1;
+}
+
+File *source_get_file(SourceLoc loc)
+{
+    if (loc.id == UINT32_MAX)
+    {
+        pseudo_file.contents = "---";
+        return &pseudo_file;
+    }
+    if (current_file->start.id <= loc.id) return current_file;
+    unsigned low = 0;
+    unsigned high = files.count - 2;
+    while (1)
+    {
+        unsigned mid = (high + low) / 2;
+        File *file = files.entries[mid];
+        if (file->start.id > loc.id)
+        {
+            high = mid - 1;
+            continue;
+        }
+        if (file->end.id < loc.id)
+        {
+            low = mid + 1;
+            continue;
+        }
+        return file;
+    }
 }
 
 File *token_get_file(Token *token)
 {
-    if (token->source_file == 0)
+    if (token->span.loc.id == UINT32_MAX)
     {
         pseudo_file.contents = token->start;
         return &pseudo_file;
     }
-    assert(token->source_file <= files.count && "Invalid source file in token");
-    return files.entries[token->source_file - 1];
+    return source_get_file(token->span.loc);
 }
 
 bool token_compare(const Token *token1, const Token *token2)
 {
-    if (token1->length != token2->length) return false;
-    return memcmp(token1->start, token2->start, (size_t)token1->length) == 0;
+    if (token1->span.length != token2->span.length) return false;
+    return memcmp(token1->start, token2->start, (size_t)token1->span.length) == 0;
 }
 
 bool token_compare_str(const Token *token1, const char *string)
 {
     size_t len = strlen(string);
-    if (token1->length != len) return false;
+    if (token1->span.length != len) return false;
     return memcmp(token1->start, string, len) == 0;
 }
 
 void token_to_buffer(Token *token, char *buffer, unsigned len)
 {
-    unsigned copy_len = MIN(len - 1, token->length);
+    unsigned copy_len = MIN(len - 1, token->span.length);
     strncpy(buffer, token->start, copy_len);
     buffer[copy_len + 1] = '\0';
 }
-void token_expand(Token *to_expand, Token *end)
+void range_expand(SourceRange *to_update, Token *end_token)
 {
-    if (to_expand->length == 0)
+    if (to_update->length == 0)
     {
-        *to_expand = *end;
+        *to_update = end_token->span;
     }
     else
     {
-        to_expand->length = (uint16_t)(end->start + end->length - to_expand->start);
+        to_update->length = (uint16_t)(end_token->span.loc.id + end_token->span.length - to_update->loc.id);
     }
-
 }
 
 Token token_wrap(const char *string)
 {
-    return (Token) { .start = string, .length = (uint16_t)strlen(string), .type = TOKEN_IDENTIFIER, .line = 1, .source_file = 0 };
+    return (Token) { .start = string, .span = { .loc = UINT32_MAX, .length = (uint16_t) strlen(string) }, .type = TOKEN_IDENTIFIER};
+}
+
+Line *file_source_line(File *file, SourceLoc loc)
+{
+    assert(loc.id >= file->start.id);
+    uint32_t high = file->line_start->count - 1;
+    uint32_t low = 0;
+    while (true)
+    {
+        if (low > high) return file->line_start->entries[high];
+        if (low == high) return file->line_start->entries[high];
+        uint32_t mid = (low + high) / 2;
+        Line *line = file->line_start->entries[mid];
+        if (line->start < loc.id)
+        {
+            low = mid + 1;
+            continue;
+        }
+        if (line->start + line->number > loc.id)
+        {
+            high = mid - 1;
+            continue;
+        }
+        return line;
+    }
 }

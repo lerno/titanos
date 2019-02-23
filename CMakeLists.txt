@@ -68,8 +68,6 @@ add_executable(titanos
         titanos/src/common.h
         titanos/src/component.c
         titanos/src/component.h
-        titanos/src/constant_folding.c
-        titanos/src/constant_folding.h
         titanos/src/debug.c
         titanos/src/debug.h
         titanos/src/diagnostics.c
@@ -106,7 +104,7 @@ add_executable(titanos
         titanos/src/vector.h
         titanos/src/values/value.c
         titanos/src/values/value.h
-        titanos/main.c titanos/src/values/bigint.c titanos/src/values/bigint.h titanos/src/analyser.c titanos/src/analyser.h titanos/src/statement_analysis.c titanos/src/statement_analysis.h titanos/src/types/type.c titanos/src/types/type.h titanos/src/decl.c titanos/src/decl.h titanos/src/type_analysis.c titanos/src/type_analysis.h titanos/src/expr.c titanos/src/expr.h titanos/src/building/builtins.c titanos/src/building/builtins.h titanos/src/expression_analysis.c titanos/src/expression_analysis.h)
+        titanos/main.c titanos/src/values/bigint.c titanos/src/values/bigint.h titanos/src/analyser.c titanos/src/analyser.h titanos/src/statement_analysis.c titanos/src/statement_analysis.h titanos/src/types/type.c titanos/src/types/type.h titanos/src/decl.c titanos/src/decl.h titanos/src/type_analysis.c titanos/src/type_analysis.h titanos/src/expr.c titanos/src/expr.h titanos/src/building/builtins.c titanos/src/building/builtins.h titanos/src/expression_analysis.c titanos/src/expression_analysis.h titanos/src/symtab.h titanos/src/symtab.c)
 
 
 target_link_libraries(titanos ${llvm_libs})

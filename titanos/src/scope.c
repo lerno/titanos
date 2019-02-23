@@ -1,3 +1,4 @@
+#include <string.h>
 #include "scope.h"
 #include "table.h"
 #include "ast_types.h"
@@ -6,29 +7,29 @@
 
 __thread Scope *active_scope = NULL;
 
-void scope_init(Scope *scope, const Token *name, Table *modules)
+void scope_init(Scope *scope, const char *name, STable *modules)
 {
     scope->scope_index = 0;
     scope->cur_scope = NULL;
     scope->all_modules = modules;
-    scope->module = table_get_token(scope->all_modules, name);
+    scope->module = stable_get(scope->all_modules, name);
     scope->locals = new_vector(8);
-    table_init(&scope->imported_modules, 32);
-    table_init(&scope->symbol_cache, 16 * 1024);
+    stable_init(&scope->imported_modules, 32);
+    stable_init(&scope->symbol_cache, 16 * 1024);
     assert(scope->module);
 }
 
-Module *scope_find_any_module(const Token *token)
+Module *scope_find_any_module(const char *token)
 {
-    return table_get_token(active_scope->all_modules, token);
+    return stable_get(active_scope->all_modules, token);
 }
 
 void scope_add_import_declaration(Decl *import)
 {
     assert(import->module && "Module missing");
 
-    Token *name = &import->name;
-    DEBUG_LOG("Importing %.*s", SPLAT_TOK(*name));
+    const char *name = import->name;
+    DEBUG_LOG("Importing %s", name);
 
     switch (import->import.type)
     {
@@ -36,19 +37,19 @@ void scope_add_import_declaration(Decl *import)
             vector_add(active_scope->locals, import->module);
             break;
         case IMPORT_TYPE_ALIAS:
-            name = &import->import.alias;
+            name = import->import.alias;
             break;
         case IMPORT_TYPE_FULL:
             break;
     }
 
     // Add module to imports.
-    void *previous = table_set_token(&active_scope->imported_modules, name, import);
+    void *previous = stable_set(&active_scope->imported_modules, name, import);
     assert(!previous && "Previous not expected here");
 
 
     // Link the name to the declaration in the symbol cache.
-    previous = table_set_token(&active_scope->symbol_cache, name, import);
+    previous = stable_set(&active_scope->symbol_cache, name, import);
     assert(!previous && "Previous not expected here");
 }
 
@@ -58,7 +59,7 @@ void scope_mark_import_as_used(Module *module, bool used_public)
     // IMPROVE cache this
     for (unsigned i = 0; i < active_scope->imported_modules.capacity; i++)
     {
-        Entry *entry = &active_scope->imported_modules.entries[i];
+        SEntry *entry = &active_scope->imported_modules.entries[i];
         if (entry->key == NULL) continue;
         Decl *import = entry->value;
         if (module == import->module)
@@ -70,29 +71,29 @@ void scope_mark_import_as_used(Module *module, bool used_public)
     }
 }
 
-Decl *scope_find_symbol_in_module(Token *token, Module *module)
+Decl *scope_find_symbol_in_module(Module *module, const char *symbol, SourceRange span)
 {
-    Decl *symbol = module_find_symbol(module, token);
-    if (!symbol)
+    Decl *decl = module_find_symbol(module, symbol);
+    if (!decl)
     {
-        sema_error_at(token, "Cannot find %.*s in module %.*s", SPLAT_TOK(*token), SPLAT_TOK(module->name));
+        sema_error_at(span, "Cannot find %s in module %s", symbol, module->name);
         return NULL;
     }
     if (scope_is_external_module(module))
     {
-        if (!symbol->is_public)
+        if (!decl->is_public)
         {
-            sema_error_at(token, "%.*s.%.*s is not public", SPLAT_TOK(module->name), SPLAT_TOK(*token));
+            sema_error_at(span, "%s.%s is not public", module->name, symbol);
             return NULL;
         }
-        symbol->is_used_public = true;
+        decl->is_used_public = true;
     }
-    return symbol;
+    return decl;
 }
 
-Decl *scope_find_symbol(Token *symbol, bool is_type, bool used_public)
+Decl *scope_find_symbol(const char *symbol, bool is_type, bool used_public, SourceRange span)
 {
-    Decl *symbol_decl = table_get_token(&active_scope->symbol_cache, symbol);
+    Decl *symbol_decl = stable_get(&active_scope->symbol_cache, symbol);
     if (symbol_decl)
     {
         if (used_public && symbol_decl->module != active_scope->module)
@@ -116,8 +117,8 @@ Decl *scope_find_symbol(Token *symbol, bool is_type, bool used_public)
             {
                 if (!ambiguous)
                 {
-                    sema_error_at(symbol, "Ambiguous symbol '%.*s'", symbol->length, symbol->start);
-                    sema_error_at(&decl->span, "Also found here");
+                    sema_error_at(span, "Ambiguous symbol '%s'", symbol);
+                    prev_at(decl->span, "Also found here");
                     ambiguous = true;
                 }
                 continue;
@@ -133,11 +134,11 @@ Decl *scope_find_symbol(Token *symbol, bool is_type, bool used_public)
     {
         if (is_type)
         {
-            sema_error_at(symbol, "Unknown type '%.*s'", symbol->length, symbol->start);
+            sema_error_at(span, "Unknown type '%s'", symbol);
         }
         else
         {
-            sema_error_at(symbol, "Unknown variable '%.*s'", symbol->length, symbol->start);
+            sema_error_at(span, "Unknown variable '%s'", symbol);
         }
         return NULL;
     }
@@ -147,7 +148,7 @@ Decl *scope_find_symbol(Token *symbol, bool is_type, bool used_public)
     scope_mark_import_as_used(symbol_decl->module, used_public);
     if (!visible_match)
     {
-        sema_error_at(symbol, "Symbol '%.*s' is not public", symbol->length, symbol->start);
+        sema_error_at(span, "Symbol '%s' is not public", symbol);
         return NULL;
     }
 
@@ -155,7 +156,7 @@ Decl *scope_find_symbol(Token *symbol, bool is_type, bool used_public)
     {
         symbol_decl->is_used_public = true;
     }
-    table_set_token(&active_scope->symbol_cache, symbol, symbol_decl);
+    stable_set(&active_scope->symbol_cache, symbol, symbol_decl);
     return symbol_decl;
 }
 
@@ -170,12 +171,12 @@ void scope_add_scoped_symbol(Decl *var_decl)
     assert(active_scope->cur_scope);
 
     vector_add(active_scope->cur_scope->local_decls, var_decl);
-    table_set_token(&active_scope->symbol_cache, &var_decl->name, var_decl);
+    stable_set(&active_scope->symbol_cache, var_decl->name, var_decl);
 }
 
-Module *scope_find_used_module(Token *name, bool used_public)
+Module *scope_find_used_module(const char *name, SourceRange span, bool used_public)
 {
-    Decl *import_decl = table_get_token(&active_scope->imported_modules, name);
+    Decl *import_decl = stable_get(&active_scope->imported_modules, name);
     if (import_decl)
     {
         import_decl->is_used = true;
@@ -210,9 +211,9 @@ Module *scope_find_used_module(Token *name, bool used_public)
     return NULL;
 }
 
-Decl *scope_check_scoped_symbol(Token *token)
+Decl *scope_check_scoped_symbol(const char *symbol)
 {
-    Decl *old = table_get_token(&active_scope->symbol_cache, token);
+    Decl *old = stable_get(&active_scope->symbol_cache, symbol);
 
     if (old) return old;
 
@@ -220,7 +221,7 @@ Decl *scope_check_scoped_symbol(Token *token)
     for (unsigned i = 0; i < active_scope->locals->size; i++)
     {
         Module *module = active_scope->locals->entries[i];
-        old = module_find_symbol(module, token);
+        old = module_find_symbol(module, symbol);
         if (old) return old;
     }
 
@@ -311,14 +312,14 @@ void scope_exit(Ast *stmt)
         {
             if (decl->var.kind == VARDECL_PARAM)
             {
-                sema_warn_at(DIAG_UNUSED_PARAMETER, &decl->span, "Unused parameter");
+                sema_warn_at(DIAG_UNUSED_PARAMETER, decl->span, "Unused parameter");
             }
             else
             {
-                sema_warn_at(DIAG_UNUSED_VARIABLE, &decl->span, "Unused variable");
+                sema_warn_at(DIAG_UNUSED_VARIABLE, decl->span, "Unused variable");
             }
         }
-        table_delete_token(&active_scope->symbol_cache, &decl->name);
+        stable_delete(&active_scope->symbol_cache, decl->name);
     }
 
     Ast *defer = scope_defer_top(active_scope);

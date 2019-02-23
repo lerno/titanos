@@ -17,17 +17,17 @@ void select_analyser(Analyser *current_analyser)
 
 #define TABLE_SCOPE_DEPTH 256
 
-__thread static Table tables[TABLE_SCOPE_DEPTH];
+__thread static STable tables[TABLE_SCOPE_DEPTH];
 __thread int current_table = -1;
 
-Table *push_scratch_table()
+STable *push_scratch_table()
 {
     LOG_FUNC;
     if (current_table == -1)
     {
         for (unsigned i = 0; i < TABLE_SCOPE_DEPTH; i++)
         {
-            table_init(&tables[i], 128);
+            stable_init(&tables[i], 128);
         }
         current_table = 0;
     }
@@ -37,11 +37,11 @@ Table *push_scratch_table()
     }
     return &tables[current_table++];
 }
-void pop_scratch_table(Table *table)
+void pop_scratch_table(STable *table)
 {
     assert(table == &tables[current_table - 1]);
     current_table--;
-    table_clear(&tables[current_table]);
+    stable_clear(&tables[current_table]);
 }
 
 __thread static Vector scratch_vector;

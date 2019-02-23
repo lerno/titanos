@@ -139,6 +139,37 @@ Value value_negate(Value value)
     return ERROR_VALUE;
 }
 
+Value value_bit_not(Value value)
+{
+    switch (value.type)
+    {
+        case VALUE_TYPE_INT:
+        {
+            value_print(value);
+            printf("--%d--\n", value.is_unsigned);
+            Value result = value_new_int_with_int(0);
+            result.is_unsigned = value.is_unsigned;
+            result.int_bits = value.int_bits;
+            if (!value.int_bits)
+            {
+                FATAL_ERROR("Not supported");
+            }
+            bigint_not(&result.big_int, &value.big_int, value.int_bits, !value.is_unsigned);
+            value_print(result);
+            printf("--%d--\n", result.is_unsigned);
+            return result;
+        }
+        case VALUE_TYPE_BOOL:
+            return value_new_int_with_int(value.b ? 0 : 1);
+        case VALUE_TYPE_FLOAT:
+        case VALUE_TYPE_NIL:
+        case VALUE_TYPE_STRING:
+        case VALUE_TYPE_ERROR:
+            break;
+    }
+    return ERROR_VALUE;
+}
+
 inline Value value_new_bool(bool value)
 {
     return (Value) { .b = value, .type = VALUE_TYPE_BOOL };

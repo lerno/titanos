@@ -52,6 +52,7 @@ Value value_new_string(const char *string, uint32_t len);
 Value value_new_bool(bool value);
 Value value_to_bool(Value value);
 Value value_negate(Value value);
+Value value_bit_not(Value value);
 Value value_mult(Value lhs, Value rhs);
 Value value_sub(Value lhs, Value rhs);
 Value value_add(Value lhs, Value rhs);

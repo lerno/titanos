@@ -236,15 +236,16 @@ static Token remove_gcc_register_prefix(Token name)
 {
     if (name.start[0] == '%' || name.start[0] == '#')
     {
+        name.span.loc.id++;
+        name.span.length--;
         name.start++;
-        name.length--;
     }
     return name;
 }
 
 bool target_info_is_valid_gcc_register_name(TargetInfo *info, Token *name)
 {
-    if (name->length == 0) return false;
+    if (name->span.length == 0) return false;
     Token register_name = remove_gcc_register_prefix(*name);
 
 #if 0

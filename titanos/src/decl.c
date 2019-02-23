@@ -10,17 +10,17 @@
 #include "ast_utils.h"
 #include "expr.h"
 
-void decl_init(Decl *decl, DeclType decl_type, Token *span, Token *name, bool public)
+void decl_init(Decl *decl, DeclType decl_type, SourceRange span, const char *name, bool public)
 {
     memset(decl, 0, sizeof(Decl));
     decl->type_id = decl_type;
-    decl->name = *name;
-    decl->span = *span;
+    decl->name = name;
+    decl->span = span;
     decl->is_public = public;
     decl->type = NULL;
 }
 
-Decl *decl_new(DeclType decl_type, Token *span, Token *name, bool public)
+Decl *decl_new(DeclType decl_type, SourceRange span, const char *name, bool public)
 {
     Decl *decl = malloc_arena(sizeof(Decl));
     decl_init(decl, decl_type, span, name, public);
@@ -29,7 +29,7 @@ Decl *decl_new(DeclType decl_type, Token *span, Token *name, bool public)
 
 void decl_print_name_visibility(Decl *decl)
 {
-    print_token(&decl->name);
+    printf("%s", decl->name);
     if (decl->is_public) printf(" public");
     if (decl->is_exported) printf(" exported");
     if (decl->is_used_public) printf(" public-use");
@@ -70,15 +70,13 @@ void decl_print(Decl *decl, unsigned current_indent)
     switch (decl->type_id)
     {
         case DECL_IMPORT:
-            printf("IMPORT ");
-            print_token(&decl->name);
+            printf("IMPORT %s", decl->name);
             switch (decl->import.type)
             {
                 case IMPORT_TYPE_FULL:
                     break;
                 case IMPORT_TYPE_ALIAS:
-                    printf(" alias ");
-                    print_token(&decl->import.alias);
+                    printf(" alias %s", decl->import.alias);
                     break;
                 case IMPORT_TYPE_LOCAL:
                     printf(" local");
@@ -97,6 +95,9 @@ void decl_print(Decl *decl, unsigned current_indent)
             return;
         case DECL_VAR:
             printf("VAR ");
+            if (decl->var.qualifier & TYPE_QUALIFIER_CONST) printf("const ");
+            if (decl->var.qualifier & TYPE_QUALIFIER_VOLATILE) printf("volatile ");
+            if (decl->var.qualifier & TYPE_QUALIFIER_ALIAS) printf("alias ");
             decl_print_name_visibility(decl);
             printf("\n");
 
@@ -213,7 +214,8 @@ bool decl_has_attribute(Decl *decl, AttributeType attribute_type)
     {
         Ast *attribute = decl->attributes->entries[i];
         assert(attribute->ast_id == AST_ATTRIBUTE);
-        if (token_compare_str(&attribute->attribute.name, info->name)) return true;
+        // IMPROVE
+        if (strcmp(attribute->attribute.name, info->name) == 0) return true;
     }
     return false;
 }

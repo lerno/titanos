@@ -12,7 +12,8 @@ typedef struct _Parser
 {
 	bool is_interface : 1;
 	unsigned remainder : 31;
-    Token current_module;
+    const char *current_module;
+    SourceRange module_def;
     Vector *imports; // Decl *
 	Vector *types; // Decl *
 	Vector *variables;

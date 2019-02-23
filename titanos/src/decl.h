@@ -38,9 +38,10 @@ typedef enum _VarDeclKind {
 typedef struct _VarDecl
 {
     VarDeclKind kind : 2;
+    TypeQualifier qualifier : 4;
     bool local : 1;
     bool in_init : 1;
-    // Type *original_type;
+    Type *original_type;
     Expr *init_expr;
     LLVMValueRef llvm_ref;
 } VarDecl;
@@ -87,7 +88,7 @@ typedef struct _FuncDecl
     bool is_struct_func : 1;
     bool is_static_struct_func : 1;
     Type *rtype;
-    Token full_name;
+    const char *full_name;
     Vector* args; // VarDecl[]
     Ast *body;
     LLVMValueRef llvm_function_proto;
@@ -108,7 +109,7 @@ typedef enum
 typedef struct _ImportDecl
 {
     ImportType type : 2;
-    Token alias;
+    const char *alias;
 } ImportDecl;
 
 
@@ -131,8 +132,8 @@ typedef struct _Decl
     bool is_used : 1;
     bool is_used_public : 1;
     bool has_cname : 1;
-    Token span;
-    Token name;
+    SourceRange span;
+    const char *name;
     struct _Module *module;
     struct _Vector *attributes;
     Type *type;
@@ -149,8 +150,8 @@ typedef struct _Decl
     };
 } Decl;
 
-void decl_init(Decl *decl, DeclType decl_type, Token *span, Token *name, bool public);
-Decl *decl_new(DeclType decl_type, Token *span, Token *name, bool public);
+void decl_init(Decl *decl, DeclType decl_type, SourceRange span, const char *name, bool public);
+Decl *decl_new(DeclType decl_type, SourceRange span, const char *name, bool public);
 void decl_print(Decl *decl, unsigned indent);
 void decl_print_sub(const char *header, unsigned current_indent, Decl *decl);
 void decl_print_attributes(Decl *decl, unsigned indent);

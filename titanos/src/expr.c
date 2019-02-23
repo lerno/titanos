@@ -17,7 +17,7 @@ Expr *expr_copy(Expr *expr)
     return expr_copy;
 }
 
-Expr *expr_new_type_expr(Type *type, Token *span)
+Expr *expr_new_type_expr(Type *type, SourceRange span)
 {
     Expr *expr = expr_new(EXPR_TYPE, span);
     expr->type_expr.type = type;
@@ -43,12 +43,12 @@ static void expr_print_sub_list(const char *header, unsigned current_indent, Vec
     }
 }
 
-Expr *expr_new(ExprTypeId type, Token *span)
+Expr *expr_new(ExprTypeId type, SourceRange span)
 {
     Expr *expr = malloc_arena(sizeof(Expr));
     memset(expr, 0, sizeof(Expr));
     expr->expr_id = type;
-    expr->span = *span;
+    expr->span = span;
     return expr;
 }
 
@@ -82,9 +82,7 @@ void expr_print(Expr *expr, unsigned current_indent)
             expr_print_sub("Expr", current_indent, expr->post_expr.expr);
             return;
         case EXPR_IDENTIFIER:
-            printf("EXPR_IDENTIFIER [");
-            print_token(&expr->identifier_expr.identifier);
-            printf("]\n");
+            printf("EXPR_IDENTIFIER [%s]\n", expr->identifier_expr.identifier);
             return;
         case EXPR_CALL:
             printf("EXPR_CALL\n");
@@ -108,11 +106,7 @@ void expr_print(Expr *expr, unsigned current_indent)
             expr_print_sub("Sub Element", current_indent, expr->access_expr.sub_element);
             return;
         case EXPR_TYPE:
-        {
-            char *type_name = type_to_string(expr->type_expr.type);
-            printf("EXPR_TYPE %s\n", type_name);
-            free(type_name);
-        }
+            printf("EXPR_TYPE %s\n", type_to_string(expr->type_expr.type));
             return;
         case EXPR_STRUCT_INIT_VALUES:
             printf("EXPR_STRUCT_INIT_VALUES\n");
@@ -146,7 +140,7 @@ void expr_print_sub(const char *header, unsigned current_indent, Expr *expr)
 
 void expr_replace(Expr *target, Expr *source)
 {
-    Token original_span = target->span;
+    SourceRange original_span = target->span;
     *target = *source;
     target->span = original_span;
 }

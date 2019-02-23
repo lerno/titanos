@@ -17,7 +17,7 @@ typedef struct _Decl Decl;
 typedef struct _Label
 {
     Ast *label_stmt;
-    Token name;
+    const char *name;
     Ast *first_goto;
     Ast *defer;
 } Label;
@@ -155,7 +155,7 @@ typedef struct _AstGotoStmt
     GotoType type : 1;
     union
     {
-        Token label_name;
+        const char *label_name;
         Label *label;
     };
     DeferList defer_list;
@@ -181,14 +181,14 @@ typedef struct _AstLabel
 {
     bool is_used : 1;
     bool in_defer : 1;
-    Token label_name;
+    const char *label_name;
     Ast *defer;
 } AstLabelStmt;
 
 
 typedef struct _AstAttribute
 {
-    Token name;
+    const char *name;
     Expr *value;
 } AstAttribute;
 
@@ -221,7 +221,7 @@ typedef struct _Ast
 {
     AstType ast_id : 8;
     ExitType exit : 3;
-    Token span;
+    SourceRange span;
     union {
 
         AstAttribute attribute;
@@ -247,8 +247,7 @@ typedef struct _Ast
 void print_ast(Ast *ast, unsigned current_indent);
 void print_sub_ast(const char *header, unsigned current_indent, Ast *ast);
 Ast *new_ast(AstType type);
-Ast *new_ast_with_span(AstType type, Token *span);
-Ast *end_ast(Ast *ast, Token *end);
+Ast *new_ast_with_span(AstType type, SourceRange span);
 
 typedef enum _CondValue
 {

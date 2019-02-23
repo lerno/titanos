@@ -1,6 +1,5 @@
 #pragma once
 
-#include "lexer.h"
 #include "array.h"
 #include "vector.h"
 typedef enum
@@ -32,5 +31,5 @@ void component_print(Component *component);
 void component_print_symbols(Component *component);
 Component *component_create(const char *name, const char *path, ComponentType type, bool external, bool c_library, Array *export_list);
 bool component_has_dependency(Component *this, const Component* other);
-Module *component_find_module(Component *component, const Token *name);
-Module *component_get_module(Component *component, Token *token);
+Module *component_find_module(Component *component, const char *name);
+Module *component_get_module(Component *component, const char *token);

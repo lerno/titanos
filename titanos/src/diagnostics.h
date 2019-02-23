@@ -1,9 +1,8 @@
 #pragma once
 
 #include "common.h"
+#include "lexer.h"
 #include <stdarg.h>
-
-struct _Token;
 
 typedef enum
 {
@@ -48,11 +47,11 @@ void diagnostics_reset(void);
 void diagnostics_update_severity(DiagnosticsSeverity severity, DiagnosticsType type);
 bool diagnostics_silence_warnings(Array *warnings);
 void diagnostics_use_color(bool use_color);
-void error_at(struct _Token *token, const char *message, ...);
-void verror_at(struct _Token *token, const char *message, va_list args);
-void sema_error_at(struct _Token *token, const char *message, ...);
-void prev_at(struct _Token *token, const char *message, ...);
-void sema_warn_at(DiagnosticsType type, struct _Token *token, const char *message, ...);
+void error_at(SourceRange span, const char *message, ...);
+void verror_at(SourceRange span, const char *message, va_list args);
+void sema_error_at(SourceRange span, const char *message, ...);
+void prev_at(SourceRange span, const char *message, ...);
+void sema_warn_at(DiagnosticsType type, SourceRange span, const char *message, ...);
 bool in_panic_mode(void);
 unsigned errors();
 void reset_panic_mode(void);

@@ -23,17 +23,11 @@ Ast *new_ast(AstType type)
     return ast;
 }
 
-Ast *new_ast_with_span(AstType type, Token *span)
+Ast *new_ast_with_span(AstType type, SourceRange span)
 {
     Ast *ast = new_ast(type);
-    ast->span = *span;
+    ast->span = span;
     ast->exit = EXIT_NONE;
-    return ast;
-}
-
-Ast *end_ast(Ast *ast, Token *end)
-{
-    token_expand(&ast->span, end);
     return ast;
 }
 
@@ -153,7 +147,7 @@ void print_ast(Ast *ast, unsigned current_indent)
             }
             else
             {
-                print_token(&ast->goto_stmt.label->name);
+                printf("%s", ast->goto_stmt.label->name);
             }
             printf("\n");
             return;
@@ -165,8 +159,7 @@ void print_ast(Ast *ast, unsigned current_indent)
             print_sub_ast("Body", current_indent, ast->for_stmt.body);
             return;
         case AST_LABEL:
-            printf("LABEL [");
-            print_token(&ast->label_stmt.label_name);
+            printf("LABEL [%s]", ast->label_stmt.label_name);
             printf("]");
             if (ast->label_stmt.is_used) printf(" used");
             printf("\n");
@@ -190,8 +183,7 @@ void print_ast(Ast *ast, unsigned current_indent)
             expr_print_sub("Expr", current_indent, ast->expr_stmt.expr);
             return;
         case AST_ATTRIBUTE:
-            printf("ATTRIBUTE ");
-            print_token(&ast->attribute.name);
+            printf("ATTRIBUTE %s", ast->attribute.name);
             expr_print_sub("Value", current_indent, ast->attribute.value);
             return;
         case AST_DECLARE_STMT:

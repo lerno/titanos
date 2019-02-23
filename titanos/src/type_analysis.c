@@ -2,13 +2,15 @@
 // Created by Christoffer Lernö on 2019-02-05.
 //
 
+#include <string.h>
 #include "type_analysis.h"
 #include "analyser.h"
 #include "error.h"
 #include "types/type.h"
 #include "diagnostics.h"
-#include "constant_folding.h"
 #include "expression_analysis.h"
+#include "expr.h"
+
 const static uint64_t MAX_ARRAY_SIZE = UINT32_MAX;
 
 bool update_decl(Decl *decl, bool used_public)
@@ -35,19 +37,20 @@ bool resolve_array_size(Type *type)
     if (type->array.is_len_resolved) return true;
     assert (!type->array.is_empty && "Empty should always be pre-resolved!");
     Expr *size = type->array.len_expr;
-    if (CONST_FULL != evaluate_constant(size))
+    if (!analyse_expr(size, RHS)) return false;
+    if (size->expr_id != EXPR_CONST)
     {
-        sema_error_at(&size->span, "Array size must be a constant");
+        sema_error_at(size->span, "Array size must be a constant");
         return false;
     }
     if (size->const_expr.value.type != VALUE_TYPE_INT)
     {
-        sema_error_at(&size->span, "Array size must be an integer");
+        sema_error_at(size->span, "Array size must be an integer");
         return false;
     }
     if (size->const_expr.value.big_int.is_negative)
     {
-        sema_error_at(&size->span,
+        sema_error_at(size->span,
                       "Array size must be a positive integer");
         return false;
     }
@@ -56,7 +59,7 @@ bool resolve_array_size(Type *type)
                           : bigint_as_unsigned(&size->const_expr.value.big_int);
     if (array_size > MAX_ARRAY_SIZE)
     {
-        sema_error_at(&size->span,
+        sema_error_at(size->span,
                       "Array size cannot exceed %d", MAX_ARRAY_SIZE);
         return false;
     }
@@ -72,20 +75,20 @@ static bool resolve_unresolved_type(Type **type_ref, bool used_public)
     Decl *decl = NULL;
     Expr *type_expr = (*type_ref)->unresolved.type_expr;
     if (!analyse_expr(type_expr, RHS)) return false;
-    Token module_name = { .length = 0 };
-    Token name;
+    const char *module_name = NULL;
+    const char *name = NULL;
     switch (type_expr->expr_id)
     {
         case EXPR_ACCESS:
             if (type_expr->access_expr.parent->expr_id != EXPR_IDENTIFIER)
             {
-                sema_error_at(&type_expr->access_expr.parent->span, "Expected a module name");
+                sema_error_at(type_expr->access_expr.parent->span, "Expected a module name");
                 return false;
             }
             module_name = type_expr->access_expr.parent->identifier_expr.identifier;
             if (type_expr->access_expr.sub_element->expr_id != EXPR_IDENTIFIER)
             {
-                sema_error_at(&type_expr->access_expr.parent->span, "Expected a type name");
+                sema_error_at(type_expr->access_expr.parent->span, "Expected a type name");
                 return false;
             }
             name = type_expr->access_expr.sub_element->identifier_expr.identifier;
@@ -97,23 +100,23 @@ static bool resolve_unresolved_type(Type **type_ref, bool used_public)
             if (resolve_type(&type_expr->type_expr.type, used_public))
             {
                 // Copy!
-                *type_ref = type_expr->type_expr.type;
+                type_copy(type_ref, type_expr->type_expr.type);
                 return true;
             }
             return false;
         default:
-            sema_error_at(&type_expr->span, "Expected a type");
+            sema_error_at(type_expr->span, "Expected a type");
             return false;
     }
-    if (module_name.length)
+    if (module_name)
     {
-        Module *module = scope_find_used_module(&module_name, used_public);
+        Module *module = scope_find_used_module(module_name, type_expr->span, used_public);
         if (!module) return false;
-        decl = scope_find_symbol_in_module(&name, module);
+        decl = scope_find_symbol_in_module(module, name, type_expr->span);
     }
     else
     {
-        decl = scope_find_symbol(&name, true, used_public);
+        decl = scope_find_symbol(name, true, used_public, type_expr->span);
     }
     if (!decl)
     {
@@ -133,13 +136,13 @@ static bool resolve_unresolved_type(Type **type_ref, bool used_public)
     }
     if (!decl_is_type(decl))
     {
-        sema_error_at(&type_expr->span, "No type with that name found");
+        sema_error_at(type_expr->span, "No type with that name found");
         (*type_ref)->type_id = TYPE_INVALID;
     }
-    *type_ref = decl->type;
+    type_copy(type_ref, decl->type);
     if (!update_decl(decl, used_public))
     {
-        sema_error_at(&type_expr->span, "'%.*s' is not a public type", SPLAT_TOK(decl->name));
+        sema_error_at(type_expr->span, "'%s' is not a public type", decl->name);
         return false;
     }
     return true;
@@ -175,7 +178,7 @@ bool resolve_type(Type **type, bool used_public)
         case TYPE_FUNC_TYPE:
         case TYPE_STRUCT:
         case TYPE_UNION:
-            if (!update_decl(*type, used_public))
+            if (!update_decl((*type)->decl, used_public))
             {
                 FATAL_ERROR("Should not fail!");
             }
@@ -192,7 +195,7 @@ static inline bool analyse_enum_type(Decl *decl)
 
     if (!type_is_int(type))
     {
-        sema_error_at(&decl->span, "Expected an integer type");
+        sema_error_at(decl->span, "Expected an integer type");
         return false;
     }
 
@@ -201,14 +204,14 @@ static inline bool analyse_enum_type(Decl *decl)
 
     if (!decl->enum_decl.constants->size)
     {
-        sema_error_at(&decl->name, "Enum '%.*s' is empty", SPLAT_TOK(decl->name));
+        sema_error_at(decl->span, "Enum '%s' is empty", decl->name);
         return false;
     }
 
     bool success = true;
 
     // TODO what about use of previous constants?
-    Table *table = push_scratch_table();
+    STable *table = push_scratch_table();
     assert(table && "Should always work since enums aren't nested");
 
     bool is_first_value = true;
@@ -222,40 +225,45 @@ static inline bool analyse_enum_type(Decl *decl)
         entry->module = decl->module;
         if (entry->is_public && entry->module->is_exported) entry->is_exported = true;
 
-        if (!is_upper(&entry->name) && !active_analyser->parser->is_interface)
+        if (!is_upper(entry->name) && !active_analyser->parser->is_interface)
         {
-            sema_error_at(&entry->name, "Enum values must start with upper case");
+            sema_error_at(entry->span, "Enum values must start with upper case");
             success = false;
         }
-        Decl *previous_entry = table_set_token(table, &entry->name, entry);
+        Decl *previous_entry = stable_set(table, entry->name, entry);
         if (previous_entry)
         {
-            sema_error_at(&entry->span, "Duplicate definition of '%.*s'", SPLAT_TOK(entry->name));
+            sema_error_at(entry->span, "Duplicate definition of '%s'", entry->name);
             success = false;
         }
 
         Expr *value = entry->enum_constant.init_value;
         if (!value)
         {
-            value = expr_new(EXPR_CONST, &entry->span);
+            value = expr_new(EXPR_CONST, entry->span);
             entry->enum_constant.init_value = value;
             bigint_init_bigint(&value->const_expr.value.big_int, &current_value);
             value->const_expr.value.type = VALUE_TYPE_INT;
-            value->const_state = CONST_FULL;
             bigint_incr(&current_value);
             is_first_value = false;
             continue;
         }
-        if (!evaluate_constant(value))
+        if (!analyse_expr(value, RHS))
         {
-            sema_error_at(&entry->span, "Enum value '%.*s' is not constant", SPLAT_TOK(entry->name));
+            success = false;
+            is_first_value = false;
+            continue;
+        }
+        if (value->expr_id != EXPR_CONST)
+        {
+            sema_error_at(entry->span, "Enum value '%s' is not constant", entry->name);
             success = false;
             is_first_value = false;
             continue;
         }
         if (value->const_expr.value.type != VALUE_TYPE_INT)
         {
-            sema_error_at(&value->span, "Expected an integer constant for '%.*s'", SPLAT_TOK(entry->name));
+            sema_error_at(value->span, "Expected an integer constant for '%s'", entry->name);
             success = false;
             is_first_value = false;
             continue;
@@ -263,14 +271,14 @@ static inline bool analyse_enum_type(Decl *decl)
         BigInt *big_int = &value->const_expr.value.big_int;
         if (big_int->is_negative && !type_is_signed(type))
         {
-            sema_error_at(&value->span, "Negative enum value for '%.*s', must be unsigned", SPLAT_TOK(entry->name));
+            sema_error_at(value->span, "Negative enum value for '%s', must be unsigned", entry->name);
             success = false;
             is_first_value = false;
             continue;
         }
         if (!bigint_fits_in_bits(big_int, type->integer.bits, type_is_signed(type)))
         {
-            sema_error_at(&value->span, "Enum value '%.*s' exceeds the type size", SPLAT_TOK(entry->name));
+            sema_error_at(value->span, "Enum value '%s' exceeds the type size", entry->name);
             success = false;
             is_first_value = false;
             continue;
@@ -278,7 +286,7 @@ static inline bool analyse_enum_type(Decl *decl)
 
         if (!is_first_value && bigint_cmp(&current_value, &value->const_expr.value.big_int) != INT_LT)
         {
-            sema_error_at(&value->span, "Enum values must be placed in strictly ascending value order");
+            sema_error_at(value->span, "Enum values must be placed in strictly ascending value order");
             success = false;
         }
         bigint_init_bigint(&current_value, &value->const_expr.value.big_int);
@@ -289,14 +297,14 @@ static inline bool analyse_enum_type(Decl *decl)
     return success;
 }
 
-static bool analyse_struct_names(Decl *decl, Table *names)
+static bool analyse_struct_names(Decl *decl, STable *names)
 {
     assert(names && decl);
     bool success = true;
-    if (decl->struct_decl.is_global && active_analyser->parser->is_interface && decl->name.length &&
-        !is_lower(&decl->name))
+    if (decl->struct_decl.is_global && active_analyser->parser->is_interface && decl->name &&
+        !is_lower(decl->name))
     {
-        sema_error_at(&decl->name, "Struct name needs to start with lower case.");
+        sema_error_at(decl->span, "Struct name needs to start with lower case.");
         success = false;
     }
 
@@ -304,27 +312,27 @@ static bool analyse_struct_names(Decl *decl, Table *names)
     for (unsigned  i = 0; i < members->size; i++)
     {
         Decl *member = members->entries[i];
-        Token *name = &member->name;
-        if (name->length == 0)
+        const char *name = member->name;
+        if (!name)
         {
             assert(member->type_id == DECL_STRUCT_TYPE);
             success = analyse_struct_names(member, names) && success;
             continue;
         }
-        Decl *old_member = table_set_token(names, name, member);
+        Decl *old_member = stable_set(names, name, member);
         if (old_member)
         {
-            sema_error_at(name, "Duplicate member '%.*s'", SPLAT_TOK(*name));
-            prev_at(&old_member->span, "Previous definition was here");
+            sema_error_at(member->span, "Duplicate member '%s'", name);
+            prev_at(old_member->span, "Previous definition was here");
             success = false;
             continue;
         }
         if (member->type_id == DECL_STRUCT_TYPE)
         {
-            Table *sub_names = push_scratch_table();
+            STable *sub_names = push_scratch_table();
             if (sub_names == NULL)
             {
-                sema_error_at(name, "Struct nesting is too deep");
+                sema_error_at(member->span, "Struct nesting is too deep");
                 success = false;
                 continue;
             }
@@ -343,7 +351,7 @@ bool analyse_func_decl(Decl *decl, bool is_public)
     bool success = resolve_type(&decl->func_decl.rtype, is_public);
     if (decl->func_decl.rtype->type_id == TYPE_OPAQUE && is_public)
     {
-        sema_error_at(&decl->span, "Opaque type returned for public function");
+        sema_error_at(decl->span, "Opaque type returned for public function");
         success = false;
     }
     for (unsigned i = 0; i < decl->func_decl.args->size; i++)
@@ -365,7 +373,7 @@ static inline bool analyse_func_type(Decl *decl)
 
 static inline bool analyse_struct_type(Decl *decl)
 {
-    Table *table = push_scratch_table();
+    STable *table = push_scratch_table();
     assert(table && "Should always work");
     bool success = analyse_struct_names(decl, table);
     pop_scratch_table(table);
@@ -417,7 +425,7 @@ bool analyse_attributes(Decl* decl)
     if (!attributes) return true;
 
     // Clear our scratch table
-    Table *table = push_scratch_table();
+    STable *table = push_scratch_table();
     assert(table && "Should never happen since we don't have nested use");
 
     bool success = true;
@@ -425,15 +433,15 @@ bool analyse_attributes(Decl* decl)
     {
         Ast *attribute = attributes->entries[a];
         assert(attribute->ast_id == AST_ATTRIBUTE);
-        Token *name = &attribute->attribute.name;
-        Ast *old = table_set_token(table, &attribute->attribute.name, attribute);
+        const char *name = attribute->attribute.name;
+        Ast *old = stable_set(table, attribute->attribute.name, attribute);
         if (old)
         {
-            sema_error_at(&attribute->span, "Attribute %.*s appears more than once in attribute list", SPLAT_TOK(*name));
+            sema_error_at(attribute->span, "Attribute %s appears more than once in attribute list", name);
             success = false;
             continue;
         }
-        AttributeType attribute_type = attribute_type_from_token(name);
+        AttributeType attribute_type = attribute_type_from_string(name);
         switch (attribute_type)
         {
             case ATTRIBUTE_UNKNOWN:
@@ -441,7 +449,7 @@ bool analyse_attributes(Decl* decl)
             case ATTRIBUTE_EXPORT:
                 if (!decl->is_public)
                 {
-                    sema_error_at(&attribute->span, "Cannot use export on non-public declaration");
+                    sema_error_at(attribute->span, "Cannot use export on non-public declaration");
                     success = false;
                 }
                 else
@@ -452,23 +460,28 @@ bool analyse_attributes(Decl* decl)
             case ATTRIBUTE_PACKED:
                 if (decl->type_id != DECL_STRUCT_TYPE)
                 {
-                    sema_error_at(&attribute->span, "@packed can only be used with structs");
+                    sema_error_at(attribute->span, "@packed can only be used with structs");
                     success = false;
                 }
             case ATTRIBUTE_UNUSED:
             case ATTRIBUTE_UNUSED_PARAMS:
                 break;
             case ATTRIBUTE_SECTION:
-                if (CONST_FULL != evaluate_constant(attribute->attribute.value)
+                if (!analyse_expr(attribute->attribute.value, RHS))
+                {
+                    success = false;
+                    break;
+                }
+                if (attribute->attribute.value->expr_id != EXPR_CONST
                     || attribute->attribute.value->const_expr.value.type != VALUE_TYPE_STRING)
                 {
-                    sema_error_at(&attribute->attribute.value->span, "Expected a string argument for @section");
+                    sema_error_at(attribute->attribute.value->span, "Expected a string argument for @section");
                     success = false;
                     break;
                 }
                 if (attribute->attribute.value->const_expr.value.str_len == 0)
                 {
-                    sema_error_at(&attribute->span, "A non empty string is required for @section");
+                    sema_error_at(attribute->span, "A non empty string is required for @section");
                     success = false;
                     break;
                 }
@@ -478,22 +491,27 @@ bool analyse_attributes(Decl* decl)
                 // TODO errors
                 break;
             case ATTRIBUTE_ALIGNED:
-                if (CONST_FULL != evaluate_constant(attribute->attribute.value)
+                if (!analyse_expr(attribute->attribute.value, RHS))
+                {
+                    success = false;
+                    break;
+                }
+                if (attribute->attribute.value->expr_id != EXPR_CONST
                     || attribute->attribute.value->const_expr.value.type != VALUE_TYPE_INT)
                 {
-                    sema_error_at(&attribute->attribute.value->span, "Expected a integer argument for @aligned");
+                    sema_error_at(attribute->attribute.value->span, "Expected a integer argument for @aligned");
                     success = false;
                     break;
                 }
                 if (attribute->attribute.value->const_expr.value.big_int.is_negative)
                 {
-                    sema_error_at(&attribute->attribute.value->span, "Expected a positive integer for @aligned");
+                    sema_error_at(attribute->attribute.value->span, "Expected a positive integer for @aligned");
                     success = false;
                     break;
                 }
                 if (bigint_popcount_unsigned(&attribute->attribute.value->const_expr.value.big_int) != 1)
                 {
-                    sema_error_at(&attribute->attribute.value->span, "@aligned must be a power of 2");
+                    sema_error_at(attribute->attribute.value->span, "@aligned must be a power of 2");
                     success = false;
                     // TODO check if alignment is too small (smaller then size of type)
                     break;
@@ -503,7 +521,7 @@ bool analyse_attributes(Decl* decl)
                 if (!decl->is_public || !decl->is_exported)
                 {
                     // TODO ordering?!
-                    sema_error_at(&attribute->span, "@weak can only be used for public, exported declarations");
+                    sema_error_at(attribute->span, "@weak can only be used for public, exported declarations");
                     success = false;
                     break;
                 }
@@ -511,13 +529,13 @@ bool analyse_attributes(Decl* decl)
             case ATTRIBUTE_OPAQUE:
                 if (decl->type_id != DECL_STRUCT_TYPE)
                 {
-                    sema_error_at(&attribute->span, "@opaque can only be used with structs");
+                    sema_error_at(attribute->span, "@opaque can only be used with structs");
                     success = false;
                     break;
                 }
                 if (!decl->is_public)
                 {
-                    sema_error_at(&attribute->span, "@opaque can only be used public structs");
+                    sema_error_at(attribute->span, "@opaque can only be used public structs");
                     success = false;
                     break;
                 }
@@ -525,7 +543,7 @@ bool analyse_attributes(Decl* decl)
             case ATTRIBUTE_CNAME:
                 if (!active_analyser->parser->is_interface)
                 {
-                    sema_error_at(&attribute->span, "@cname can only be used with interfaces");
+                    sema_error_at(attribute->span, "@cname can only be used with interfaces");
                     success = false;
                     break;
                 }
@@ -534,13 +552,13 @@ bool analyse_attributes(Decl* decl)
             case ATTRIBUTE_NO_TYPEDEF:
                 if (decl->type_id != DECL_STRUCT_TYPE)
                 {
-                    sema_error_at(&attribute->span, "@no_typedef can only be used with structs");
+                    sema_error_at(attribute->span, "@no_typedef can only be used with structs");
                     success = false;
                     break;
                 }
                 if (!active_analyser->parser->is_interface)
                 {
-                    sema_error_at(&attribute->span, "@no_typedef can only be used with interfaces");
+                    sema_error_at(attribute->span, "@no_typedef can only be used with interfaces");
                     success = false;
                     break;
                 }

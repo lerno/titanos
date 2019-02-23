@@ -7,5 +7,7 @@
 //  Copyright © 2018 Christoffer Lerno. All rights reserved.
 //
 
-char *read_file(const char *path);
+#include "common.h"
+
+char *read_file(const char *path, size_t *file_size);
 

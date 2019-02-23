@@ -134,9 +134,7 @@ void type_print_sub(const char *header, unsigned int current_indent, Type *type)
 {
     if (!type) return;
     indent(current_indent);
-    char *name = type_to_string(type);
-    printf("%s %s\n", header, name);
-    free(name);
+    printf("%s %s\n", header, type_to_string(type));
 }
 
 
@@ -270,6 +268,13 @@ Type *type_unfold_opaque(Type *type)
     return type;
 }
 
+void type_copy(Type **dst, Type *source)
+{
+    TypeQualifier qualifier = (*dst)->qualifier;
+    *dst = source;
+    (*dst)->qualifier = qualifier;
+}
+
 bool type_may_convert_to_bool(Type *type)
 {
     switch (type->type_id)
@@ -345,41 +350,34 @@ static inline char *copy_constant_string(const char *string)
 static inline char *get_embedded_type_name(const char *parent_name, Type *type)
 {
     char *result = NULL;
-    char *sub_type = type_to_string(type);
+    const char *sub_type = type_to_string(type);
     if (asprintf(&result, "%s[%s]", parent_name, sub_type) == -1)
     {
-        free(sub_type);
-        return copy_constant_string("ERROR");
+        return "ERROR";
     }
-    free(sub_type);
     return result;
 }
 
 static inline char *copy_token(Token *token)
 {
-    char *result = malloc(token->length + 1);
-    strncpy(result, token->start, token->length);
+    char *result = malloc(token->span.length + 1);
+    strncpy(result, token->start, token->span.length);
     return result;
 }
 
-char *type_to_string(Type *type)
+static inline const char *char_for_type(Type *type)
 {
-    if (!type) return copy_constant_string("<missing>");
-    char *result = NULL;
+    char *result;
     switch (type->type_id)
     {
         case TYPE_INVALID:
-            return copy_constant_string("<invalid>");
+            return "INVALID";
         case TYPE_UNRESOLVED:
-            if (asprintf(&result, "[\"%.*s\"]", SPLAT_TOK(type->unresolved.type_expr->span)) == -1)
-            {
-                return copy_constant_string("ERROR");
-            }
-            return result;
+            return "UNRESOLVED";
         case TYPE_VOID:
-            return copy_constant_string("void");
+            return "void";
         case TYPE_STRING:
-            return copy_constant_string("string");
+            return "string";
         case TYPE_OPAQUE:
             return get_embedded_type_name("opaque", type->opaque.base);
         case TYPE_POINTER:
@@ -393,7 +391,7 @@ char *type_to_string(Type *type)
         case TYPE_FUNC_TYPE:
         case TYPE_UNION:
         case TYPE_ENUM:
-            return copy_token(&type->decl->name);
+            return type->decl->name;
         case TYPE_TYPEVAL:
             return get_embedded_type_name("type", type->type_of_type);
         case TYPE_INT:
@@ -407,18 +405,25 @@ char *type_to_string(Type *type)
             }
             return result;
         case TYPE_BOOL:
-            return copy_constant_string("bool");
+            return "bool";
         case TYPE_FLOAT:
             asprintf(&result, "f%d", type->float_bits);
             return result;
         case TYPE_NIL:
-            return copy_constant_string("nil");
+            return "nil";
         case TYPE_CONST_FLOAT:
-            return copy_constant_string("const_float");
+            return "const_float";
         case TYPE_CONST_INT:
-            return copy_constant_string("const_int");
+            return "const_int";
     }
     UNREACHABLE
+}
+
+const char *type_to_string(Type *type)
+{
+    if (!type) return "NULL";
+    if (!type->lazy_name) return type->lazy_name;
+    return type->lazy_name = char_for_type(type);
 }
 
 bool type_order(Type *first, Type *second)

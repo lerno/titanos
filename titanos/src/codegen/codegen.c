@@ -52,8 +52,7 @@ static void codegen_decl_alloca(Decl *decl)
     {
         LLVMPositionBuilderAtEnd(active_builder, active_entry);
     }
-    decl->var.llvm_ref = LLVMBuildAlloca(active_builder, llvm_type(decl->type), "");
-    LLVMSetValueName2(decl->var.llvm_ref, decl->name.start, decl->name.length);
+    decl->var.llvm_ref = LLVMBuildAlloca(active_builder, llvm_type(decl->type), decl->name);
     LLVMPositionBuilderAtEnd(active_builder, insert_block);
 }
 static LLVMTypeRef codegen_convert_func_decl(Decl *decl)
@@ -165,11 +164,9 @@ static LLVMTypeRef llvm_type(Type *type)
 
 void codegen_function_proto(LLVMModuleRef llvm_module, Parser *parser, Decl *function)
 {
-    __thread static char buffer[128];
-    strncpy(buffer, function->name.start, MIN(function->name.length, 127));
-    LLVMValueRef fun = LLVMAddFunction(llvm_module, buffer, llvm_type(function->type));
+    LLVMValueRef fun = LLVMAddFunction(llvm_module, function->name, llvm_type(function->type));
     bool single_module = false;
-    bool external = (function->is_public && !single_module) || token_compare_str(&function->name, "main");
+    bool external = (function->is_public && !single_module) || function->name == symtab_add("main", 4);
     LLVMSetLinkage(fun, external ? LLVMExternalLinkage : LLVMLinkerPrivateLinkage);
     function->func_decl.llvm_function_proto = fun;
 }

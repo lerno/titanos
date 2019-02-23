@@ -9,6 +9,14 @@
 #include "common.h"
 #include "lexer.h"
 
+typedef enum _TypeQualifier
+{
+    TYPE_QUALIFIER_NONE = 0,
+    TYPE_QUALIFIER_CONST = 0x01,
+    TYPE_QUALIFIER_VOLATILE = 0x02,
+    TYPE_QUALIFIER_ALIAS = 0x04,
+} TypeQualifier;
+
 typedef enum _CastResult
 {
     CAST_INLINE,
@@ -101,11 +109,10 @@ typedef struct _Type
     bool is_exported : 1;
     bool is_incremental : 1;
     bool is_used_public : 1;
-    bool is_const : 1;
-    bool is_volatile : 1;
-    bool is_aliased : 1;
+    TypeQualifier qualifier : 4;
     LLVMTypeRef llvm_type;
     struct _Module *module;
+    const char *lazy_name;
     union
     {
         TypePointer pointer;
@@ -135,9 +142,10 @@ bool type_is_int(Type *type);
 bool type_is_signed(Type *type);
 uint64_t type_size(Type *type);
 bool type_is_same(Type *type1, Type *type2);
-char *type_to_string(Type *type);
+const char *type_to_string(Type *type);
 Type *type_unfold_opaque(Type *type);
 bool type_may_convert_to_bool(Type *type);
+void type_copy(Type **dest, Type *source);
 
 /**
  * Return types in conversion order.

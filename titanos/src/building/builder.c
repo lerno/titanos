@@ -7,6 +7,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <dirent.h>
+#include "symtab.h"
 #include "expr.h"
 #include "diagnostics.h"
 #include "parsing.h"
@@ -140,8 +141,8 @@ bool recipe_has_exported(Recipe *recipe, const char *mod)
 typedef struct _LibraryLoader
 {
     Vector lib_dirs;
-    Table libraries;
-    Table modules;
+    STable libraries;
+    STable modules;
     Vector dependencies;
 } LibraryLoader;
 
@@ -199,13 +200,14 @@ static void add_dependency(Component *component, const char *dest, ComponentType
 static void build_setup()
 {
     init_arena();
+    symtab_init(0xFFFF);
     builder.c2_mod = NULL;
     builder.main_component = NULL;
     table_init(&builder.modules, 8);
     vector_init(&builder.components, 8);
     vector_init(&library_loader.lib_dirs, 8);
-    table_init(&library_loader.libraries, 32);
-    table_init(&library_loader.modules, 32);
+    stable_init(&library_loader.libraries, 32);
+    stable_init(&library_loader.modules, 32);
     vector_init(&library_loader.dependencies, 8);
 
     if (builder.build_file && builder.build_file->output_dir)
@@ -317,10 +319,10 @@ static void add_lib_info(const char *c2_file, bool c_lib, Component *component, 
     info->component = component;
     info->module = module;
     info->header_lib_info = header_lib_info;
-    table_set(&library_loader.libraries, module->name.start, module->name.length, info);
+    stable_set(&library_loader.libraries, module->name, info);
 
 }
-static Component *find_component_with_module_named(Token *module_name)
+static Component *find_component_with_module_named(const char *module_name)
 {
     for (unsigned i = 0; i < builder.components.size; i++)
     {
@@ -383,24 +385,24 @@ static bool check_library(Dependency *dep)
     for (unsigned i = 0; i < manifest.entries.size; i++)
     {
         ManifestEntry *entry = manifest.entries.entries[i];
-		Token name = token_wrap(entry->name);
-        Module *module = component_get_module(component, &name);
-        if (table_get(&library_loader.modules, name.start, name.length))
+        const char *name = symtab_add(entry->name, (uint32_t) strlen(entry->name));
+		Module *module = component_get_module(component, name);
+        if (stable_get(&library_loader.modules, name))
         {
-            Component *other = find_component_with_module_named(&name);
+            Component *other = find_component_with_module_named(name);
             assert(other);
             PRINT_ERROR("Module name '%s' is used in %s and %s",
-                    entry->name, component->name, other->name);
+                    name, component->name, other->name);
             has_errors = true;
         }
         else
         {
-            table_set(&library_loader.modules, name.start, name.length, module);
+            stable_set(&library_loader.modules, name, module);
         }
         char *c2file = malloc_arena(512);
         snprintf(c2file, 512, "%s/%s.c2i", component_dir, entry->name);
-        char *header_file = malloc_arena(name.length + 4);
-        snprintf(header_file, name.length + 4, "%s.h", entry->name);
+        char *header_file = malloc_arena(strlen(name) + 4);
+        snprintf(header_file, strlen(name) + 4, "%s.h", name);
         add_lib_info(c2file, !manifest.is_native, component, module, header_file);
     }
     return has_errors;
@@ -414,7 +416,7 @@ static int scan_libraries()
     for (int i = 0; i < component->modules.size; i++)
     {
         Module *module = component->modules.entries[i];
-        table_set(&library_loader.modules, module->name.start, module->name.length, module);
+        stable_set(&library_loader.modules, module->name, module);
         add_lib_info("", true, component, module, "");
     }
     // Dependencies for main component have already been added
@@ -516,9 +518,9 @@ static void show_libs(void)
     }
 }
 
-static LibInfo *find_module_lib(Token *module_name)
+static LibInfo *find_module_lib(const char *module_name)
 {
-    return table_get(&library_loader.libraries, module_name->start, module_name->length);
+    return stable_get(&library_loader.libraries, module_name);
 }
 
 static bool parse_file(Component *component, Module *module, const char *filename, bool show_ast, bool is_interface)
@@ -551,17 +553,16 @@ static bool parse_file(Component *component, Module *module, const char *filenam
     if (module)
     {
         // for external modules, filename should match module name
-        if (!token_compare(&module->name, &parser->current_module))
+        if (module->name != parser->current_module)
         {
-            error_at(&parser->current_module, "Module does not match filename '%.*s'",
-                     parser->current_module.length, parser->current_module.start,
-                     module->name.length, module->name.start);
+            error_at(((Decl *)(parser->imports->entries[0]))->span, "Module '%s' does not match filename '%s'",
+                     parser->current_module, module->name);
             return false;
         }
     }
     else
     {
-        module = component_get_module(component, &parser->current_module);
+        module = component_get_module(component, parser->current_module);
     }
     vector_add(module->files, parser);
     return true;
@@ -574,11 +575,11 @@ static void register_c2_constant(const char *name, const char *type, Value value
 {
     Token token = token_wrap(name);
     Token type_token = token_wrap(type);
-    Expr *expr_value = expr_new(EXPR_CONST, &token);
+    Expr *expr_value = expr_new(EXPR_CONST, token.span);
     expr_value->const_expr.value = value;
-    Expr *type_expr = expr_new(EXPR_IDENTIFIER, &type_token);
-    type_expr->identifier_expr.identifier = type_token;
-    Decl *decl = decl_new(DECL_VAR, &token, &token, true);
+    Expr *type_expr = expr_new(EXPR_IDENTIFIER, type_token.span);
+    type_expr->identifier_expr.identifier = type_token.string;
+    Decl *decl = decl_new(DECL_VAR, token.span, token.string, true);
     decl->type = new_unresolved_type(type_expr, true);
     decl->var.init_expr = expr_value;
     decl->var.kind = VARDECL_GLOBAL;
@@ -601,15 +602,15 @@ static void create_c2_module()
     {
         if (build_options.verbose) LOG(COL_VERBOSE, "generating module c2");
         c2_module = malloc(sizeof(Module));
-        Token token = token_wrap("c2");
-        module_init(c2_module, &token, true, false);
-        table_set_token(&library_loader.modules, &c2_module->name, c2_module);
+        const char *c2_name = symtab_add("c2", 2);
+        module_init(c2_module, c2_name, true, false);
+        stable_set(&library_loader.modules, c2_module->name, c2_module);
         Parser *parser = malloc_arena(sizeof(Parser));
-        init_parser(parser, "c2", true);
+        init_parser(parser, c2_name, true);
         vector_add(c2_module->files, parser);
 
-        init_parser(parser, "c2", true);
-        parser->current_module = token_wrap("c2");
+        init_parser(parser, c2_name, true);
+        parser->current_module = c2_name;
         register_c2_signed_constant("i64", "buildtime", time(0));
         register_c2_signed_constant("i8", "min_i8", -0x80);
         register_c2_signed_constant("i8", "max_i8", 0x7F);
@@ -642,7 +643,7 @@ static bool check_module_imports_and_parse(Component *component, Module *module,
         }
         if (!parse_file(component, module, lib->c2_file, build_options.print_ast_0 && build_options.print_ast_lib, true)) return false;
     }
-    if (build_options.verbose) LOG(COL_VERBOSE, "checking imports for module (%s) %.*s", component->name, (int)module->name.length, module->name.start);
+    if (build_options.verbose) LOG(COL_VERBOSE, "checking imports for module (%s) %s", component->name, module->name);
     bool ok = true;
     Vector *files = module->files;
     for (unsigned a = 0; a < files->size; a++)
@@ -651,27 +652,28 @@ static bool check_module_imports_and_parse(Component *component, Module *module,
         // NOTE: first import is module
         Decl *module_import = parser->imports->entries[0];
         module_import->module = module;
+        const char *c2_name = symtab_add("c2", 2);
         for (unsigned u = 1; u < parser->imports->size; u++)
         {
             Decl *import = parser->imports->entries[u];
             assert(import);
-            if (exceeds_identifier_len(&import->name))
+            if (strlen(import->name) > MAX_IDENTIFIER_LENGTH)
             {
-                error_at(&import->name, "Module name exceeds max length");
+                error_at(import->span, "Module name exceeds max length");
                 ok = false;
                 continue;
             }
             // handle c2 pseudo-module
-            if (token_compare_str(&import->name, "c2"))
+            if (import->name == c2_name)
             {
                 create_c2_module();
                 import->module = c2_module;
                 continue;
             }
-            const LibInfo *target = find_module_lib(&import->name);
+            const LibInfo *target = find_module_lib(import->name);
             if (!target)
             {
-                error_at(&import->name, "Unknown module");
+                error_at(import->span, "Unknown module");
                 ok = false;
                 continue;
             }
@@ -681,9 +683,9 @@ static bool check_module_imports_and_parse(Component *component, Module *module,
                 // check that imports are in directly dependent component (no indirect component)
                 if (!component_has_dependency(component, target->component))
                 {
-                    error_at(&import->span, "%s has no dependency on library %s, needed for module %.*s",
+                    error_at(import->span, "%s has no dependency on library %s, needed for module %s",
                             component->name, target->component->name,
-                            SPLAT_TOK(import->name));
+                            import->name);
                     ok = false;
                     continue;
                 }
@@ -698,16 +700,16 @@ static bool check_module_imports_and_parse(Component *component, Module *module,
 static bool check_main_function()
 {
     Decl *main_decl = NULL;
-    Token main_name = token_wrap("main");
+    const char *main_name = symtab_add("main", 4);
     for (unsigned i = 0; i < builder.main_component->modules.size; i++)
     {
         Module *module = builder.main_component->modules.entries[i];
-        Decl *main = module_find_symbol(module, &main_name);
+        Decl *main = module_find_symbol(module, main_name);
         if (!main) continue;
         if (main_decl)
         {
-            sema_error_at(&main->span, "Multiple main function");
-            sema_error_at(&main_decl->span, "Previous one was here");
+            sema_error_at(main->span, "Multiple main function");
+            prev_at(main_decl->span, "Previous one was here");
         }
         else
         {
@@ -726,7 +728,7 @@ static bool check_main_function()
     }
     else if (main_decl)
     {
-        sema_error_at(&main_decl->span, "Libraries cannot have main functions");
+        sema_error_at(main_decl->span, "Libraries cannot have main functions");
         return false;
     }
     return true;

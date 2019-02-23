@@ -124,37 +124,30 @@ typedef enum
     PRINT_TYPE_WARN
 } PrintType;
 
-static void print_error(struct _Token *token, const char *message, PrintType print_type)
+static void print_error(SourceRange source_range, const char *message, PrintType print_type)
 {
-   	File *file = token_get_file(token);
+   	File *file = source_get_file(source_range.loc);
    	const static int backtrace_len = 3;
 
-   	const char *backtrace[backtrace_len + 1];
-
-   	int max_line_length = (int)round(log10(token->line)) + 1;
+   	Line *line = file_source_line(file, source_range.loc);
+   	int max_line_length = (int)round(log10(line->number)) + 1;
 
    	char number_buffer[20];
    	snprintf(number_buffer, 20, "%%%dd: %%.*s\n", max_line_length);
 
-    backtrace[0] = line_start(token);
-
-    for (int i = 1; i < backtrace_len + 1; i++)
+    for (int i = 1; i < backtrace_len; i++)
     {
-        backtrace[i] = find_line_start(file->contents,
-                                       skip_to_end_of_previous_line(file->contents, backtrace[i - 1] - 1));
+    	int line_number = line->number - i;
+    	if (line_number < 1) continue;
+    	Line *backtrace_line = file->line_start->entries[line_number - 1];
+        fprintf(stderr, number_buffer, backtrace_line->number, backtrace_line->length, backtrace_line->start + file->contents);
     }
-    for (int i = backtrace_len; i >= 1; i--)
-    {
-        if (backtrace[i] == backtrace[i - 1]) continue;
-        fprintf(stderr, number_buffer, token->line - i, (int) (find_line_end(backtrace[i]) - backtrace[i]),
-                backtrace[i]);
-    }
-    fprintf(stderr, number_buffer, token->line, (int) (find_line_end(token->start) - backtrace[0]), backtrace[0]);
-    for (unsigned i = 0; i < max_line_length + 2 + (token->start - backtrace[0]); i++)
+	fprintf(stderr, number_buffer, line->number, line->length, line->start + file->contents);
+    for (unsigned i = 0; i < max_line_length + 2 + line->start - source_range.length; i++)
     {
         fprintf(stderr, " ");
     }
-    for (int i = 0; i < token->length; i++)
+    for (int i = 0; i < source_range.length; i++)
     {
         fprintf(stderr, "^");
     }
@@ -163,55 +156,55 @@ static void print_error(struct _Token *token, const char *message, PrintType pri
     switch (print_type)
     {
         case PRINT_TYPE_ERROR:
-            fprintf(stderr, "(%s:%d) Error: %s\n", file->name, token->line, message);
+            fprintf(stderr, "(%s:%d) Error: %s\n", file->name, line->number, message);
             break;
         case PRINT_TYPE_PREV:
-            fprintf(stderr, "(%s:%d) %s\n", file->name, token->line, message);
+            fprintf(stderr, "(%s:%d) %s\n", file->name, line->number, message);
             break;
         case PRINT_TYPE_WARN:
-            fprintf(stderr, "(%s:%d) Warning: %s\n", file->name, token->line, message);
+            fprintf(stderr, "(%s:%d) Warning: %s\n", file->name, line->number, message);
             break;
     }
 }
 
-static void vprint_error(struct _Token *token, const char *message, va_list args)
+static void vprint_error(SourceRange span, const char *message, va_list args)
 {
 	char buffer[256];
 	vsnprintf(buffer, 256, message, args);
-    print_error(token, buffer, PRINT_TYPE_ERROR);
+    print_error(span, buffer, PRINT_TYPE_ERROR);
 }
 
-void error_at(struct _Token *token, const char *message, ...)
+void error_at(SourceRange span, const char *message, ...)
 {
 	if (diagnostics.panic_mode) return;
 	diagnostics.panic_mode = true;
 	va_list args;
 	va_start(args, message);
-	vprint_error(token, message, args);
+	vprint_error(span, message, args);
 	va_end(args);
 	diagnostics.errors++;
 }
 
-void verror_at(struct _Token *token, const char *message, va_list args)
+void verror_at(SourceRange span, const char *message, va_list args)
 {
 	if (diagnostics.panic_mode) return;
 	diagnostics.panic_mode = true;
-	vprint_error(token, message, args);
+	vprint_error(span, message, args);
 	diagnostics.errors++;
 }
 
 
-void prev_at(struct _Token *token, const char *message, ...)
+void prev_at(SourceRange span, const char *message, ...)
 {
     va_list args;
     va_start(args, message);
     char buffer[256];
     vsnprintf(buffer, 256, message, args);
-    print_error(token, buffer, PRINT_TYPE_PREV);
+    print_error(span, buffer, PRINT_TYPE_PREV);
     va_end(args);
 }
 
-void sema_error_at(struct _Token *token, const char *message, ...)
+void sema_error_at(SourceRange token, const char *message, ...)
 {
 	va_list args;
 	va_start(args, message);
@@ -220,7 +213,7 @@ void sema_error_at(struct _Token *token, const char *message, ...)
 	diagnostics.errors++;
 }
 
-void sema_warn_at(DiagnosticsType type, struct _Token *token, const char *message, ...)
+void sema_warn_at(DiagnosticsType type,SourceRange span, const char *message, ...)
 {
     switch (diagnostics.severity[type])
     {
@@ -232,7 +225,7 @@ void sema_warn_at(DiagnosticsType type, struct _Token *token, const char *messag
         {
             va_list args;
             va_start(args, message);
-            vprint_error(token, message, args);
+            vprint_error(span, message, args);
             va_end(args);
             diagnostics.errors++;
             return;
@@ -243,7 +236,7 @@ void sema_warn_at(DiagnosticsType type, struct _Token *token, const char *messag
     char buffer[256];
     vsnprintf(buffer, 256, message, args);
     if (diagnostics.severity[type])
-	print_error(token, buffer, PRINT_TYPE_WARN);
+	print_error(span, buffer, PRINT_TYPE_WARN);
 	va_end(args);
 	diagnostics.warnings++;
 }

@@ -46,5 +46,5 @@ typedef struct _AttributeInfo
     unsigned targets;
 } AttributeInfo;
 
-AttributeType attribute_type_from_token(Token *token);
+AttributeType attribute_type_from_string(const char *name);
 const AttributeInfo *attribute_info_from_type(AttributeType type);

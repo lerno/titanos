@@ -2,6 +2,6 @@
 
 #include "common.h"
 typedef struct _Component Component;
-typedef struct _Table Table;
+typedef struct _STable STable;
 
-bool analyse(Component *component, Table *modules);
+bool analyse(Component *component, STable *modules);

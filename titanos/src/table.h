@@ -30,15 +30,14 @@ void table_clear(Table *table);
 
 static void *table_set_token(Table *table, const Token *token, void *entry)
 {
-    return table_set(table, token->start, token->length, entry);
+    return table_set(table, token->start, token->span.length, entry);
 }
 static void *table_get_token(Table *table, const Token *token)
 {
-    return table_get(table, token->start, token->length);
+    return table_get(table, token->start, token->span.length);
 }
-
 
 static void *table_delete_token(Table *table, const Token *token)
 {
-    return table_delete(table, token->start, token->length);
+    return table_delete(table, token->start, token->span.length);
 }

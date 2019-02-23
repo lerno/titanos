@@ -127,7 +127,7 @@ char *token_name(Token *token)
         case TOKEN_INTEGER:
         case TOKEN_FLOAT:
         case TOKEN_STRING:
-            strlcpy(buffer, token->start, token->length + 1);
+            strlcpy(buffer, token->start, token->span.length + 1);
             return buffer;
         case TOKEN_ELSE:
             return " else ";
