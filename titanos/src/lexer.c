@@ -18,11 +18,12 @@
 #define MAX_FILES (0xFFFF - 1)
 #define MAX_LINE (0xFFFFFF - 1)
 
+const SourceLoc INVALID_LOC = { .id = UINT32_MAX };
+
 Array files;
 File pseudo_file;
 SourceLoc current_file_start;
 File *current_file = NULL;
-Line *current_line;
 
 typedef struct
 {
@@ -395,23 +396,6 @@ static char advance()
     return *(lexer.current++);
 }
 
-static void add_line()
-{
-    uint32_t loc = (uint32_t) (lexer.current - lexer.begin + current_file_start.id);
-    if (loc < current_line->start)
-    {
-        // It can happen that we add a line we already added.
-        return;
-    }
-    current_line->length = (uint16_t) (loc - current_line->start);
-    Line *new_line = malloc(sizeof(Line));
-    new_line->start = loc + 1;
-    new_line->length = UINT16_MAX;
-    new_line->number = (uint16_t) (current_line->number + 1);
-    current_line = new_line;
-    array_add(current_file->line_start, new_line);
-    assert(current_line->number == current_file->line_start->count);
-}
 
 Token error_token(const char *message)
 {
@@ -451,7 +435,6 @@ bool skip_whitespace()
         switch (c)
         {
             case '\n':
-                add_line();
             case ' ':
             case '\t':
             case '\r':
@@ -469,7 +452,6 @@ bool skip_whitespace()
                     while (1)
                     {
                         advance();
-                        if (peek() == '\n') add_line();
                         if (reached_end()) return false;
                         if (peek() == '*' && peek_next() == '/')
                         {
@@ -485,7 +467,6 @@ bool skip_whitespace()
                     while (1)
                     {
                         advance();
-                        if (peek() == '\n') add_line();
                         if (reached_end()) return false;
                         if (peek() == '/' && peek_next() == '+')
                         {
@@ -526,7 +507,6 @@ static inline Token scan_string()
             advance();
             continue;
         }
-        if (c == '\n') add_line();
         if (reached_end())
         {
             return error_token("Unterminated string.");
@@ -862,17 +842,10 @@ void init_lexer(const char *filename, const char *source, size_t size)
     current_file = malloc(sizeof(File));
     current_file->contents = source;
     current_file->name = filename;
-    current_file->line_start = malloc(sizeof(Array));
     current_file->start.id = files.count == 0 ? 0 : ((File *)files.entries[files.count - 1])->end.id;
     assert(current_file->start.id + size < UINT32_MAX);
     current_file->end.id = (unsigned)(current_file->start.id + size);
-    array_init(current_file->line_start);
     array_add(&files, current_file);
-    current_line = malloc(sizeof(Line));
-    array_add(current_file->line_start, current_line);
-    current_line->start = current_file->start.id;
-    current_line->length = UINT16_MAX;
-    current_line->number = 1;
     lexer.source_file = (uint16_t)files.count;
     lexer.begin = source;
     lexer.start = source;
@@ -881,7 +854,7 @@ void init_lexer(const char *filename, const char *source, size_t size)
 
 File *source_get_file(SourceLoc loc)
 {
-    if (loc.id == UINT32_MAX)
+    if (loc.id == INVALID_LOC.id)
     {
         pseudo_file.contents = "---";
         return &pseudo_file;
@@ -907,22 +880,6 @@ File *source_get_file(SourceLoc loc)
     }
 }
 
-File *token_get_file(Token *token)
-{
-    if (token->span.loc.id == UINT32_MAX)
-    {
-        pseudo_file.contents = token->start;
-        return &pseudo_file;
-    }
-    return source_get_file(token->span.loc);
-}
-
-bool token_compare(const Token *token1, const Token *token2)
-{
-    if (token1->span.length != token2->span.length) return false;
-    return memcmp(token1->start, token2->start, (size_t)token1->span.length) == 0;
-}
-
 bool token_compare_str(const Token *token1, const char *string)
 {
     size_t len = strlen(string);
@@ -930,12 +887,6 @@ bool token_compare_str(const Token *token1, const char *string)
     return memcmp(token1->start, string, len) == 0;
 }
 
-void token_to_buffer(Token *token, char *buffer, unsigned len)
-{
-    unsigned copy_len = MIN(len - 1, token->span.length);
-    strncpy(buffer, token->start, copy_len);
-    buffer[copy_len + 1] = '\0';
-}
 void range_expand(SourceRange *to_update, Token *end_token)
 {
     if (to_update->length == 0)
@@ -950,30 +901,6 @@ void range_expand(SourceRange *to_update, Token *end_token)
 
 Token token_wrap(const char *string)
 {
-    return (Token) { .start = string, .span = { .loc = UINT32_MAX, .length = (uint16_t) strlen(string) }, .type = TOKEN_IDENTIFIER};
+    return (Token) { .start = string, .span = { .loc = INVALID_LOC, .length = (uint16_t) strlen(string) }, .type = TOKEN_IDENTIFIER};
 }
 
-Line *file_source_line(File *file, SourceLoc loc)
-{
-    assert(loc.id >= file->start.id);
-    uint32_t high = file->line_start->count - 1;
-    uint32_t low = 0;
-    while (true)
-    {
-        if (low > high) return file->line_start->entries[high];
-        if (low == high) return file->line_start->entries[high];
-        uint32_t mid = (low + high) / 2;
-        Line *line = file->line_start->entries[mid];
-        if (line->start < loc.id)
-        {
-            low = mid + 1;
-            continue;
-        }
-        if (line->start + line->number > loc.id)
-        {
-            high = mid - 1;
-            continue;
-        }
-        return line;
-    }
-}

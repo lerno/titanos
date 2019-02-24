@@ -127,23 +127,57 @@ typedef enum
 static void print_error(SourceRange source_range, const char *message, PrintType print_type)
 {
    	File *file = source_get_file(source_range.loc);
-   	const static int backtrace_len = 3;
 
-   	Line *line = file_source_line(file, source_range.loc);
-   	int max_line_length = (int)round(log10(line->number)) + 1;
+   	const char *content = file->contents;
+   	const char *error_start = file->contents + source_range.loc.id - file->start.id;
+
+   	const char *linestarts[4];
+   	linestarts[0] = NULL;
+   	const char *current = content;
+   	unsigned line = 1;
+   	while (current < error_start)
+    {
+   	    if (current[0] == '\n')
+        {
+   	        line++;
+			linestarts[3] = linestarts[2];
+            linestarts[2] = linestarts[1];
+            linestarts[1] = linestarts[0];
+            linestarts[0] = current + 1;
+        }
+   	    current++;
+    }
+
+   	const char *end = NULL;
+    while (!end)
+    {
+        switch (current[0])
+        {
+            case '\n':
+            case '\0':
+                end = current;
+                break;
+            default:
+            	current++;
+                break;
+        }
+    }
+
+    int max_line_length = (int)round(log10(line)) + 1;
 
    	char number_buffer[20];
    	snprintf(number_buffer, 20, "%%%dd: %%.*s\n", max_line_length);
 
-    for (int i = 1; i < backtrace_len; i++)
+   	for (unsigned i = 3; i > 0; i--)
     {
-    	int line_number = line->number - i;
-    	if (line_number < 1) continue;
-    	Line *backtrace_line = file->line_start->entries[line_number - 1];
-        fprintf(stderr, number_buffer, backtrace_line->number, backtrace_line->length, backtrace_line->start + file->contents);
+    	int line_number = line - i;
+    	const char *start = linestarts[i];
+    	if (start == NULL) continue;
+    	const char *line_end = linestarts[i - 1];
+        fprintf(stderr, number_buffer, line_number, line_end - start - 1, start);
     }
-	fprintf(stderr, number_buffer, line->number, line->length, line->start + file->contents);
-    for (unsigned i = 0; i < max_line_length + 2 + line->start - source_range.length; i++)
+	fprintf(stderr, number_buffer, line, end - linestarts[0], linestarts[0]);
+    for (unsigned i = 0; i < max_line_length + 2 + error_start - linestarts[0]; i++)
     {
         fprintf(stderr, " ");
     }
@@ -156,13 +190,13 @@ static void print_error(SourceRange source_range, const char *message, PrintType
     switch (print_type)
     {
         case PRINT_TYPE_ERROR:
-            fprintf(stderr, "(%s:%d) Error: %s\n", file->name, line->number, message);
+            fprintf(stderr, "(%s:%d) Error: %s\n", file->name, line, message);
             break;
         case PRINT_TYPE_PREV:
-            fprintf(stderr, "(%s:%d) %s\n", file->name, line->number, message);
+            fprintf(stderr, "(%s:%d) %s\n", file->name, line, message);
             break;
         case PRINT_TYPE_WARN:
-            fprintf(stderr, "(%s:%d) Warning: %s\n", file->name, line->number, message);
+            fprintf(stderr, "(%s:%d) Warning: %s\n", file->name, line, message);
             break;
     }
 }

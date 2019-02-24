@@ -113,6 +113,8 @@ typedef struct _SourceLoc
 	uint32_t id;
 } SourceLoc;
 
+extern const SourceLoc INVALID_LOC;
+
 typedef struct _SourceRange
 {
     SourceLoc loc;
@@ -142,24 +144,22 @@ typedef struct _File
 	const char *name;
 	SourceLoc start;
 	SourceLoc end;
-	struct _Array *line_start;
 } File;
 
 static_assert(sizeof(Token) == 32, "Invalid size of token");
 
 void init_lexer(const char *filename, const char *source, size_t size);
-File *token_get_file(Token *token);
+
 Token scan_token(void);
 Token lookahead(int steps);
-bool token_compare(const Token *token1, const Token *token2);
+
 bool token_compare_str(const Token *token1, const char *string);
 void range_expand(SourceRange *to_update, Token *end_token);
-void token_to_buffer(Token *token, char *buffer, unsigned len);
+
 const char *skip_to_end_of_previous_line(const char *file_start, const char *start);
 const char *find_line_end(const char *line_start);
 
 File *source_get_file(SourceLoc loc);
-Line *file_source_line(File *file, SourceLoc loc);
 
 Token token_wrap(const char *string);
 
