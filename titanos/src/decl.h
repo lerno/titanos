@@ -38,7 +38,6 @@ typedef enum _VarDeclKind {
 typedef struct _VarDecl
 {
     VarDeclKind kind : 2;
-    TypeQualifier qualifier : 4;
     bool local : 1;
     bool in_init : 1;
     Type *original_type;

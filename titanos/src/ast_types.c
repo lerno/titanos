@@ -143,7 +143,7 @@ void print_ast(Ast *ast, unsigned current_indent)
             printf("GOTO STMT ");
             if (ast->goto_stmt.type == GOTO_NOT_ANALYSED)
             {
-                print_token(&ast->goto_stmt.label_name);
+                printf("%s", ast->goto_stmt.label_name);
             }
             else
             {

@@ -48,7 +48,10 @@ static inline bool is_castable(Type *type)
         case TYPE_FUNC_TYPE:
         case TYPE_STRUCT:
         case TYPE_UNION:
+        case TYPE_RESOLVED:
+        case TYPE_ALIAS:
             return true;
+
     }
 }
 
@@ -64,8 +67,9 @@ bool insert_cast_if_needed(Expr *expr, Type *type, bool implicit)
 {
     assert(expr->type);
     assert(type);
-    if (expr->type == type) return true;
-    CastResult result = perform_compile_time_cast(expr, type, implicit);
+    if (type_is_same(expr->type, type)) return true;
+    Type *target_type = type_unfold_non_opaque(type);
+    CastResult result = perform_compile_time_cast(expr, target_type, implicit);
     switch (result)
     {
         case CAST_INLINE:
@@ -77,8 +81,8 @@ bool insert_cast_if_needed(Expr *expr, Type *type, bool implicit)
     }
     Expr *copy = expr_copy(expr);
     expr->expr_id = EXPR_CAST;
-    expr->type = type;
-    expr->cast_expr.type = type;
+    expr->type = target_type;
+    expr->cast_expr.type = target_type;
     expr->cast_expr.expr = copy;
     expr->cast_expr.cast_result = result;
     return true;
@@ -101,7 +105,7 @@ bool analyse_init_expr(Decl *decl)
 }
 
 
-typedef Value (*BinOp)(Value, Value);
+typedef Value (*BinOpFunc)(Value, Value);
 
 Type *try_upcasting_for_pointer_arithmetics(Expr *left, Expr *right)
 {
@@ -146,7 +150,7 @@ bool try_upcasting_binary_for_pointer_arithmetics(Expr *binary_expr)
 
 bool is_arithmetics_type(Type *type)
 {
-    switch (type->type_id)
+    switch (type_unfold_non_opaque(type)->type_id)
     {
         case TYPE_INVALID:
         case TYPE_UNRESOLVED:
@@ -160,6 +164,8 @@ bool is_arithmetics_type(Type *type)
         case TYPE_FUNC_TYPE:
         case TYPE_STRUCT:
         case TYPE_UNION:
+        case TYPE_RESOLVED:
+        case TYPE_ALIAS:
             return false;
         case TYPE_ENUM:
         case TYPE_NIL:
@@ -190,6 +196,8 @@ bool is_real_arithmetics_type(Type *type)
         case TYPE_FUNC_TYPE:
         case TYPE_STRUCT:
         case TYPE_UNION:
+        case TYPE_RESOLVED:
+        case TYPE_ALIAS:
             return false;
         case TYPE_INT:
         case TYPE_FLOAT:
@@ -200,10 +208,121 @@ bool is_real_arithmetics_type(Type *type)
     }
 }
 
+static bool perform_unary_conversions(Expr *expr)
+{
+    /*
+     *  ExprResult Sema::UsualUnaryConversions(Expr *E) {
+  696   // First, convert to an r-value.
+  697   ExprResult Res = DefaultFunctionArrayLvalueConversion(E);
+  698   if (Res.isInvalid())
+  699     return ExprError();
+  700   E = Res.get();
+  701
+  702   QualType Ty = E->getType();
+  703   assert(!Ty.isNull() && "UsualUnaryConversions - missing type");
+  704
+  705   // Half FP have to be promoted to float unless it is natively supported
+  706   if (Ty->isHalfType() && !getLangOpts().NativeHalfType)
+  707     return ImpCastExprToType(Res.get(), Context.FloatTy, CK_FloatingCast);
+  708
+  709   // Try to perform integral promotions if the object has a theoretically
+  710   // promotable type.
+  711   if (Ty->isIntegralOrUnscopedEnumerationType()) {
+  712     // C99 6.3.1.1p2:
+  713     //
+  714     //   The following may be used in an expression wherever an int or
+  715     //   unsigned int may be used:
+  716     //     - an object or expression with an integer type whose integer
+  717     //       conversion rank is less than or equal to the rank of int
+  718     //       and unsigned int.
+  719     //     - A bit-field of type _Bool, int, signed int, or unsigned int.
+  720     //
+  721     //   If an int can represent all values of the original type, the
+  722     //   value is converted to an int; otherwise, it is converted to an
+  723     //   unsigned int. These are called the integer promotions. All
+  724     //   other types are unchanged by the integer promotions.
+  725
+  726     QualType PTy = Context.isPromotableBitField(E);
+  727     if (!PTy.isNull()) {
+  728       E = ImpCastExprToType(E, PTy, CK_IntegralCast).get();
+  729       return E;
+  730     }
+  731     if (Ty->isPromotableIntegerType()) {
+  732       QualType PT = Context.getPromotedIntegerType(Ty);
+  733       E = ImpCastExprToType(E, PT, CK_IntegralCast).get();
+  734       return E;
+  735     }
+  736   }
+  737   return E;
+  738 }
+  739
+     */
+    return false;
+}
+static bool perform_arithmetic_conversions(Expr *LHS, Expr *RHS, bool is_compile_assign)
+{
+    if (!is_compile_assign)
+    {
+        if (!perform_unary_conversions(LHS)) return false;
+    }
+    if (!perform_unary_conversions(RHS)) return false;
+    Type *left = LHS->type;
+    Type *right = RHS->type;
+
+    if (type_is_same(left, right)) return true;
+    if (!is_arithmetics_type(left) || !is_arithmetics_type(right)) return false;
+    /*
+1375   // Apply unary and bitfield promotions to the LHS's type.
+1376   QualType LHSUnpromotedType = LHSType;
+1377   if (LHSType->isPromotableIntegerType())
+1378     LHSType = Context.getPromotedIntegerType(LHSType);
+1379   QualType LHSBitfieldPromoteTy = Context.isPromotableBitField(LHS.get());
+1380   if (!LHSBitfieldPromoteTy.isNull())
+1381     LHSType = LHSBitfieldPromoteTy;
+1382   if (LHSType != LHSUnpromotedType && !IsCompAssign)
+1383     LHS = ImpCastExprToType(LHS.get(), LHSType, CK_IntegralCast);
+1384
+1385   // If both types are identical, no conversion is needed.
+1386   if (LHSType == RHSType)
+1387     return LHSType;
+1388
+1389   // At this point, we have two different arithmetic types.
+1390
+1391   // Diagnose attempts to convert between __float128 and long double where
+1392   // such conversions currently can't be handled.
+1393   if (unsupportedTypeConversion(*this, LHSType, RHSType))
+1394     return QualType();
+1395
+1396   // Handle complex types first (C99 6.3.1.8p1).
+1397   if (LHSType->isComplexType() || RHSType->isComplexType())
+1398     return handleComplexFloatConversion(*this, LHS, RHS, LHSType, RHSType,
+1399                                         IsCompAssign);
+1400
+1401   // Now handle "real" floating types (i.e. float, double, long double).
+1402   if (LHSType->isRealFloatingType() || RHSType->isRealFloatingType())
+1403     return handleFloatConversion(*this, LHS, RHS, LHSType, RHSType,
+1404                                  IsCompAssign);
+1405
+1406   // Handle GCC complex int extension.
+1407   if (LHSType->isComplexIntegerType() || RHSType->isComplexIntegerType())
+1408     return handleComplexIntConversion(*this, LHS, RHS, LHSType, RHSType,
+1409                                       IsCompAssign);
+1410
+1411   if (LHSType->isFixedPointType() || RHSType->isFixedPointType())
+1412     return handleFixedPointConversion(*this, LHSType, RHSType);
+1413
+1414   // Finally, we have two differing integer types.
+1415   return handleIntegerConversion<doIntegralCast, doIntegralCast>
+1416            (*this, LHS, RHS, LHSType, RHSType, IsCompAssign);
+1417 }
+1418*/
+    return false;
+}
+
 static inline Type *try_upcasting_for_arithmetics(Expr *left, Expr *right)
 {
-    Type *left_type = left->type;
-    Type *right_type = right->type;
+    Type *left_type = type_unfold_non_opaque(left->type);
+    Type *right_type = type_unfold_non_opaque(right->type);
 
     if (!is_arithmetics_type(left_type) || !is_arithmetics_type(right_type)) return NULL;
 
@@ -272,9 +391,17 @@ static inline bool analyse_plus_expr(Expr *binary, Side side)
 {
     Expr *left = binary->binary_expr.left;
     Expr *right = binary->binary_expr.right;
-    // TODO improve
-    if (try_upcasting_binary_for_pointer_arithmetics(binary))
+    Type *left_type = type_unfold_non_opaque(left->type);
+    Type *right_type = type_unfold_non_opaque(right->type);
+    if (left_type->type_id == TYPE_POINTER)
     {
+        // TODO pointer int type
+        Type *target = type_is_signed(right_type) ? type_builtin_i64() : type_builtin_u64();
+        if (!insert_implicit_cast_if_needed(right, target))
+        {
+            sema_error_at(right->span, "Can't convert expression to a pointer int");
+            return false;
+        }
         return true;
     }
     if (!try_upcasting_binary_for_arithmetics(binary))
@@ -350,13 +477,29 @@ static inline bool analyse_mod_expr(Expr *binary)
     return true;
 }
 
-static inline bool analyse_eq_expr(Expr *binary)
+static inline bool analyse_assign_expr(Expr *binary, Side side)
 {
     Expr *left = binary->binary_expr.left;
     Expr *right = binary->binary_expr.right;
 
-    // TODO
-    return false;
+    if (!analyse_expr(left, LHS | side)) return false;
+    if (!analyse_expr(right, RHS)) return false;
+
+    // Make sure types match, otherwise try inserting a cast.
+    return insert_implicit_cast_if_needed(right, left->type);
+}
+
+static inline bool analyse_ne_expr(Expr *binary)
+{
+    Expr *left = binary->binary_expr.left;
+    Expr *right = binary->binary_expr.right;
+
+    if (!analyse_expr(left, RHS)) return false;
+    if (!analyse_expr(right, RHS)) return false;
+
+    TODO
+    // Make sure types match, otherwise try inserting a cast.
+    return insert_implicit_cast_if_needed(right, left->type);
 }
 
 bool analyse_binary_expr(Expr *expr, Side side)
@@ -366,66 +509,63 @@ bool analyse_binary_expr(Expr *expr, Side side)
     Expr *right = expr->binary_expr.right;
     switch (expr->binary_expr.operator)
     {
-        case TOKEN_EQ:
-            // Make sure types match, otherwise try inserting a cast.
-            return analyse_expr(left, LHS)
-                   && analyse_expr(right, side)
-                   && insert_implicit_cast_if_needed(right, left->type);
-        case TOKEN_MINUS:
+        case BINOP_ASSIGN:
+            return analyse_assign_expr(expr, side);
+        case BINOP_SUB:
             return analyse_expr(left, RHS)
                    && analyse_expr(right, RHS)
                    && analyse_minus_expr(expr, side);
-        case TOKEN_PLUS:
+        case BINOP_ADD:
             return analyse_expr(left, RHS)
                    && analyse_expr(right, RHS)
                    && analyse_plus_expr(expr, side);
-        case TOKEN_DIV:
+        case BINOP_DIV:
             return analyse_expr(left, RHS)
                    && analyse_expr(right, RHS)
                    && analyse_div_expr(expr) && is_rvalue(expr);
-        case TOKEN_STAR:
+        case BINOP_MULT:
             return analyse_expr(left, RHS)
                    && analyse_expr(right, RHS)
                    && analyse_mult_expr(expr) && is_rvalue(expr);
-        case TOKEN_MOD:
+        case BINOP_MOD:
             return analyse_expr(left, RHS)
                    && analyse_expr(right, RHS)
                    &&
                    analyse_mod_expr(expr) && is_rvalue(expr);
-        case TOKEN_EQEQ:
+        case BINOP_EQ:
             return analyse_expr(left, RHS)
-                   && analyse_expr(right, RHS)
-                   && analyse_eq_expr(expr) && is_rvalue(expr);
-        case TOKEN_NOT_EQUAL:
-        case TOKEN_GREATER:
-        case TOKEN_GREATER_EQ:
-        case TOKEN_LESS:
-        case TOKEN_LESS_EQ:
-        case TOKEN_LEFT_SHIFT:
-        case TOKEN_RIGHT_SHIFT:
-        case TOKEN_OR:
-        case TOKEN_BIT_OR:
-        case TOKEN_AND:
-        case TOKEN_AMP:
-        case TOKEN_BIT_XOR:
-        case TOKEN_PLUS_ASSIGN:
-        case TOKEN_MINUS_ASSIGN:
-        case TOKEN_MULT_ASSIGN:
-        case TOKEN_MOD_ASSIGN:
-        case TOKEN_DIV_ASSIGN:
-        case TOKEN_AND_ASSIGN:
-        case TOKEN_BIT_AND_ASSIGN:
-        case TOKEN_OR_ASSIGN:
-        case TOKEN_BIT_OR_ASSIGN:
-        case TOKEN_BIT_XOR_ASSIGN:
-        case TOKEN_RIGHT_SHIFT_ASSIGN:
-        case TOKEN_LEFT_SHIFT_ASSIGN:
+                   && analyse_expr(right, RHS) && is_rvalue(expr); // TODO
+        case BINOP_NE:
+            return analyse_ne_expr(expr);
+        case BINOP_MULT_ASSIGN:
+        case BINOP_ADD_ASSIGN:
+        case BINOP_SUB_ASSIGN:
+        case BINOP_DIV_ASSIGN:
+        case BINOP_MOD_ASSIGN:
+        case BINOP_AND:
+        case BINOP_AND_ASSIGN:
+        case BINOP_OR:
+        case BINOP_OR_ASSIGN:
+        case BINOP_BIT_AND:
+        case BINOP_BIT_AND_ASSIGN:
+        case BINOP_BIT_OR:
+        case BINOP_BIT_OR_ASSIGN:
+        case BINOP_BIT_XOR:
+        case BINOP_BIT_XOR_ASSIGN:
+        case BINOP_GE:
+        case BINOP_GT:
+        case BINOP_LE:
+        case BINOP_LT:
+        case BINOP_SHR:
+        case BINOP_SHR_ASSIGN:
+        case BINOP_SHL:
+        case BINOP_SHL_ASSIGN:
+        case BINOP_ELVIS:
             FATAL_ERROR("TODO");
-            break;
-        default:
-            FATAL_ERROR("Not possible");
+        case BINOP_ERROR:
+            UNREACHABLE;
     }
-    return expr->type != NULL;
+    UNREACHABLE;
 }
 
 
@@ -504,6 +644,8 @@ static bool cast_const_type_expression(Expr *expr, Type *target_type, bool is_im
     bool allow_trunc = !is_implicit;
     switch (target_type->type_id)
     {
+        case TYPE_RESOLVED:
+        case TYPE_ALIAS:
         case TYPE_INVALID:
         case TYPE_UNRESOLVED:
         case TYPE_VOID:
@@ -555,10 +697,13 @@ static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool 
         return CAST_INLINE;
     }
     bool is_same_type = source_type->type_id == target_type->type_id;
+    target_type = type_unfold_non_opaque(target_type);
     switch (target_type->type_id)
     {
         case TYPE_INVALID:
         case TYPE_UNRESOLVED:
+        case TYPE_RESOLVED:
+        case TYPE_ALIAS:
             // Since we resolved the type successfully
             UNREACHABLE
         case TYPE_VOID:
@@ -684,7 +829,7 @@ static CastResult perform_compile_time_cast(Expr *expr, Type *target_type, bool 
 static bool analyse_cast_expr(Expr *expr, Side side)
 {
     if (!analyse_expr(expr->cast_expr.expr, side)) return false;
-    if (!resolve_type(&expr->cast_expr.type, false)) return false;
+    if (!resolve_type(expr->cast_expr.type, false)) return false;
     Type *target_type = expr->cast_expr.type;
     Type *source_type = expr->cast_expr.expr->type;
     assert(target_type && source_type);
@@ -705,7 +850,7 @@ static bool analyse_cast_expr(Expr *expr, Side side)
 static bool analyse_type_expr(Expr *expr)
 {
     Type *type = expr->type_expr.type;
-    if (!resolve_type(&type, false)) return false;
+    if (!resolve_type(type, false)) return false;
     // Type now resolves, we can set the expression
     Type *type_of_type = new_type(TYPE_TYPEVAL, false);
     type_of_type->is_public = type->is_public;
@@ -742,6 +887,7 @@ static inline bool force_cast_to_signed(Expr *sub_expr)
 static bool resolve_identifier(Expr *expr, Side side)
 {
     LOG_FUNC
+    if (expr->identifier_expr.resolved) return true;
     Decl *decl = scope_find_symbol(expr->identifier_expr.identifier, false, false, expr->span);
     if (!decl)
     {
@@ -761,7 +907,7 @@ static bool resolve_identifier(Expr *expr, Side side)
         case DECL_ARRAY_VALUE:
         case DECL_IMPORT:
         case DECL_LABEL:
-            if (side == LHS)
+            if (side & LHS)
             {
                 sema_error_at(expr->span, "Only variables can be assigned to");
                 return false;
@@ -770,7 +916,8 @@ static bool resolve_identifier(Expr *expr, Side side)
             break;
         case DECL_VAR:
             decl->var.in_init = true;
-            if (!resolve_type(&decl->type, decl->is_public)) return false;
+            if (!resolve_type(decl->type, decl->is_public)) return false;
+            if (!resolve_type(decl->var.original_type, decl->is_public)) return false;
             if (!analyse_expr(decl->var.init_expr, RHS)) return false;
             decl->var.in_init = false;
             if (decl->var.in_init)
@@ -778,12 +925,12 @@ static bool resolve_identifier(Expr *expr, Side side)
                 sema_error_at(expr->span, "Used '%s' in own initialization", expr->identifier_expr.identifier);
                 return false;
             }
-            if (side == LHS && (decl->var.qualifier & TYPE_QUALIFIER_CONST))
+            if ((side & LHS) && type_is_const(decl->type))
             {
                 sema_error_at(expr->span, "Cannot assign to constant value");
                 return false;
             }
-            if (decl->var.qualifier & TYPE_QUALIFIER_CONST)
+            if (type_is_const(decl->type))
             {
                 expr_replace(expr, decl->var.init_expr);
                 expr->type = decl->type;
@@ -791,11 +938,12 @@ static bool resolve_identifier(Expr *expr, Side side)
             else
             {
                 expr->type = decl->type;
-                expr->identifier_expr.is_ref = side == LHS;
+                expr->identifier_expr.is_ref = side & LHS;
+                DEBUG_LOG("%s not resolved as const", expr->identifier_expr.identifier);
             }
             break;
     }
-    if (side == RHS)
+    if (side & RHS)
     {
         decl->is_used = true;
         // TODO
@@ -817,20 +965,19 @@ bool analyse_unary_expr(Expr *expr, Side side)
     Expr *sub_expr = expr->unary_expr.expr;
     switch (expr->unary_expr.operator)
     {
-        case TOKEN_PLUSPLUS:
-        case TOKEN_MINUSMINUS:
+        case UNARYOP_INC:
+        case UNARYOP_DEC:
             if (!analyse_expr(sub_expr, LHS | side)) return false;
 /*            if (LType.isNull()) return 0;
             checkAssignment(SubExpr, LType);
             expr->setType(LType);*/
             return true;
-        case TOKEN_AMP:
+        case UNARYOP_ADDR:
             if (!analyse_expr(sub_expr, side | RHS)) return false;
-            expr->type = new_type(TYPE_POINTER, false);
+            expr->type = type_new_pointer(sub_expr->type);
             // TODO constness copy qualifier if variable.
-            expr->type->pointer.base = sub_expr->type;
             return true;
-        case TOKEN_STAR:
+        case UNARYOP_DEREF:
             if (!analyse_expr(sub_expr, side | RHS)) return false;
             if (expr->type->type_id != TYPE_POINTER)
             {
@@ -840,7 +987,7 @@ bool analyse_unary_expr(Expr *expr, Side side)
             // TODO constness;
             expr->type = expr->type->pointer.base;
             return true;
-        case TOKEN_MINUS:
+        case UNARYOP_NEG:
             if (!analyse_expr(sub_expr, side | RHS)) return false;
             if (!force_cast_to_signed(sub_expr)) return false;
             if (sub_expr->expr_id == EXPR_CONST)
@@ -850,9 +997,9 @@ bool analyse_unary_expr(Expr *expr, Side side)
             }
             expr->type = sub_expr->type;
             return true;
-        case TOKEN_BIT_NOT:
+        case UNARYOP_BITNEG:
             if (!analyse_expr(sub_expr, side | RHS)) return false;
-            switch (sub_expr->type->type_id)
+            switch (type_unfold_non_opaque(sub_expr->type)->type_id)
             {
                 case TYPE_INT:
                 case TYPE_BOOL:
@@ -860,7 +1007,7 @@ bool analyse_unary_expr(Expr *expr, Side side)
                 default:
                     sema_error_at(sub_expr->span,
                                   "Cannot bitwise negate an expression of type '%s'",
-                                  type_to_string(expr->type));
+                                  type_to_string(sub_expr->type));
                     return false;
             }
             if (sub_expr->expr_id == EXPR_CONST)
@@ -870,9 +1017,9 @@ bool analyse_unary_expr(Expr *expr, Side side)
                 expr_replace(expr, sub_expr);
                 return true;
             }
-            expr->type = sub_expr->type;
+            expr->type = type_unfold_non_opaque(sub_expr->type);
             return true;
-        case TOKEN_NOT:
+        case UNARYOP_NOT:
             if (!analyse_expr(sub_expr, side | RHS)) return false;
             switch (sub_expr->type->type_id)
             {
@@ -894,10 +1041,10 @@ bool analyse_unary_expr(Expr *expr, Side side)
             }
             expr->type = type_builtin_bool();
             return true;
-        default:
-            UNREACHABLE
+        case UNARYOP_ERROR:
+            return false;
     }
-
+    UNREACHABLE
 }
 
 bool analyse_expr(Expr *expr, Side side)

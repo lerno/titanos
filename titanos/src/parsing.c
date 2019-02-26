@@ -37,7 +37,15 @@ static inline Decl *new_var_decl(SourceRange start, const char *name, VarDeclKin
 	declaration->var.kind = kind;
 	declaration->var.in_init = false;
 	declaration->is_public = public;
-	declaration->var.qualifier = qualifiers;
+	declaration->var.original_type = type;
+	declaration->type = type;
+	if ((type->qualifier | qualifiers) != type->qualifier)
+	{
+		Type *qualified_type = new_type(TYPE_INVALID, public);
+		*qualified_type = *type;
+		qualified_type->qualifier |= qualifiers;
+		declaration->type = qualified_type;
+	}
 	return declaration;
 }
 static inline bool has_attributes()
@@ -55,7 +63,7 @@ static Ast *stmt_to_compound(Ast *inner_ast)
 	return ast;
 }
 
-static inline bool current_is(token_type type)
+static inline bool current_is(TokenType type)
 {
 	return tok.type == type;
 }
@@ -121,13 +129,13 @@ static void advance(void)
 	}
 }
 
-static inline void advance_and_verify(token_type type)
+static inline void advance_and_verify(TokenType type)
 {
 	assert(current_is(type) && "Not case");
 	advance();
 }
 
-static inline bool try_consume(token_type type)
+static inline bool try_consume(TokenType type)
 {
 	if (current_is(type))
 	{
@@ -137,7 +145,7 @@ static inline bool try_consume(token_type type)
 	return false;
 }
 
-static bool consume(token_type type, const char *message, ...)
+static bool consume(TokenType type, const char *message, ...)
 {
 	if (try_consume(type))
 	{
@@ -152,7 +160,7 @@ static bool consume(token_type type, const char *message, ...)
 }
 
 
-void recover_to(token_type type)
+void recover_to(TokenType type)
 {
 	if (!in_panic_mode()) return;
 	while (!current_is(type))
@@ -380,7 +388,7 @@ static bool optional_add_attributes(Vector **entry)
     return true;
 }
 
-static inline ParseRule *get_rule(token_type type)
+static inline ParseRule *get_rule(TokenType type)
 {
 	return &rules[type];
 }
@@ -477,13 +485,6 @@ static void add_type_specifier(Type *type, TypeQualifier type_specifier)
 	type->qualifier |= type_specifier;
 }
 
-static Type *create_pointer_type(Type *base)
-{
-	Type *pointer = new_type(TYPE_POINTER, base->is_public);
-	pointer->pointer.base = base;
-	return pointer;
-}
-
 /**
  * array_type ::= '[' expression ']'
  *              | '[' ']'
@@ -549,7 +550,7 @@ Type *parse_type(bool accept_qualifiers, bool public)
 				break;
 			case TOKEN_STAR:
 				advance();
-				base = create_pointer_type(base);
+				base = type_new_pointer(base);
 				break;
 			default:
 				if (type_qualifier)
@@ -1776,7 +1777,7 @@ static Expr *parse_binary(Expr *left_side)
 {
 
 	// Remember the operator.
-	token_type operator_type = prev_tok.type;
+	TokenType operator_type = prev_tok.type;
 
 	// There is a possibility that we actually have a type here.
 	if (operator_type == TOKEN_STAR && is_type_expr_after_star(left_side))
@@ -1793,7 +1794,7 @@ static Expr *parse_binary(Expr *left_side)
 
 	binary->binary_expr.left = left_side;
 	binary->binary_expr.right = right_side;
-	binary->binary_expr.operator = operator_type;
+	binary->binary_expr.operator = binop_from_token(operator_type);
 
 	UPDATE_AND_RETURN(binary);
 
@@ -1833,7 +1834,7 @@ static Expr *parse_ternary(Expr *left_side)
 static Expr *parse_binary_right(Expr *left_side)
 {
 	// Remember the operator.
-	token_type operator_type = prev_tok.type;
+	TokenType operator_type = prev_tok.type;
 
 	ParseRule *rule = get_rule(operator_type);
 	Expr *right_side = parse_precedence((Precedence)(rule->precedence));
@@ -1841,7 +1842,7 @@ static Expr *parse_binary_right(Expr *left_side)
 	Expr *binary = expr_new(EXPR_BINARY, left_side->span);
 	binary->binary_expr.left = left_side;
 	binary->binary_expr.right = right_side;
-	binary->binary_expr.operator = operator_type;
+	binary->binary_expr.operator = binop_from_token(operator_type);
 	UPDATE_AND_RETURN(binary);
 
 }
@@ -1851,7 +1852,7 @@ static Expr *parse_unary(Expr *left)
 	assert(!left && "Did not expect a left hand side!");
 
 	Expr *unary = expr_new(EXPR_UNARY, prev_tok.span);
-	unary->unary_expr.operator = prev_tok.type;
+	unary->unary_expr.operator = unaryop_from_token(prev_tok.type);
 	unary->unary_expr.expr = parse_precedence(PREC_UNARY);
 	UPDATE_AND_RETURN(unary);
 }
@@ -1859,7 +1860,7 @@ static Expr *parse_unary(Expr *left)
 static Expr *parse_post_unary(Expr *left)
 {
 	Expr *unary = expr_new(EXPR_POST, left->span);
-	unary->post_expr.operator = prev_tok.type;
+	unary->post_expr.operator = unaryop_from_token(prev_tok.type);
 	unary->post_expr.expr = left;
 	UPDATE_AND_RETURN(unary);
 }
@@ -2002,7 +2003,7 @@ static Ast *parse_condition(void)
 	return cond_stmt;
 }
 
-static void set_parse_rule(token_type type, ParseFn prefix, ParseFn infix, Precedence rule_precedence)
+static void set_parse_rule(TokenType type, ParseFn prefix, ParseFn infix, Precedence rule_precedence)
 {
 	rules[type].prefix = prefix;
 	rules[type].precedence = rule_precedence;

@@ -99,13 +99,11 @@ typedef enum
     TOKEN_ERROR,
     TOKEN_EOF,
 
-} token_type;
+} TokenType;
 
-const char *token_type_to_string(token_type type);
+const char *token_type_to_string(TokenType type);
 
 static_assert(TOKEN_EOF < 128, "Too many different token types");
-
-#define SPLAT_TOK(_tok) (int)((_tok).span.length), (_tok).start
 
 
 typedef struct _SourceLoc
@@ -132,7 +130,7 @@ typedef struct _Token
 {
     const char* start;
     SourceRange span;
-	token_type type : 8;
+	TokenType type : 8;
     union {
         const char *string;
     };

@@ -8,4 +8,4 @@
 //
 
 #include "lexer.h"
-char *token_name(Token *token);
+const char * token_name(Token *token);

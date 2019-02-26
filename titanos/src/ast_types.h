@@ -264,3 +264,4 @@ typedef enum _CondValue
 CondValue ast_cond_value(Ast *cond_stmt);
 
 Ast *ast_compound_stmt_last(Ast *compound_stmt);
+

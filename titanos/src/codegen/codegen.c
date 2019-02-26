@@ -127,21 +127,30 @@ static LLVMTypeRef codegen_convert_type(Type *type)
 {
     assert(!type->llvm_type && "Called even though the type is already set.");
 
-    switch (type->type_id)
+    Type *resolved = type_unfold_redirects(type);
+    if (resolved->llvm_type)
     {
+        return type->llvm_type = resolved->llvm_type;
+    }
+    switch (resolved->type_id)
+    {
+        case TYPE_ALIAS:
+        case TYPE_OPAQUE:
+        case TYPE_RESOLVED:
+            UNREACHABLE
         case TYPE_VOID:
             return type->llvm_type = LLVMVoidType();
         case TYPE_POINTER:
-            return type->llvm_type = LLVMPointerType(llvm_type(type->pointer.base), 0);
+            return type->llvm_type = LLVMPointerType(llvm_type(resolved->pointer.base), 0);
         case TYPE_ENUM:
-            return type->llvm_type = codegen_convert_type(type->decl->enum_decl.type);
+            return type->llvm_type = codegen_convert_type(resolved->decl->enum_decl.type);
         case TYPE_FUNC:
         case TYPE_FUNC_TYPE:
         case TYPE_STRUCT:
         case TYPE_UNION:
-            return type->llvm_type = codegen_convert_decl(type->decl);
+            return type->llvm_type = codegen_convert_decl(resolved->decl);
         case TYPE_ARRAY:
-            return type->llvm_type = LLVMArrayType(llvm_type(type->array.base), type->array.len);
+            return type->llvm_type = LLVMArrayType(llvm_type(resolved->array.base), resolved->array.len);
         case TYPE_NIL:
             return type->llvm_type = LLVMPointerType(LLVMVoidType(), 0);
         case TYPE_INVALID:
@@ -150,7 +159,7 @@ static LLVMTypeRef codegen_convert_type(Type *type)
         case TYPE_CONST_INT:
             FATAL_ERROR("Should never happen");
         default:
-            FATAL_ERROR("Unknown type %d", type->type_id);
+            FATAL_ERROR("Unknown type %d", resolved->type_id);
     }
 }
 
@@ -219,173 +228,146 @@ LLVMValueRef codegen_const_expr(Expr *expr)
     }
 }
 
-LLVMValueRef perform_expr(LLVMValueRef left, LLVMValueRef right, token_type token, bool use_float, bool use_signed)
+LLVMValueRef perform_unary_expr(LLVMValueRef left, UnaryOp op, bool use_float, bool use_signed)
 {
-    switch (token)
+    switch (op)
     {
-        case TOKEN_EQ:
+        case UNARYOP_BITNEG:
+            assert(!use_float);
+            return LLVMBuildNot(active_builder, left, "bit-not");
+        case UNARYOP_NOT:
+            return LLVMBuildXor(active_builder, left, LLVMConstInt(LLVMInt1TypeInContext(active_context), 1, 0), "not");
+        case UNARYOP_DEREF:
+            return LLVMBuildLoad(active_builder, left, "");
+        case UNARYOP_ADDR:
+            break;
+        case UNARYOP_NEG:
+            break;
+        case UNARYOP_INC:break;
+        case UNARYOP_DEC:break;
+        case UNARYOP_ERROR:
+            UNREACHABLE
+    }
+    TODO
+}
+
+LLVMValueRef perform_post_expr(LLVMValueRef left, UnaryOp op, bool use_float, bool use_signed)
+{
+    switch (op)
+    {
+        case UNARYOP_BITNEG:
+        case UNARYOP_NOT:
+        case UNARYOP_DEREF:
+        case UNARYOP_ADDR:
+        case UNARYOP_NEG:
+            // Not valid post
+            UNREACHABLE
+        case UNARYOP_INC:
+            break;
+        case UNARYOP_DEC:
+            break;
+        case UNARYOP_ERROR:
+            UNREACHABLE
+    }
+    TODO
+}
+
+LLVMValueRef perform_binop_expr(LLVMValueRef left, LLVMValueRef right, BinOp op, bool use_float, bool use_signed)
+{
+    switch (op)
+    {
+        case BINOP_ASSIGN:
             return LLVMBuildStore(active_builder, right, left);
-        case TOKEN_PLUS:
+        case BINOP_ADD:
             return use_float
                    ? LLVMBuildFAdd(active_builder, left, right, "addf")
                    : LLVMBuildAdd(active_builder, left, right, "add");
-        case TOKEN_MINUS:
+        case BINOP_SUB:
             return use_float
                    ? LLVMBuildFSub(active_builder, left, right, "subf")
                    : LLVMBuildSub(active_builder, left, right, "sub");
-        case TOKEN_PLUS_ASSIGN:
-            return perform_expr(left, perform_expr(left, right, TOKEN_PLUS, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
-        case TOKEN_BIT_NOT:
-            assert(!use_float);
-            assert(!right && "Cannot have right hand side");
-            return LLVMBuildNot(active_builder, left, "bit-not");
-        case TOKEN_NOT:
-            return LLVMBuildXor(active_builder, left, LLVMConstInt(LLVMInt1TypeInContext(active_context), 1, 0), "not");
-        case TOKEN_PLUSPLUS:
-        case TOKEN_MINUSMINUS:
-            FATAL_ERROR("Should be handled separately");
-        case TOKEN_MINUS_ASSIGN:
-            return perform_expr(left, perform_expr(left, right, TOKEN_MINUS, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
-        case TOKEN_STAR:
-            if (!right)
-            {
-                // Deref
-                TODO;
-            }
+        case BINOP_ADD_ASSIGN:
+            return perform_binop_expr(left, perform_binop_expr(left, right, BINOP_ADD, use_float, use_signed), BINOP_EQ, use_float, use_signed);
+        case BINOP_SUB_ASSIGN:
+            return perform_binop_expr(left, perform_binop_expr(left, right, BINOP_ADD, use_float, use_signed), BINOP_EQ, use_float, use_signed);
+        case BINOP_MULT:
             return use_float
                    ? LLVMBuildFMul(active_builder, left, right, "mulf")
                    : LLVMBuildMul(active_builder, left, right, "mul");
-        case TOKEN_MULT_ASSIGN:
-            return perform_expr(left, perform_expr(left, right, TOKEN_STAR, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
-        case TOKEN_POW:break;
-        case TOKEN_DIV:
+        case BINOP_MULT_ASSIGN:
+            return perform_binop_expr(left, perform_binop_expr(left, right, BINOP_MULT, use_float, use_signed), BINOP_EQ, use_float, use_signed);
+        case BINOP_DIV:
             return use_float
                    ? LLVMBuildFDiv(active_builder, left, right, "divf")
                    : (use_signed ? LLVMBuildSDiv(active_builder, left, right, "sdiv") : LLVMBuildUDiv(active_builder, left, right, "udiv"));
-        case TOKEN_DIV_ASSIGN:
-            return perform_expr(left, perform_expr(left, right, TOKEN_DIV, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
-        case TOKEN_MOD:
+        case BINOP_DIV_ASSIGN:
+            return perform_binop_expr(left, perform_binop_expr(left, right, BINOP_DIV, use_float, use_signed), BINOP_EQ, use_float, use_signed);
+        case BINOP_MOD:
             return use_float
                    ? LLVMBuildFRem(active_builder, left, right, "remf")
                    : (use_signed ? LLVMBuildSRem(active_builder, left, right, "srem") : LLVMBuildURem(active_builder, left, right, "urem"));
-        case TOKEN_MOD_ASSIGN:
-            return perform_expr(left, perform_expr(left, right, TOKEN_MOD, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
-        case TOKEN_NOT_EQUAL:
+        case BINOP_MOD_ASSIGN:
+            return perform_binop_expr(left, perform_binop_expr(left, right, BINOP_MOD, use_float, use_signed), BINOP_EQ, use_float, use_signed);
+        case BINOP_NE:
             return use_float
                    ? LLVMBuildFCmp(active_builder, LLVMRealONE, left, right, "!=")
                    : LLVMBuildICmp(active_builder, LLVMIntNE, left, right, "!=");
-        case TOKEN_EQEQ:
+        case BINOP_EQ:
             return use_float
                    ? LLVMBuildFCmp(active_builder, LLVMRealOEQ, left, right, "eq")
                    : LLVMBuildICmp(active_builder, LLVMIntEQ, left, right, "eq");
-        case TOKEN_GREATER:
+        case BINOP_GT:
             return use_float
                    ? LLVMBuildFCmp(active_builder, LLVMRealOGT, left, right, "gt")
                    : LLVMBuildICmp(active_builder, use_signed ? LLVMIntSGT : LLVMIntUGT, left, right, "gt");
-        case TOKEN_GREATER_EQ:
+        case BINOP_GE:
             return use_float
                    ? LLVMBuildFCmp(active_builder, LLVMRealOGE, left, right, "ge")
                    : LLVMBuildICmp(active_builder, use_signed ? LLVMIntSGE : LLVMIntUGE, left, right, "ge");
-        case TOKEN_RIGHT_SHIFT:
+        case BINOP_SHR:
             assert(!use_float);
             return use_signed ? LLVMBuildAShr(active_builder, left, right, "shr")
                               : LLVMBuildLShr(active_builder, left, right, "shrl");
-        case TOKEN_RIGHT_SHIFT_ASSIGN:
-            return perform_expr(left, perform_expr(left, right, TOKEN_RIGHT_SHIFT, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
-        case TOKEN_LESS:
+        case BINOP_SHR_ASSIGN:
+            return perform_binop_expr(left, perform_binop_expr(left, right, BINOP_SHR, use_float, use_signed), BINOP_EQ, use_float, use_signed);
+        case BINOP_LT:
             return use_float
                    ? LLVMBuildFCmp(active_builder, LLVMRealOLT, left, right, "lt")
                    : LLVMBuildICmp(active_builder, use_signed ? LLVMIntSLT : LLVMIntULT, left, right, "lt");
-        case TOKEN_LESS_EQ:
+        case BINOP_LE:
             return use_float
                    ? LLVMBuildFCmp(active_builder, LLVMRealOLE, left, right, "le")
                    : LLVMBuildICmp(active_builder, use_signed ? LLVMIntSLE : LLVMIntULE, left, right, "le");
-        case TOKEN_LEFT_SHIFT:
+        case BINOP_SHL:
             assert(!use_float);
             return LLVMBuildShl(active_builder, left, right, "shl");
-        case TOKEN_LEFT_SHIFT_ASSIGN:
-            return perform_expr(left, perform_expr(left, right, TOKEN_LEFT_SHIFT, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
-        case TOKEN_AND:break;
-        case TOKEN_AND_ASSIGN:
-            return perform_expr(left, perform_expr(left, right, TOKEN_AND, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
-        case TOKEN_AMP:
+        case BINOP_SHL_ASSIGN:
+            return perform_binop_expr(left, perform_binop_expr(left, right, BINOP_SHL, use_float, use_signed), BINOP_EQ, use_float, use_signed);
+        case BINOP_AND:
+            TODO
+        case BINOP_AND_ASSIGN:
+            return perform_binop_expr(left, perform_binop_expr(left, right, BINOP_AND, use_float, use_signed), BINOP_EQ, use_float, use_signed);
+        case BINOP_BIT_AND:
             assert(!use_float);
             return LLVMBuildAnd(active_builder, left, right, "bit-and");
-        case TOKEN_BIT_AND_ASSIGN:
-            return perform_expr(left, perform_expr(left, right, TOKEN_AMP, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
-        case TOKEN_OR:break;
-        case TOKEN_OR_ASSIGN:
-            return perform_expr(left, perform_expr(left, right, TOKEN_OR, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
-        case TOKEN_BIT_OR:
+        case BINOP_BIT_AND_ASSIGN:
+            return perform_binop_expr(left, perform_binop_expr(left, right, BINOP_BIT_AND, use_float, use_signed), BINOP_EQ, use_float, use_signed);
+        case BINOP_OR:
+            TODO
+        case BINOP_OR_ASSIGN:
+            return perform_binop_expr(left, perform_binop_expr(left, right, BINOP_OR, use_float, use_signed), BINOP_EQ, use_float, use_signed);
+        case BINOP_BIT_OR:
             return LLVMBuildOr(active_builder, left, right, "bit or");
-        case TOKEN_BIT_OR_ASSIGN:
-            return perform_expr(left, perform_expr(left, right, TOKEN_BIT_OR, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
-        case TOKEN_BIT_XOR:
+        case BINOP_BIT_OR_ASSIGN:
+            return perform_binop_expr(left, perform_binop_expr(left, right, BINOP_BIT_OR, use_float, use_signed), BINOP_EQ, use_float, use_signed);
+        case BINOP_BIT_XOR:
             assert(!use_float);
             return LLVMBuildXor(active_builder, left, right, "xor");
-        case TOKEN_BIT_XOR_ASSIGN:
-            return perform_expr(left, perform_expr(left, right, TOKEN_BIT_XOR, use_float, use_signed), TOKEN_EQ, use_float, use_signed);
-        case TOKEN_COLON:
-        case TOKEN_COLON_ASSIGN:
-        case TOKEN_COLCOLON:
-        case TOKEN_DOTDOT:
-        case TOKEN_ELIPSIS:
-        case TOKEN_NO_INIT:
-        case TOKEN_IDENTIFIER:
-        case TOKEN_ARROW:
-        case TOKEN_STRING:
-        case TOKEN_INTEGER:
-        case TOKEN_DOT:
-        case TOKEN_FLOAT:
-        case TOKEN_QUESTION:
-        case TOKEN_ELVIS:
-        case TOKEN_VOID:
-        case TOKEN_ALIAS:
-        case TOKEN_CONST:
-        case TOKEN_VOLATILE:
-        case TOKEN_ELSE:
-        case TOKEN_FALSE:
-        case TOKEN_CONTINUE:
-        case TOKEN_FUNC:
-        case TOKEN_FOR:
-        case TOKEN_IMPORT:
-        case TOKEN_MODULE:
-        case TOKEN_IF:
-        case TOKEN_NIL:
-        case TOKEN_RETURN:
-        case TOKEN_GOTO:
-        case TOKEN_DEFER:
-        case TOKEN_TRUE:
-        case TOKEN_WHILE:
-        case TOKEN_LPAREN:
-        case TOKEN_RPAREN:
-        case TOKEN_LBRACE:
-        case TOKEN_RBRACE:
-        case TOKEN_LBRACKET:
-        case TOKEN_RBRACKET:
-        case TOKEN_HASH:
-        case TOKEN_DOLLAR:
-        case TOKEN_COMMA:
-        case TOKEN_EOS:
-        case TOKEN_CASE:
-        case TOKEN_ASM:
-        case TOKEN_DEFAULT:
-        case TOKEN_CAST:
-        case TOKEN_SWITCH:
-        case TOKEN_UNTIL:
-        case TOKEN_BREAK:
-        case TOKEN_TYPE:
-        case TOKEN_DO:
-        case TOKEN_PUBLIC:
-        case TOKEN_LOCAL:
-        case TOKEN_STRUCT:
-        case TOKEN_UNION:
-        case TOKEN_ENUM:
-        case TOKEN_SIZEOF:
-        case TOKEN_AT:
-        case TOKEN_AS:
-        case TOKEN_ERROR:
-        case TOKEN_EOF:
+        case BINOP_BIT_XOR_ASSIGN:
+            return perform_binop_expr(left, perform_binop_expr(left, right, BINOP_BIT_XOR, use_float, use_signed), BINOP_EQ, use_float, use_signed);
+        case BINOP_ELVIS:
+            TODO
+        case BINOP_ERROR:
             UNREACHABLE
     }
     TODO;
@@ -408,7 +390,7 @@ LLVMValueRef codegen_binary_expr(Expr *expr)
     LLVMValueRef right = codegen_expr(expr->binary_expr.right);
     bool use_float = is_float(expr->binary_expr.left);
     bool use_signed = use_float || is_signed(expr->binary_expr.left);
-    return perform_expr(left, right, expr->binary_expr.operator, use_float, use_signed);
+    return perform_binop_expr(left, right, expr->binary_expr.operator, use_float, use_signed);
 }
 
 LLVMValueRef codegen_unary_expr(Expr *expr)
@@ -416,7 +398,7 @@ LLVMValueRef codegen_unary_expr(Expr *expr)
     assert(expr->expr_id == EXPR_UNARY);
     bool use_float = is_float(expr->unary_expr.expr);
     bool use_signed = use_float || is_signed(expr->unary_expr.expr);
-    return perform_expr(codegen_expr(expr->unary_expr.expr), NULL, expr->unary_expr.operator, use_float, use_signed);
+    return perform_unary_expr(codegen_expr(expr->unary_expr.expr), expr->unary_expr.operator, use_float, use_signed);
 }
 
 LLVMValueRef codegen_post_expr(Expr *expr)
@@ -424,7 +406,7 @@ LLVMValueRef codegen_post_expr(Expr *expr)
     assert(expr->expr_id == EXPR_UNARY);
     bool use_float = is_float(expr->post_expr.expr);
     bool use_signed = use_float || is_signed(expr->post_expr.expr);
-    return perform_expr(NULL, codegen_expr(expr->post_expr.expr), expr->post_expr.operator, use_float, use_signed);
+    return perform_post_expr(codegen_expr(expr->post_expr.expr), expr->post_expr.operator, use_float, use_signed);
 }
 
 LLVMValueRef codegen_cast(Expr *expr)
@@ -433,8 +415,8 @@ LLVMValueRef codegen_cast(Expr *expr)
     LLVMTypeRef type = llvm_type(expr->cast_expr.type);
     LLVMValueRef value = codegen_expr(expr->cast_expr.expr);
 
-    Type *target_type = type_unfold_opaque(expr->cast_expr.type);
-    Type *source_type = type_unfold_opaque(expr->cast_expr.expr->type);
+    Type *target_type = type_unfold_redirects(expr->cast_expr.type);
+    Type *source_type = type_unfold_redirects(expr->cast_expr.expr->type);
     switch (expr->cast_expr.cast_result)
     {
         case CAST_INLINE:
@@ -787,6 +769,7 @@ static void codegen_block(Ast *block)
             case AST_LABEL:
             case AST_DEFER_RELASE:
             case AST_ASM_STMT:
+            case AST_COND_STMT:
                 printf("Not implemented\n");
                 continue;
         }

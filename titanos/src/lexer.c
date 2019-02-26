@@ -35,7 +35,7 @@ typedef struct
 
 Lexer lexer;
 
-const char *token_type_to_string(token_type type)
+const char *token_type_to_string(TokenType type)
 {
     switch (type)
     {
@@ -262,7 +262,7 @@ static inline bool is_alpha(char c)
     return is_alphabet(c) || is_digit_or_underscore(c);
 }
 
-static inline token_type check_keyword(const char *keyword, token_type type)
+static inline TokenType check_keyword(const char *keyword, TokenType type)
 {
     size_t len = lexer.current - lexer.start;
     if (memcmp(lexer.start + 1, keyword + 1, len - 1) == 0)
@@ -272,8 +272,8 @@ static inline token_type check_keyword(const char *keyword, token_type type)
     return TOKEN_IDENTIFIER;
 }
 
-static inline token_type check_two_keywords(const char *keyword_1, const char *keyword_2, int diff_pos,
-        token_type type_1, token_type type_2)
+static inline TokenType check_two_keywords(const char *keyword_1, const char *keyword_2, int diff_pos,
+        TokenType type_1, TokenType type_2)
 {
     size_t len = lexer.current - lexer.start;
     if (lexer.start[diff_pos] == keyword_1[diff_pos])
@@ -291,7 +291,7 @@ static inline token_type check_two_keywords(const char *keyword_1, const char *k
 
 // Yes this is an ugly hand written keyword identifier. It should be benchmarked against
 // an table based state machine.
-static inline token_type indentifier_type()
+static inline TokenType indentifier_type()
 {
     int len = (int) (lexer.current - lexer.start);
 	char current_value = lexer.start[0];
@@ -408,7 +408,7 @@ Token error_token(const char *message)
     return token;
 }
 
-static Token make_token(token_type type)
+static Token make_token(TokenType type)
 {
     size_t token_size = lexer.current - lexer.start;
     if (token_size > TOKEN_MAX_LENGTH) return error_token("Token exceeding max length");
@@ -521,7 +521,7 @@ static inline Token scan_ident()
     {
         advance();
     }
-    token_type type = indentifier_type();
+    TokenType type = indentifier_type();
     Token token = make_token(type);
     if (type == TOKEN_IDENTIFIER)
     {

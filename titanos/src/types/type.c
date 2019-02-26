@@ -13,6 +13,48 @@
 #include "diagnostics.h"
 
 
+
+Type *type_unfold_redirects(Type *type)
+{
+    while (1)
+    {
+        switch (type->type_id)
+        {
+            case TYPE_RESOLVED:
+                type = type->resolved;
+                continue;
+            case TYPE_ALIAS:
+                type = type->alias;
+                continue;
+            case TYPE_OPAQUE:
+                type = type->opaque;
+                continue;
+            default:
+                return type;
+
+        }
+    }
+}
+
+Type *type_unfold_non_opaque(Type *type)
+{
+    while (1)
+    {
+        switch (type->type_id)
+        {
+            case TYPE_RESOLVED:
+                type = type->resolved;
+                continue;
+            case TYPE_ALIAS:
+                type = type->alias;
+                continue;
+            default:
+                return type;
+
+        }
+    }
+}
+
 Type *new_unresolved_type(Expr *expr, bool public)
 {
     assert(expr->expr_id == EXPR_TYPE || expr->expr_id == EXPR_IDENTIFIER || expr->expr_id == EXPR_ACCESS);
@@ -20,6 +62,7 @@ Type *new_unresolved_type(Expr *expr, bool public)
     type->unresolved.type_expr = expr;
     return type;
 }
+
 
 Type *new_type(TypeId type_id, bool public)
 {
@@ -31,6 +74,21 @@ Type *new_type(TypeId type_id, bool public)
 
     return type;
 }
+
+Type *type_new_pointer(Type *base)
+{
+    Type *pointer = new_type(TYPE_POINTER, base->is_public);
+    pointer->pointer.base = base;
+    return pointer;
+}
+
+Type *type_new_array(Type *base)
+{
+    Type *array = new_type(TYPE_ARRAY, base->is_public);
+    array->array.base = base;
+    return array;
+}
+
 
 Type *type_to_type(Type *type)
 {
@@ -68,6 +126,7 @@ Type *type_compint()
     static Type type = { .type_id = TYPE_CONST_INT, .is_public = true };
     return &type;
 }
+
 Type *type_compfloat()
 {
     static Type type = { .type_id = TYPE_CONST_FLOAT, .is_public = true };
@@ -76,17 +135,20 @@ Type *type_compfloat()
 
 bool type_is_int(Type *type)
 {
+    type = type_unfold_redirects(type);
     return type->type_id == TYPE_CONST_INT || type->type_id == TYPE_INT;
 }
 
 bool type_is_signed(Type *type)
 {
+    type = type_unfold_redirects(type);
     if (type->type_id == TYPE_CONST_INT) return true;
     return type->type_id == TYPE_INT && type->integer.is_signed;
 }
 
 uint64_t type_size(Type *type)
 {
+    type = type_unfold_redirects(type);
     switch (type->type_id)
     {
         case TYPE_INVALID:
@@ -111,8 +173,6 @@ uint64_t type_size(Type *type)
         case TYPE_ARRAY:
             // TODO check
             return type_size(type->array.base) * (type->array.is_empty ? 1 : type->array.len);
-        case TYPE_OPAQUE:
-            return type_size(type->opaque.base);
         case TYPE_UNRESOLVED:
             FATAL_ERROR("Should never happen");
         case TYPE_TYPEVAL:
@@ -127,6 +187,10 @@ uint64_t type_size(Type *type)
             return 16; // TODO
         case TYPE_CONST_INT:
             return 8; // TODO
+        case TYPE_RESOLVED:
+        case TYPE_OPAQUE:
+        case TYPE_ALIAS:
+            UNREACHABLE
     }
     UNREACHABLE
 }
@@ -259,15 +323,6 @@ bool decl_type_is_same(Decl *decl1, Decl *decl2)
     return false;
 }
 
-Type *type_unfold_opaque(Type *type)
-{
-    while (type->type_id == TYPE_OPAQUE)
-    {
-        type = type->opaque.base;
-    }
-    return type;
-}
-
 void type_copy(Type **dst, Type *source)
 {
     TypeQualifier qualifier = (*dst)->qualifier;
@@ -300,8 +355,8 @@ bool type_may_convert_to_bool(Type *type)
 
 bool type_is_same(Type *type1, Type *type2)
 {
-    type1 = type_unfold_opaque(type1);
-    type2 = type_unfold_opaque(type2);
+    type1 = type_unfold_redirects(type1);
+    type2 = type_unfold_redirects(type2);
     if (type1 == type2) return true;
     if (type1->type_id != type2->type_id) return false;
     switch (type1->type_id)
@@ -332,6 +387,8 @@ bool type_is_same(Type *type1, Type *type2)
         case TYPE_FUNC:
             return decl_type_is_same(type1->decl, type2->decl);
         case TYPE_OPAQUE:
+        case TYPE_ALIAS:
+        case TYPE_RESOLVED:
             UNREACHABLE
         case TYPE_UNRESOLVED:
             FATAL_ERROR("Should be resolved at this point in time");
@@ -379,7 +436,7 @@ static inline const char *char_for_type(Type *type)
         case TYPE_STRING:
             return "string";
         case TYPE_OPAQUE:
-            return get_embedded_type_name("opaque", type->opaque.base);
+            return get_embedded_type_name("opaque", type->opaque);
         case TYPE_POINTER:
             // const, restrict
             return get_embedded_type_name("ptr", type->pointer.base);
@@ -415,6 +472,10 @@ static inline const char *char_for_type(Type *type)
             return "const_float";
         case TYPE_CONST_INT:
             return "const_int";
+        case TYPE_ALIAS:
+            return get_embedded_type_name("alias", type->alias);
+        case TYPE_RESOLVED:
+            return type_to_string(type->resolved);
     }
     UNREACHABLE
 }
@@ -422,7 +483,7 @@ static inline const char *char_for_type(Type *type)
 const char *type_to_string(Type *type)
 {
     if (!type) return "NULL";
-    if (!type->lazy_name) return type->lazy_name;
+    if (type->lazy_name) return type->lazy_name;
     return type->lazy_name = char_for_type(type);
 }
 

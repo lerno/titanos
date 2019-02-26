@@ -38,7 +38,7 @@ bool analyse_decl(Decl *decl)
     assert(decl->var.kind == VARDECL_LOCAL);
 
     // Resolve the type as local (non public)
-    bool success = resolve_type(&decl->type, false);
+    bool success = resolve_type(decl->type, false);
 
     if (success && !active_analyser->parser->is_interface)
     {
@@ -87,7 +87,7 @@ bool analyse_decl(Decl *decl)
         decl->var.in_init = false;
     }
 
-    if ((decl->var.qualifier & TYPE_QUALIFIER_CONST) && !decl->var.init_expr)
+    if (type_is_const(decl->type) && !decl->var.init_expr)
     {
         sema_error_at(decl->span, "Declaration of constant '%s' is missing initial value", decl->name);
         success = false;

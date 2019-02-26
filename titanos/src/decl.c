@@ -95,9 +95,9 @@ void decl_print(Decl *decl, unsigned current_indent)
             return;
         case DECL_VAR:
             printf("VAR ");
-            if (decl->var.qualifier & TYPE_QUALIFIER_CONST) printf("const ");
-            if (decl->var.qualifier & TYPE_QUALIFIER_VOLATILE) printf("volatile ");
-            if (decl->var.qualifier & TYPE_QUALIFIER_ALIAS) printf("alias ");
+            if (type_is_const(decl->type)) printf("const ");
+            if (decl->type->qualifier & TYPE_QUALIFIER_VOLATILE) printf("volatile ");
+            if (decl->type->qualifier & TYPE_QUALIFIER_ALIAS) printf("alias ");
             decl_print_name_visibility(decl);
             printf("\n");
 

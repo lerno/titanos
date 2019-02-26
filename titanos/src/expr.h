@@ -15,6 +15,55 @@ typedef struct _Type Type;
 typedef struct _Expr Expr;
 typedef struct _Decl Decl;
 
+typedef enum _BinOp
+{
+    BINOP_ERROR,
+    BINOP_ASSIGN,
+    BINOP_MULT,
+    BINOP_MULT_ASSIGN,
+    BINOP_ADD,
+    BINOP_ADD_ASSIGN,
+    BINOP_SUB,
+    BINOP_SUB_ASSIGN,
+    BINOP_DIV,
+    BINOP_DIV_ASSIGN,
+    BINOP_MOD,
+    BINOP_MOD_ASSIGN,
+    BINOP_AND,
+    BINOP_AND_ASSIGN,
+    BINOP_OR,
+    BINOP_OR_ASSIGN,
+    BINOP_BIT_AND,
+    BINOP_BIT_AND_ASSIGN,
+    BINOP_BIT_OR,
+    BINOP_BIT_OR_ASSIGN,
+    BINOP_BIT_XOR,
+    BINOP_BIT_XOR_ASSIGN,
+    BINOP_NE,
+    BINOP_EQ,
+    BINOP_GE,
+    BINOP_GT,
+    BINOP_LE,
+    BINOP_LT,
+    BINOP_SHR,
+    BINOP_SHR_ASSIGN,
+    BINOP_SHL,
+    BINOP_SHL_ASSIGN,
+    BINOP_ELVIS
+} BinOp;
+
+typedef enum _UnaryOp
+{
+    UNARYOP_ERROR,
+    UNARYOP_DEREF,
+    UNARYOP_ADDR,
+    UNARYOP_NEG,
+    UNARYOP_BITNEG,
+    UNARYOP_NOT,
+    UNARYOP_INC,
+    UNARYOP_DEC,
+} UnaryOp;
+
 typedef enum _ExprTypeId
 {
     EXPR_TYPE,
@@ -98,25 +147,25 @@ typedef struct _ExprBinary
 {
     Expr *left;
     Expr *right;
-    token_type operator;
+    BinOp operator;
 } ExprBinary;
 
 typedef struct _ExprDesignatedInitializer
 {
-    Token identifer;
+    const char *identifer;
     Expr *expr;
 } ExprDesignatedInitializer;
 
 typedef struct _ExprUnary
 {
     Expr* expr;
-    token_type operator;
+    UnaryOp operator;
 } ExprUnary;
 
 typedef struct _ExprPost
 {
     Expr *expr;
-    token_type operator;
+    UnaryOp operator;
 } ExprPost;
 
 
@@ -178,3 +227,7 @@ Expr *expr_copy(Expr *expr);
 Expr *expr_new_type_expr(Type *type, SourceRange span);
 void expr_replace(Expr *target, Expr *source);
 bool expr_is_const_false(Expr *cond);
+BinOp binop_from_token(TokenType type);
+TokenType binop_to_token(BinOp type);
+UnaryOp unaryop_from_token(TokenType type);
+TokenType unaryop_to_token(UnaryOp type);

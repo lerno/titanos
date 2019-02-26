@@ -10,7 +10,7 @@
 #include <string.h>
 #include <stdio.h>
 
-char *token_name(Token *token)
+const char * token_name(Token *token)
 {
     static char buffer[65536];
     switch (token->type)
@@ -126,9 +126,10 @@ char *token_name(Token *token)
         case TOKEN_IDENTIFIER:
         case TOKEN_INTEGER:
         case TOKEN_FLOAT:
-        case TOKEN_STRING:
             strlcpy(buffer, token->start, token->span.length + 1);
             return buffer;
+        case TOKEN_STRING:
+            return token->string;
         case TOKEN_ELSE:
             return " else ";
         case TOKEN_FALSE:

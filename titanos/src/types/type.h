@@ -41,11 +41,13 @@ typedef enum _TypeId
 {
     TYPE_INVALID,
     TYPE_UNRESOLVED,
+    TYPE_RESOLVED,
     TYPE_VOID,
     TYPE_STRING,
     TYPE_OPAQUE,
     TYPE_POINTER,
     TYPE_ARRAY,
+    TYPE_ALIAS,
     TYPE_TYPEVAL,
     TYPE_ENUM,
     TYPE_FUNC,
@@ -68,8 +70,6 @@ typedef struct _Decl Decl;
 
 typedef struct _TypePointer
 {
-    bool is_const : 1;
-    bool is_volatile : 1;
     Type *base;
 } TypePointer;
 
@@ -111,25 +111,26 @@ typedef struct _Type
     bool is_used_public : 1;
     TypeQualifier qualifier : 4;
     LLVMTypeRef llvm_type;
+    Type *canonical;
     struct _Module *module;
     const char *lazy_name;
     union
     {
         TypePointer pointer;
         TypeArray array;
-        TypeOpaque opaque;
+        Type *alias;
+        Type *opaque;
         TypeUnresolved unresolved;
         Type *type_of_type;
         Decl *decl;
         TypeInt integer;
         uint16_t float_bits;
-
+        Type *resolved;
     };
 } Type;
 
 Type *new_unresolved_type(Expr *expr, bool public);
 Type *new_type(TypeId type_id, bool public);
-
 void type_print_sub(const char *header, unsigned int current_indent, Type *type);
 Type *void_type(void);
 Type *type_nil(void);
@@ -137,13 +138,16 @@ Type *type_string(void);
 Type *type_invalid(void);
 Type *type_compint(void);
 Type *type_compfloat(void);
+Type *type_new_pointer(Type *base);
+Type *type_new_array(Type *base);
 Type *type_to_type(Type *type);
 bool type_is_int(Type *type);
 bool type_is_signed(Type *type);
 uint64_t type_size(Type *type);
 bool type_is_same(Type *type1, Type *type2);
 const char *type_to_string(Type *type);
-Type *type_unfold_opaque(Type *type);
+Type *type_unfold_redirects(Type *type);
+Type *type_unfold_non_opaque(Type *type);
 bool type_may_convert_to_bool(Type *type);
 void type_copy(Type **dest, Type *source);
 
@@ -154,3 +158,7 @@ void type_copy(Type **dest, Type *source);
  * @return true if first should be ordered first, false otherwise
  */
 bool type_order(Type *first, Type *second);
+static inline bool type_is_const(Type *type)
+{
+    return type->qualifier & TYPE_QUALIFIER_CONST;
+}
