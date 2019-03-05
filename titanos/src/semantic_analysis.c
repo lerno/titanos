@@ -431,6 +431,23 @@ static inline void add_symbols()
             type->is_exported = true;
         }
     }
+
+    // Then macros
+    for (unsigned i = 0; i < active_analyser->parser->macros->size; i++)
+    {
+        Decl *type = active_analyser->parser->macros->entries[i];
+
+        Decl *old = module_add_symbol(active_analyser->module, type->name, type);
+        if (old)
+        {
+            sema_error_at(type->span, "Macro '%s' redefines identifier", type->name);
+            prev_at(old->span, "The old definition was here");
+        }
+        if (type->is_public && active_analyser->module->is_exported)
+        {
+            type->is_exported = true;
+        }
+    }
 }
 
 static void analyse_variables()
@@ -451,6 +468,7 @@ static inline void init_analyser(Analyser *analyser, Module *module, STable *mod
     vector_init(&analyser->labels, 16);
     vector_init(&analyser->gotos, 16);
     vector_init(&analyser->defers, 16);
+    analyser->call_stack_current = 0;
 }
 
 

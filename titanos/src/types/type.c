@@ -36,6 +36,13 @@ Type *type_unfold_redirects(Type *type)
     }
 }
 
+Type *type_remove_qualifier(Type *type)
+{
+    // TODO
+    if (!type->qualifier) return type;
+    return type;
+}
+
 Type *type_unfold_non_opaque(Type *type)
 {
     while (1)

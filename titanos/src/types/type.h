@@ -150,6 +150,7 @@ Type *type_unfold_redirects(Type *type);
 Type *type_unfold_non_opaque(Type *type);
 bool type_may_convert_to_bool(Type *type);
 void type_copy(Type **dest, Type *source);
+Type *type_remove_qualifier(Type *type);
 
 /**
  * Return types in conversion order.

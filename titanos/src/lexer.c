@@ -233,6 +233,8 @@ const char *token_type_to_string(TokenType type)
             return "cast";
         case TOKEN_SIZEOF:
             return "sizeof";
+        case TOKEN_MACRO:
+            return "macro";
     }
     return "***TODO***";
 }
@@ -334,6 +336,8 @@ static inline TokenType indentifier_type()
             return check_keyword("import", TOKEN_IMPORT);
         case HASH('l', 5):
             return check_keyword("local", TOKEN_LOCAL);
+        case HASH('m', 5):
+            return check_keyword("macro", TOKEN_MACRO);
         case HASH('m', 6):
             return check_keyword("module", TOKEN_MODULE);
         case HASH('n', 3):

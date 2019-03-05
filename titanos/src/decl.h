@@ -23,7 +23,9 @@ typedef enum _DeclType
     DECL_FUNC_TYPE,
     DECL_ARRAY_VALUE,
     DECL_IMPORT,
-    DECL_LABEL
+    DECL_LABEL,
+    DECL_MACRO,
+    DECL_MACRO_PARAM
 } DeclType;
 
 
@@ -44,6 +46,12 @@ typedef struct _VarDecl
     Expr *init_expr;
     LLVMValueRef llvm_ref;
 } VarDecl;
+
+typedef struct _MacroParamDecl
+{
+    bool is_ref : 1;
+    Expr *init_expr;
+} MacroParmDecl;
 
 typedef struct _ArrayValueDecl
 {
@@ -92,6 +100,14 @@ typedef struct _FuncDecl
     Ast *body;
     LLVMValueRef llvm_function_proto;
 } FuncDecl;
+
+typedef struct _MacroDecl
+{
+    bool variadic : 1;
+    const char *full_name;
+    Vector* args; // VarDecl[]
+    Ast *body;
+} MacroDecl;
 
 typedef struct _FunTypeDecl
 {
@@ -143,9 +159,11 @@ typedef struct _Decl
         EnumDecl enum_decl;
         EnumConstantDecl enum_constant;
         FuncDecl func_decl;
+        MacroDecl macro_decl;
         FuncTypeDecl func_type;
         ImportDecl import;
         ArrayDecl array_decl;
+        MacroParmDecl macro_param;
     };
 } Decl;
 

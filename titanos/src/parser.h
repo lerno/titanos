@@ -18,6 +18,7 @@ typedef struct _Parser
 	Vector *types; // Decl *
 	Vector *variables;
 	Vector *functions;
+	Vector *macros;
 	Vector *enum_values;
 	Vector *array_values; // Remember to add the module to these!
 	const char *filename;

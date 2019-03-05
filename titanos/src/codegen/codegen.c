@@ -375,12 +375,28 @@ LLVMValueRef perform_binop_expr(LLVMValueRef left, LLVMValueRef right, BinOp op,
 
 static inline bool is_float(Expr *expr)
 {
-    return expr->type->type_id == TYPE_FLOAT || expr->type->type_id == TYPE_CONST_FLOAT;
+    switch (type_unfold_redirects(expr->type)->type_id)
+    {
+        case TYPE_FLOAT:
+        case TYPE_CONST_FLOAT:
+            return true;
+        default:
+            return false;
+    }
 }
 
 static inline bool is_signed(Expr *expr)
 {
-    return expr->type->type_id == TYPE_INT || expr->type->type_id == TYPE_CONST_INT;
+    Type *type = type_unfold_redirects(expr->type);
+    switch (type->type_id)
+    {
+        case TYPE_INT:
+            return type->integer.is_signed;
+        case TYPE_CONST_INT:
+            return true;
+        default:
+            return false;
+    }
 }
 
 LLVMValueRef codegen_binary_expr(Expr *expr)
@@ -516,6 +532,10 @@ static LLVMValueRef codegen_cond(Ast *ast)
 
 }
 
+static LLVMValueRef codegen_call(Expr *expr)
+{
+
+}
 static LLVMValueRef codegen_expr(Expr *expr)
 {
     switch (expr->expr_id)
@@ -539,7 +559,8 @@ static LLVMValueRef codegen_expr(Expr *expr)
             FATAL_ERROR("Sizeof should always be const evaluated");
         case EXPR_CAST:
             return codegen_cast(expr);
-        case EXPR_CALL:break;
+        case EXPR_CALL:
+            return codegen_call(expr);
         case EXPR_SUBSCRIPT:break;
         case EXPR_ACCESS:break;
         case EXPR_STRUCT_INIT_VALUES:break;
@@ -593,7 +614,7 @@ static inline void codegen_if(Ast *stmt)
 
     LLVMBasicBlockRef post_block = NULL;
 
-    if (stmt->exit != EXIT_NONE)
+    if (stmt->exit == EXIT_NONE)
     {
         post_block = codegen_insert_block("if_post");
     }
@@ -605,7 +626,7 @@ static inline void codegen_if(Ast *stmt)
 
     codegen_block(stmt->if_stmt.then_body);
 
-    if (stmt->if_stmt.then_body->exit != EXIT_NONE)
+    if (stmt->if_stmt.then_body->exit == EXIT_NONE)
     {
         LLVMBuildBr(active_builder, post_block);
     }
@@ -616,12 +637,12 @@ static inline void codegen_if(Ast *stmt)
         LLVMMoveBasicBlockAfter(else_block, LLVMGetInsertBlock(active_builder));
         LLVMPositionBuilderAtEnd(active_builder, else_block);
         codegen_block(stmt->if_stmt.else_body);
-        if (stmt->if_stmt.else_body->exit != EXIT_NONE)
+        if (stmt->if_stmt.else_body->exit == EXIT_NONE)
         {
             LLVMBuildBr(active_builder, post_block);
         }
     }
-    if (stmt->exit != EXIT_NONE)
+    if (stmt->exit == EXIT_NONE)
     {
         // Continue in the post block.
         LLVMMoveBasicBlockAfter(post_block, LLVMGetInsertBlock(active_builder));
@@ -861,6 +882,7 @@ void codegen(const char *filename, bool single_module, Vector *modules)
         }
     }
 
+    Decl *last_fun_test = NULL;
     for (unsigned m = 0; m < modules->size; m++)
     {
         Module *module = modules->entries[m];
@@ -870,6 +892,7 @@ void codegen(const char *filename, bool single_module, Vector *modules)
             for (unsigned i = 0; i < parser->functions->size; i++)
             {
                 Decl *function = parser->functions->entries[i];
+                last_fun_test = function;
                 codegen_function(function);
             }
         }
@@ -897,5 +920,27 @@ void codegen(const char *filename, bool single_module, Vector *modules)
     LLVMDisposePassManager(passmgr);
 
     LLVMDumpModule(llvm_module);
+
+    LLVMExecutionEngineRef engine;
+    LLVMLinkInInterpreter();
+
+    LLVMInitializeNativeTarget();
+
+
+    error = NULL;
+    if (LLVMCreateInterpreterForModule(&engine, llvm_module, &error) != 0) {
+        fprintf(stderr, "failed to create execution engine\n");
+        abort();
+    }
+    if (error) {
+        fprintf(stderr, "error: %s\n", error);
+        LLVMDisposeMessage(error);
+        exit(EXIT_FAILURE);
+    }
+
+    LLVMRunFunctionAsMain(engine, last_fun_test->func_decl.llvm_function_proto, 0, NULL, NULL);
+
+
+    LLVMDisposeExecutionEngine(engine);
 }
 

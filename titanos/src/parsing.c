@@ -707,6 +707,102 @@ static inline Decl *parse_func_decl(bool public, bool type_only)
 	UPDATE_AND_RETURN(decl);
 }
 
+/**
+ * macro_argument_list ::= '(' macro_arguments ')'
+ *                       | '(' macro_arguments ',' '...' ')'
+ *                       | '(' '...' ')'
+ *
+ * macro_arguments     ::= macro_argument (',' macro_argument)*
+ *
+ * macro_argument      ::= '&' IDENTIFIER
+ *                       | IDENTIFIER
+ *
+ * @param macro_decl
+ * @return true if parsing succeeded
+ */
+static inline bool parse_macro_argument_list(MacroDecl *macro_decl)
+{
+    if (!consume(TOKEN_LPAREN, "Expected '('")) return NULL;
+
+    if (try_consume(TOKEN_RPAREN))
+    {
+        macro_decl->args = new_vector(0);
+        macro_decl->variadic = false;
+        return true;
+    }
+    Vector *args = new_vector(6);
+    macro_decl->variadic = false;
+    bool had_defaults = false;
+    while (true)
+    {
+        if (try_consume(TOKEN_ELIPSIS))
+        {
+        	if (had_defaults)
+			{
+        		sema_error_at(prev_tok.span, "Variadic parameters not accepted after default params");
+			}
+            macro_decl->variadic = true;
+        }
+        else
+        {
+            bool is_ref = try_consume(TOKEN_AMP);
+            SourceRange start = prev_tok.span;
+            if (!consume(TOKEN_IDENTIFIER, "Expected a parameter name")) return false;
+
+            Decl *decl = decl_new(DECL_MACRO_PARAM, start, prev_tok.string, false);
+            decl->macro_param.is_ref = is_ref;
+            UPDATE(decl);
+            if (try_consume(TOKEN_EQ))
+			{
+            	Expr *expr = parse_expression();
+            	if (!expr) return false;
+            	decl->macro_param.init_expr = expr;
+            	had_defaults = true;
+			}
+            else
+			{
+            	if (had_defaults)
+				{
+            		sema_error_at(decl->span, "Non-default argument after default arg");
+            		had_defaults = false;
+				}
+			}
+            if (decl->var.init_expr)
+            {
+                had_defaults = true;
+            }
+            vector_add(args, decl);
+        }
+        if (!try_consume(TOKEN_COMMA)) break;
+        if (macro_decl->variadic)
+        {
+            error_at_current("Variadic parameter followed by arguments");
+            return false;
+        }
+    }
+    macro_decl->args = args;
+    if (!consume(TOKEN_RPAREN, "Expected ')'")) return false;
+    return true;
+}
+/**
+ * macro_decl ::= IDENTIFIER macro_argument_list
+ * @param public is a public macro
+ * @return Decl* or NULL if parsing fails.
+ */
+static inline Decl *parse_macro_decl(bool public)
+{
+    Token start = tok;
+    advance_and_verify(TOKEN_MACRO);
+
+    if (!consume(TOKEN_IDENTIFIER, "Expected macr name but got '%s'", tok.string)) return NULL;
+
+    Decl *decl = decl_new(DECL_MACRO, start.span, prev_tok.string, public);
+
+    if (!parse_macro_argument_list(&decl->macro_decl)) return NULL;
+
+    UPDATE_AND_RETURN(decl);
+}
+
 static Ast *parse_compound_stmt()
 {
     CONSUME_START_BRACE_OR_EXIT;
@@ -1595,6 +1691,23 @@ static Decl *parse_type_definition(bool public)
 }
 
 /**
+ * macro_definition ::= macro_type compund_statement
+ *
+ * @param public is the macro is public
+ * @return Decl *with the macro defintion or NULL if parsing fails.
+ */
+static Decl *parse_macro_definition(bool public)
+{
+	Decl *decl = parse_macro_decl(public);
+	if (!decl) return NULL;
+
+	Ast *body = parse_compound_stmt();
+	if (!body) return NULL;
+	decl->macro_decl.body = body;
+
+	UPDATE_AND_RETURN(decl);
+}
+/**
  * func_definition ::= function_type compund_statement
  *
  * @param public is the function is public
@@ -1694,6 +1807,7 @@ Decl *parse_array_entry()
  *                  | public[opt] type_definition     -> [public] type IDENTIFIER ...
  *                  | public[opt] function            -> [public] func ...
  *                  | public[opt] var_definition      -> [public] type_qualifier IDENTIFIER
+ *                  | public[opt] macro               -> [public] macro ...
  */
 static void parse_top_level()
 {
@@ -1727,6 +1841,10 @@ static void parse_top_level()
                 decl = parse_func_definition(public);
                 if (decl) vector_add(current_parser->functions, decl);
 				break;
+		    case TOKEN_MACRO:
+		        decl = parse_macro_definition(public);
+		        if (decl) vector_add(current_parser->macros, decl);
+                break;
 			default:
                 decl = parse_var_definition(public);
                 if (decl) vector_add(current_parser->variables, decl);

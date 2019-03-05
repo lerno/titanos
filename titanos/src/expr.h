@@ -115,6 +115,7 @@ typedef struct _ExprIdentifier
 
 typedef struct _ExprCall
 {
+    bool is_struct_function;
     Expr *function;
     Vector *parameters;
 } ExprCall;

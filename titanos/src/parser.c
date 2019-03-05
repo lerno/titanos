@@ -20,6 +20,7 @@ void init_parser(Parser *parser, const char *filename, bool is_interface)
 	parser->enum_values = new_vector(32);
 	parser->variables = new_vector(8);
 	parser->functions = new_vector(8);
+	parser->macros = new_vector(8);
 	parser->filename = filename;
 	parser->array_values = new_vector(32);
 }

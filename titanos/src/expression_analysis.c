@@ -208,69 +208,103 @@ bool is_real_arithmetics_type(Type *type)
     }
 }
 
+bool default_function_array_conversion(Expr *expr)
+{
+    // Or func type??
+    if (expr->type->type_id == TYPE_FUNC)
+    {
+        return insert_implicit_cast_if_needed(expr, type_new_pointer(expr->type));
+    }
+    if (expr->type->type_id == TYPE_ARRAY)
+    {
+        return insert_implicit_cast_if_needed(expr, type_new_pointer(expr->type->array.base));
+    }
+    return expr;
+}
+
+bool check_null_deref(Expr *expr)
+{
+    if (expr->expr_id != EXPR_UNARY) return true;
+    if (expr->unary_expr.operator != UNARYOP_DEREF) return true;
+    if (expr->unary_expr.expr->expr_id != EXPR_CONST) return true;
+    if (expr->unary_expr.expr->const_expr.value.type == VALUE_TYPE_NIL)
+    {
+        sema_error_at(expr->span, "Cannot deref nil type");
+        return false;
+    }
+    return true;
+}
+
+bool default_lvalue_conversion(Expr *expr)
+{
+    if (!check_null_deref(expr)) return false;
+
+    if (expr->type->type_id == TYPE_VOID) return true;
+
+    if (expr->type->qualifier)
+    {
+        expr->type = type_remove_qualifier(expr->type);
+    }
+
+    // add lvalue->rvalue cast
+
+    //646   ExprResult Res = ImplicitCastExpr::Create(Context, T, CK_LValueToRValue, E,
+
+    return true;
+}
+
+bool default_function_array_lvalue_conversion(Expr *expr)
+{
+    if (!default_function_array_conversion(expr)) return false;
+    return default_lvalue_conversion(expr);
+}
+
 static bool perform_unary_conversions(Expr *expr)
 {
-    /*
-     *  ExprResult Sema::UsualUnaryConversions(Expr *E) {
-  696   // First, convert to an r-value.
-  697   ExprResult Res = DefaultFunctionArrayLvalueConversion(E);
-  698   if (Res.isInvalid())
-  699     return ExprError();
-  700   E = Res.get();
-  701
-  702   QualType Ty = E->getType();
-  703   assert(!Ty.isNull() && "UsualUnaryConversions - missing type");
-  704
-  705   // Half FP have to be promoted to float unless it is natively supported
-  706   if (Ty->isHalfType() && !getLangOpts().NativeHalfType)
-  707     return ImpCastExprToType(Res.get(), Context.FloatTy, CK_FloatingCast);
-  708
-  709   // Try to perform integral promotions if the object has a theoretically
-  710   // promotable type.
-  711   if (Ty->isIntegralOrUnscopedEnumerationType()) {
-  712     // C99 6.3.1.1p2:
-  713     //
-  714     //   The following may be used in an expression wherever an int or
-  715     //   unsigned int may be used:
-  716     //     - an object or expression with an integer type whose integer
-  717     //       conversion rank is less than or equal to the rank of int
-  718     //       and unsigned int.
-  719     //     - A bit-field of type _Bool, int, signed int, or unsigned int.
-  720     //
-  721     //   If an int can represent all values of the original type, the
-  722     //   value is converted to an int; otherwise, it is converted to an
-  723     //   unsigned int. These are called the integer promotions. All
-  724     //   other types are unchanged by the integer promotions.
-  725
-  726     QualType PTy = Context.isPromotableBitField(E);
-  727     if (!PTy.isNull()) {
-  728       E = ImpCastExprToType(E, PTy, CK_IntegralCast).get();
-  729       return E;
-  730     }
-  731     if (Ty->isPromotableIntegerType()) {
-  732       QualType PT = Context.getPromotedIntegerType(Ty);
-  733       E = ImpCastExprToType(E, PT, CK_IntegralCast).get();
-  734       return E;
-  735     }
-  736   }
-  737   return E;
-  738 }
-  739
-     */
-    return false;
+    if (!default_lvalue_conversion(expr)) return false;
+    Type *type = expr->type;
+    switch (type->type_id)
+    {
+        case TYPE_INT:
+            // TODO handle bitfield
+            break;
+        case TYPE_ENUM:
+            expr->type = type->decl->enum_decl.type;
+            break;
+        default:
+            // Do nothing.
+            break;
+    }
+
+    return true;
 }
 static bool perform_arithmetic_conversions(Expr *LHS, Expr *RHS, bool is_compile_assign)
 {
-    if (!is_compile_assign)
-    {
-        if (!perform_unary_conversions(LHS)) return false;
-    }
+    if (!is_compile_assign && !perform_unary_conversions(LHS)) return false;
     if (!perform_unary_conversions(RHS)) return false;
-    Type *left = LHS->type;
-    Type *right = RHS->type;
+    Type *left = type_remove_qualifier(type_canonical(LHS->type));
+    Type *right = type_remove_qualifier(type_canonical(RHS->type));
 
-    if (type_is_same(left, right)) return true;
+    if (type_is_same(left, right)) return true; // or left == right
     if (!is_arithmetics_type(left) || !is_arithmetics_type(right)) return false;
+/*
+    if (type_is_int_promotable(left))
+    {
+        left = type_promoted_int(left);
+    }
+    if (type_is_promotable_bitfield(left))
+    {
+        left = type_promotable
+    }
+    if /
+    QualType LHSUnpromotedType = LHSType;
+    1377   if (LHSType->isPromotableIntegerType())
+        1378     LHSType = Context.getPromotedIntegerType(LHSType);
+    1379   QualType LHSBitfieldPromoteTy = Context.isPromotableBitField(LHS.get());
+    1380   if (!LHSBitfieldPromoteTy.isNull())
+        1381     LHSType = LHSBitfieldPromoteTy;
+    1382   if (LHSType != LHSUnpromotedType && !IsCompAssign)
+        1383     LHS = ImpCastExprToType(LHS.get(), LHSType, CK_IntegralCast);
     /*
 1375   // Apply unary and bitfield promotions to the LHS's type.
 1376   QualType LHSUnpromotedType = LHSType;
@@ -502,6 +536,20 @@ static inline bool analyse_ne_expr(Expr *binary)
     return insert_implicit_cast_if_needed(right, left->type);
 }
 
+static inline bool analyse_comp_expr(Expr *binary, BinOp op)
+{
+    Expr *left = binary->binary_expr.left;
+    Expr *right = binary->binary_expr.right;
+
+    if (!analyse_expr(left, RHS)) return false;
+    if (!analyse_expr(right, RHS)) return false;
+
+    // Make sure types match, otherwise try inserting a cast.
+    if (!try_upcasting_binary_for_arithmetics(binary)) return false;
+    binary->type = type_builtin_bool();
+    return true;
+}
+
 bool analyse_binary_expr(Expr *expr, Side side)
 {
     LOG_FUNC
@@ -533,10 +581,12 @@ bool analyse_binary_expr(Expr *expr, Side side)
                    &&
                    analyse_mod_expr(expr) && is_rvalue(expr);
         case BINOP_EQ:
-            return analyse_expr(left, RHS)
-                   && analyse_expr(right, RHS) && is_rvalue(expr); // TODO
         case BINOP_NE:
-            return analyse_ne_expr(expr);
+        case BINOP_GE:
+        case BINOP_GT:
+        case BINOP_LT:
+        case BINOP_LE:
+            return analyse_comp_expr(expr, expr->binary_expr.operator);
         case BINOP_MULT_ASSIGN:
         case BINOP_ADD_ASSIGN:
         case BINOP_SUB_ASSIGN:
@@ -552,10 +602,6 @@ bool analyse_binary_expr(Expr *expr, Side side)
         case BINOP_BIT_OR_ASSIGN:
         case BINOP_BIT_XOR:
         case BINOP_BIT_XOR_ASSIGN:
-        case BINOP_GE:
-        case BINOP_GT:
-        case BINOP_LE:
-        case BINOP_LT:
         case BINOP_SHR:
         case BINOP_SHR_ASSIGN:
         case BINOP_SHL:
@@ -1047,6 +1093,133 @@ bool analyse_unary_expr(Expr *expr, Side side)
     UNREACHABLE
 }
 
+bool check_call_args(Expr *expr, Decl *function, Expr *struct_function)
+{
+
+    unsigned func_args = function->func_decl.args->size;
+    unsigned call_args = expr->call_expr.parameters->size;
+
+    unsigned func_index = 0;
+    unsigned call_index = 0;
+
+    const bool is_struct_function = struct_function != NULL;
+
+    unsigned diagIndex = 0;
+
+    /*
+    if (isStructFunction) {
+        if (exprIsType(structFunction)) {
+            diagIndex = 5;
+        }
+        else {
+            diagIndex = 4;
+            funcArgs--;
+            funcIndex = 1;
+        }
+    }*/
+
+    unsigned min_args = MIN(func_args, call_args);
+
+    bool success = true;
+    for (unsigned i = 0; i < min_args; i++)
+    {
+        Expr *call_arg = expr->call_expr.parameters->entries[i];
+        if (!analyse_expr(call_arg, RHS))
+        {
+            success = false;
+            continue;
+        }
+        Decl *func_arg = function->func_decl.args->entries[i];
+        Type *type = func_arg->type;
+        if (!type_is_same(type, call_arg->type))
+        {
+            TODO
+            success = false;
+        }
+//        callIndex++;
+  //      funcIndex++;
+    }
+    if (call_args > func_args)
+    {
+        if (!function->func_decl.variadic)
+        {
+
+        }
+    }
+    /*
+    if (callArgs > funcArgs) {
+        // more args given, check if function is variadic
+        if (!func->isVariadic()) {
+            Expr* arg = call->getArg(callIndex);
+            unsigned msg = diag::err_typecheck_call_too_many_args;
+            if (func->hasDefaultArgs()) msg = diag::err_typecheck_call_too_many_args_at_most;
+            Diag(arg->getLocation(), msg) << diagIndex << funcArgs << callArgs;
+            return false;
+        }
+        for (unsigned i = minArgs; i < callArgs; i++) {
+            Expr* callArg = call->getArg(callIndex);
+            QualType callArgType = analyseExpr(callArg, RHS);
+            // TODO use canonical
+            if (callArgType == Type::Void()) {
+                fprintf(stderr, "ERROR: (TODO) passing 'void' to parameter of incompatible type '...'\n");
+                TODO;
+                //Diag(callArg->getLocation(), diag::err_typecheck_convert_incompatible)
+                //    << "from" << "to" << 1;// << callArg->getLocation();
+            }
+            callIndex++;
+        }
+    }
+    else if (callArgs < funcArgs) {
+        // less args given, check for default argument values
+        for (unsigned i = minArgs; i < funcArgs; i++) {
+            VarDecl* arg = func->getArg(funcIndex++);
+            if (!arg->getInitValue()) {
+                unsigned msg = diag::err_typecheck_call_too_few_args;
+                if (func->hasDefaultArgs()) {
+                    funcArgs = func->minArgs();
+                    if (isStructFunction) funcArgs--;
+                    msg = diag::err_typecheck_call_too_few_args_at_least;
+                }
+                Diag(call->getLocEnd(), msg) << diagIndex << funcArgs << callArgs;
+                return false;
+            }
+        }
+    }*/
+    TODO
+    return true;
+}
+bool analyse_call(Expr *expr, Side side)
+{
+    if (active_analyser->call_stack_current >= CALL_STACK_DEPTH)
+    {
+        sema_error_at(expr->span, "Reach max indirection depth");
+        return false;
+    }
+
+    active_analyser->call_stack[active_analyser->call_stack_current] = NULL;
+    active_analyser->call_stack_current++;
+
+    bool success = analyse_expr(expr->call_expr.function, RHS);
+
+    active_analyser->call_stack_current--;
+
+    if (!success) return false;
+
+    Expr *struct_function = active_analyser->call_stack[active_analyser->call_stack_current];
+
+    if (expr->type->type_id != TYPE_FUNC)
+    {
+        sema_error_at(expr->span, "'%s' cannot be called as a function", type_to_string(expr->type));
+        return false;
+    }
+    Decl *decl = expr->type->decl;
+
+    decl->is_used = true;
+    expr->type = decl->func_decl.rtype;
+    expr->call_expr.is_struct_function = struct_function != NULL;
+    return check_call_args(expr, decl, struct_function);
+}
+
 bool analyse_expr(Expr *expr, Side side)
 {
     LOG_FUNC
@@ -1070,7 +1243,7 @@ bool analyse_expr(Expr *expr, Side side)
         case EXPR_IDENTIFIER:
             return resolve_identifier(expr, side);
         case EXPR_CALL:
-            //return analyse_call(expr, side);
+            return analyse_call(expr, side);
         case EXPR_SIZEOF:
             //return analyse_sizeof(expr, side);
         case EXPR_SUBSCRIPT:

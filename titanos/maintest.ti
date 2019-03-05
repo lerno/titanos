@@ -39,9 +39,38 @@ type kex struct
     }
 }
 
+public macro mtest(a, b)
+{
+    return a + b;
+}
+
+macro mtest2(&a, b)
+{
+    return a + b;
+}
+
+
+type ebor struct
+{
+
+    struct foo {
+    i32 er;
+    }
+    struct faz {
+        i32 x;
+        kex rec;
+    }
+}
+
 public func i32 main(i32 xwok) @(foo = 1 + 2) {
 
 f64 ef = 1 + 0.023;
+if (ef > 1.0)
+{
+    ef = ef + 1;
+    }
+    else {}
+
     i8[FOO] buf;
     i8[10 + 1] buffer2;
     i32 a = 21 + cast(21, i32);

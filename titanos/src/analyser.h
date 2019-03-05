@@ -7,6 +7,7 @@
 #include "parser.h"
 #include "scope.h"
 
+#define CALL_STACK_DEPTH 32
 typedef struct _Analyser
 {
     Module *module;
@@ -16,6 +17,8 @@ typedef struct _Analyser
     Vector labels;
     Vector gotos;
     Vector defers;
+    Expr *call_stack[CALL_STACK_DEPTH];
+    unsigned call_stack_current;
     /*
      *   AST& ast;
          const Module& module;
