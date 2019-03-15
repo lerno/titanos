@@ -15,8 +15,9 @@ type fekeo i32;
 
 
 const i32 FAZ = 1;
+const i32 BOB = BAR + 2;
 const i32 BAR = FAZ + FAZ;
-const i32 FOO = BAR * 3;
+const i32 FOO = BAR * 3 + BOB;
 
 type foo struct
 {

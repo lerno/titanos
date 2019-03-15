@@ -728,7 +728,7 @@ void push_lexer(SourceRange *range)
     lexer.saved_prev_tok = prev_tok;
     lexer.saved_tok = tok;
     lexer_stack[lexer_pointer++] = lexer;
-    DEBUG_LOG("Pushing lexer state %d", lexer_pointer);
+    DEBUG_LOG("Pushing lexer, stack size: %d", lexer_pointer);
     lexer.current_file = source_get_file(range->loc);
     lexer.begin = lexer.current_file->contents;
     lexer.start = lexer.begin + range->loc.id - lexer.current_file->start.id;
@@ -740,7 +740,6 @@ void push_lexer(SourceRange *range)
 
 Token pop_lexer(void)
 {
-    DEBUG_LOG("Popping lexer state %d", lexer_pointer);
     Token token;
     if (lexer.last_in_range.id > tok.span.loc.id)
     {
@@ -757,6 +756,7 @@ Token pop_lexer(void)
     lexer = lexer_stack[--lexer_pointer];
     prev_tok = lexer.saved_prev_tok;
     tok = lexer.saved_tok;
+    DEBUG_LOG("Popped lexer, stack size: %d", lexer_pointer);
     return token;
 }
 
