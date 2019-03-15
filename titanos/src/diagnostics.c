@@ -238,11 +238,30 @@ void prev_at(SourceRange span, const char *message, ...)
     va_end(args);
 }
 
+void prev_at2(SourceLoc loc, const char *message, ...)
+{
+	va_list args;
+	va_start(args, message);
+	char buffer[256];
+	vsnprintf(buffer, 256, message, args);
+	print_error((SourceRange){ loc, 1 }, buffer, PRINT_TYPE_PREV);
+	va_end(args);
+}
+
 void sema_error_at(SourceRange token, const char *message, ...)
 {
 	va_list args;
 	va_start(args, message);
 	vprint_error(token, message, args);
+	va_end(args);
+	diagnostics.errors++;
+}
+
+void sema_error_at2(SourceLoc loc, const char *message, ...)
+{
+	va_list args;
+	va_start(args, message);
+	vprint_error((SourceRange) { loc, 1 }, message, args);
 	va_end(args);
 	diagnostics.errors++;
 }

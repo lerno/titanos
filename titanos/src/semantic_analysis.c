@@ -143,7 +143,7 @@ static inline bool analyse_body(Decl *func)
     {
         Decl *param_decl = func_decl->args->entries[i];
 
-        assert(param_decl->type->type_id != TYPE_UNRESOLVED && param_decl->type->type_id != TYPE_INVALID);
+        assert(param_decl->type.type->type_id != XTYPE_UNRESOLVED && param_decl->type.type->type_id != XTYPE_INVALID);
         if (skip_unused_params_check)
         {
             param_decl->is_used = true;
@@ -170,7 +170,7 @@ static inline bool analyse_body(Decl *func)
     if (scope_had_errors()) return false;
 
     // check for return statement of return value is required
-    bool needs_return = func_decl->rtype->type_id == TYPE_VOID;
+    bool needs_return = func_decl->rtype.type->type_id == XTYPE_VOID;
 
     if (needs_return && func_decl->body)
     {
@@ -276,7 +276,7 @@ static bool analyse_func_body(Decl *func)
     {
         Decl *param_decl = func->func_decl.args->entries[i];
         assert(param_decl->type_id == DECL_VAR && param_decl->var.kind == VARDECL_PARAM);
-        if (param_decl->type->type_id == TYPE_INVALID) continue;
+        if (param_decl->type.type->type_id == XTYPE_INVALID) continue;
         if (param_decl->var.init_expr)
         {
             if (!analyse_expr(param_decl->var.init_expr, RHS)) return false;

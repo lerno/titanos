@@ -1842,9 +1842,9 @@ void bigint_print(BigInt *bigint, uint64_t base)
         printf("%" PRIu64, bigint->digit);
         return;
     }
-    printf("TODO");
-    /*
-    size_t first_digit_index = buf_len(buf);
+    size_t len = bigint->digit_count * 64;
+    char *start = malloc_arena(len);
+    char *buf = start;
 
     BigInt digit_bi = { 0 };
     BigInt a1 = { 0 };
@@ -1861,27 +1861,25 @@ void bigint_print(BigInt *bigint, uint64_t base)
     {
         bigint_rem(&digit_bi, a, &base_bi);
         uint8_t digit = (uint8_t)bigint_as_unsigned(&digit_bi);
-        buf_append_char(buf, digit_to_char(digit, false));
+        *(buf++) = digit_to_char(digit, false);
         bigint_div_trunc(other_a, a, &base_bi);
         {
             BigInt *tmp = a;
             a = other_a;
             other_a = tmp;
         }
-        if (bigint_cmp_zero(a) == CmpEQ)
+        if (bigint_cmp_zero(a) == INT_EQ)
         {
             break;
         }
     }
 
     // reverse
-    for (size_t i = first_digit_index; i < buf_len(buf); i += 1)
+
+    for (char *ptr = buf - 1; ptr >= start; ptr--)
     {
-        size_t other_i = buf_len(buf) + first_digit_index - i - 1;
-        uint8_t tmp = buf_ptr(buf)[i];
-        buf_ptr(buf)[i] = buf_ptr(buf)[other_i];
-        buf_ptr(buf)[other_i] = tmp;
-    }*/
+        printf("%c", *ptr);
+    }
 }
 
 size_t bigint_popcount_unsigned(const BigInt *big_int)
@@ -2022,6 +2020,26 @@ void bigint_incr(BigInt *x)
 
 long double bigint_as_float(const BigInt *bigint)
 {
-    printf("TODO!\n");
-    return bigint_as_signed(bigint);
+    if (bigint_fits_in_bits(bigint, 64, bigint->is_negative))
+    {
+        return bigint->is_negative ? bigint_as_signed(bigint) : bigint_as_unsigned(bigint);
+    }
+    BigInt div;
+    uint64_t mult = 0x100000000000ull;
+    long double mul = 1;
+    bigint_init_unsigned(&div, mult);
+    BigInt current;
+    bigint_init_bigint(&current, bigint);
+    long double f = 0;
+    do
+    {
+        BigInt temp;
+        bigint_mod(&temp, &current, &div);
+        f += bigint_as_signed(&temp) * mul;
+        mul *= mult;
+        bigint_div_trunc(&temp, &current, &div);
+        current = temp;
+    }
+    while (current.digit_count > 0);
+    return f;
 }

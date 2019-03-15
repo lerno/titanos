@@ -7,5 +7,5 @@
 #include "common.h"
 
 void analyse_types(void);
-bool resolve_type(Type *type, bool used_public);
+bool resolve_type(TypeOld *type, bool used_public);
 bool analyse_func_decl(Decl *decl, bool is_public);

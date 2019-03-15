@@ -63,7 +63,7 @@ Expr *expr_copy(Expr *expr)
     return expr_copy;
 }
 
-Expr *expr_new_type_expr(Type *type, SourceRange span)
+Expr *expr_new_type_expr(TypeOld *type, SourceRange span)
 {
     Expr *expr = expr_new(EXPR_TYPE, span);
     expr->type_expr.type = type;
@@ -152,7 +152,7 @@ void expr_print(Expr *expr, unsigned current_indent)
             expr_print_sub("Sub Element", current_indent, expr->access_expr.sub_element);
             return;
         case EXPR_TYPE:
-            printf("EXPR_TYPE %s\n", type_to_string(expr->type_expr.type));
+            printf("EXPR_TYPE %s\n", type_to_string2(expr->type_expr.type));
             return;
         case EXPR_STRUCT_INIT_VALUES:
             printf("EXPR_STRUCT_INIT_VALUES\n");
@@ -169,7 +169,7 @@ void expr_print(Expr *expr, unsigned current_indent)
         case EXPR_CAST:
             printf("EXPR_CAST\n");
             expr_print_sub("Expr", current_indent, expr->cast_expr.expr);
-            type_print_sub("Type", current_indent, expr->cast_expr.type);
+            type_print_sub("Type", current_indent, expr->type.type);
             return;
     }
     printf("TODO %d\n", expr->expr_id);

@@ -73,6 +73,26 @@ typedef enum
     TOKEN_BIT_XOR,
     TOKEN_BIT_XOR_ASSIGN,
     TOKEN_NO_INIT,
+
+    TOKEN_F256,
+	TOKEN_I256,
+	TOKEN_U256,
+	TOKEN_F128,
+	TOKEN_I128,
+	TOKEN_U128,
+	TOKEN_F64,
+	TOKEN_I64,
+	TOKEN_U64,
+	TOKEN_F32,
+	TOKEN_I32,
+	TOKEN_U32,
+	TOKEN_F16,
+	TOKEN_I16,
+	TOKEN_U16,
+	TOKEN_I8,
+	TOKEN_U8,
+	TOKEN_BOOL,
+
     // Literals.
     TOKEN_IDENTIFIER,
     TOKEN_STRING,
@@ -117,15 +137,9 @@ extern const SourceLoc INVALID_LOC;
 typedef struct _SourceRange
 {
     SourceLoc loc;
-    uint16_t length;
+    uint32_t length;
 } SourceRange;
 
-typedef struct
-{
-    uint32_t start;
-    uint16_t length;
-    uint16_t number;
-} Line;
 
 typedef struct _Token
 {
@@ -148,9 +162,25 @@ typedef struct _File
 static_assert(sizeof(Token) == 32, "Invalid size of token");
 
 void init_lexer(const char *filename, const char *source, size_t size);
+void push_lexer(SourceRange *range);
+Token pop_lexer(void);
+void prime_lexer(SourceRange *source_range);
+
+typedef enum _LexerState
+{
+	LEXER_STATE_NORMAL,
+	LEXER_STATE_IGNORE_KEYWORDS,
+} LexerState;
+
+extern Token tok;
+extern Token prev_tok;
+
+void set_lexer_state(LexerState state);
 
 Token scan_token(void);
 Token lookahead(int steps);
+
+void advance(void);
 
 bool token_compare_str(const Token *token1, const char *string);
 void range_expand(SourceRange *to_update, Token *end_token);

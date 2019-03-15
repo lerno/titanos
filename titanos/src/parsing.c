@@ -17,37 +17,30 @@
 #include "decl.h"
 #include "expr.h"
 #include "builtins.h"
+#include "header_parsing.h"
+#include "semantic_analyser.h"
 
 Parser *current_parser;
-Token tok;
-Token prev_tok;
 
-#define CONSUME_EOS_OR_EXIT if (!consume(TOKEN_EOS, "Expected ';'")) return NULL
-#define CONSUME_START_BRACE_OR_EXIT if (!consume(TOKEN_LBRACE, "Expected '{'")) return NULL
-#define CONSUME_END_BRACE_OR_EXIT if (!consume(TOKEN_RBRACE, "Expected '}'")) return NULL
-#define UPDATE(__X) do { range_expand(&__X->span, &prev_tok); } while (0)
-#define UPDATE_AND_RETURN(__X) do { UPDATE(__X); return __X; } while (0)
-#define CONSUME_REQ_EOS_AND_RETURN(__X) do { UPDATE(__X); CONSUME_EOS_OR_EXIT; return __X; } while(0)
-
-static inline Decl *new_var_decl(SourceRange start, const char *name, VarDeclKind kind, Type *type, bool public,
-								 TypeQualifier qualifiers)
+static void set_lexer(SourceRange *range)
+{
+	prime_lexer(range);
+	advance();
+}
+static inline Decl *new_var_decl(SourceRange start, const char *name, VarDeclKind kind, QualifiedType type, bool public, TypeQualifier qualifiers)
 {
 	Decl *declaration = decl_new(DECL_VAR, start, name, false);
-	declaration->type = type;
+	//declaration->type = type;
 	declaration->var.kind = kind;
-	declaration->var.in_init = false;
 	declaration->is_public = public;
 	declaration->var.original_type = type;
 	declaration->type = type;
-	if ((type->qualifier | qualifiers) != type->qualifier)
-	{
-		Type *qualified_type = new_type(TYPE_INVALID, public);
-		*qualified_type = *type;
-		qualified_type->qualifier |= qualifiers;
-		declaration->type = qualified_type;
-	}
+	declaration->type.qualifier |= qualifiers;
 	return declaration;
 }
+
+
+
 static inline bool has_attributes()
 {
     return tok.type == TOKEN_AT;
@@ -99,7 +92,6 @@ typedef struct
 static ParseRule rules[TOKEN_EOF + 1];
 
 
-static Expr *parse_expression(void);
 static Ast *parse_stmt(void);
 static Expr *parse_init_value(void);
 static Ast *parse_condition(void);
@@ -111,22 +103,34 @@ void error_at_current(const char *message)
 }
 
 
-static void error(const char *message)
+void error_at_prev(const char *message)
 {
 	error_at(prev_tok.span, message);
 }
 
 
-static void advance(void)
+bool try_consume(TokenType type)
 {
-	prev_tok = tok;
+    if (tok.type == type)
+    {
+        advance();
+        return true;
+    }
+    return false;
+}
 
-	while (1)
-	{
-		tok = scan_token();
-		// printf(">>> %.*s => %s\n", tok.length, tok.start, token_type_to_string(tok.type));
-		if (tok.type != TOKEN_ERROR) break;
-	}
+bool consume(TokenType type, const char *message, ...)
+{
+    if (try_consume(type))
+    {
+        return true;
+    }
+
+    va_list args;
+    va_start(args, message);
+    verror_at(tok.span, message, args);
+    va_end(args);
+    return false;
 }
 
 static inline void advance_and_verify(TokenType type)
@@ -135,38 +139,14 @@ static inline void advance_and_verify(TokenType type)
 	advance();
 }
 
-static inline bool try_consume(TokenType type)
-{
-	if (current_is(type))
-	{
-		advance();
-		return true;
-	}
-	return false;
-}
-
-static bool consume(TokenType type, const char *message, ...)
-{
-	if (try_consume(type))
-	{
-		return true;
-	}
-
-	va_list args;
-	va_start(args, message);
-	verror_at(tok.span, message, args);
-	va_end(args);
-	return false;
-}
-
 
 void recover_to(TokenType type)
 {
 	if (!in_panic_mode()) return;
-	while (!current_is(type))
+	while (tok.type != type)
 	{
 		advance();
-		if (current_is(TOKEN_EOF)) return;
+		if (tok.type == TOKEN_EOF) return;
 	}
 	advance();
 	reset_panic_mode();
@@ -258,6 +238,7 @@ Decl *parse_module()
 	current_parser->current_module = prev_tok.string;
 	CONSUME_EOS_OR_EXIT;
 	vector_add(current_parser->imports, import);
+
 	UPDATE_AND_RETURN(import);
 }
 
@@ -293,12 +274,10 @@ static Expr *parse_string_literal(Expr *left)
 static Expr *parse_integer(Expr *left)
 {
 	assert(!left && "Had left hand side");
-	Expr *number = expr_new(EXPR_CONST, prev_tok.span);
 	File *file = source_get_file(prev_tok.span.loc);
 	const char *start = file->contents - file->start.id + prev_tok.span.loc.id;
-	number->const_expr.value = parse_int(start, prev_tok.span.length);
-	number->type = type_compint();
-	return number;
+	Value value = parse_int(start, prev_tok.span.length);
+	return sema_expr_const_int(prev_tok.span, value);
 }
 
 
@@ -403,9 +382,7 @@ static Expr *parse_identifier(Expr *left)
 {
 	assert(!left && "Unexpected left hand side");
 
-	Expr *expr = expr_new(EXPR_IDENTIFIER, prev_tok.span);
-	expr->identifier_expr.identifier = prev_tok.string;
-	return expr;
+	return sema_create_identifier_expr(prev_tok);
 }
 
 /**
@@ -440,7 +417,7 @@ static Expr *parse_precedence_after_advance(Precedence precedence)
 	ParseFn prefix_rule = get_rule(prev_tok.type)->prefix;
 	if (prefix_rule == NULL)
 	{
-		error("Expected expression.");
+        error_at_prev("Expected expression.");
 		return NULL;
 	}
 
@@ -479,7 +456,7 @@ TypeQualifier read_optional_type_qualifiers()
 	}
 }
 
-static void add_type_specifier(Type *type, TypeQualifier type_specifier)
+static void add_type_specifier(TypeOld *type, TypeQualifier type_specifier)
 {
 	if (!type_specifier) return;
 	type->qualifier |= type_specifier;
@@ -491,24 +468,36 @@ static void add_type_specifier(Type *type, TypeQualifier type_specifier)
  * @param base the base type
  * @return the resulting type or NULL if parsing failed.
  */
-Type *parse_array_type(Type *base)
+static Type *parse_array_type(QualifiedType base)
 {
-	assert(base && "Cannot have null expression");
+	assert(!IS_INVALID(base));
 	advance_and_verify(TOKEN_LBRACKET);
-	Type *type = new_type(TYPE_ARRAY, base->is_public);
-	type->array.base = base;
+
 	if (try_consume(TOKEN_RBRACKET))
 	{
-		type->array.is_empty = true;
+		Type *type = type_new(TYPE_ARRAY);
+		type->base = base;
+		type->len = NO_LEN;
 		return type;
 	}
 	Expr *expression = parse_expression();
 	if (!expression) return NULL;
 	if (!consume(TOKEN_RBRACKET, "Missing ']'")) return NULL;
-	type->array.len_expr = expression;
+	// Check const expr
+	if (expression->expr_id != EXPR_CONST)
+	{
+		sema_error_at(expression->span, "Expected a constant expression");
+		return NULL;
+	}
+	// Todo check len
+	uint32_t len = (uint32_t)expression->const_expr.value.big_int.digit;
+	Type *type = type_new(TYPE_ARRAY);
+	type->base = base;
+	type->len = len;
 	return type;
 }
 
+#ifdef OLD
 /**
  * type_specifier ::= full_identifier const?
  *                  | type_qualifier array_specifier const?
@@ -518,11 +507,11 @@ Type *parse_array_type(Type *base)
  * @param public is this public
  * @return type
  */
-Type *parse_type(bool accept_qualifiers, bool public)
+TypeOld *parse_type2(bool accept_qualifiers, bool public)
 {
 	// IMPROVE AST span.
 	TypeQualifier type_qualifier = accept_qualifiers ? read_optional_type_qualifiers() : TYPE_QUALIFIER_NONE;
-	Type *base;
+	TypeOld *base;
 	if (try_consume(TOKEN_VOID))
 	{
 		base = void_type();
@@ -562,12 +551,241 @@ Type *parse_type(bool accept_qualifiers, bool public)
 		add_type_specifier(base, type_qualifier);
 	}
 }
+#endif
 
-static Expr *parse_expression(void)
+Expr *parse_expression(void)
 {
 	advance();
 	return parse_precedence_after_advance(PREC_ASSIGNMENT);
 }
+
+Expr *parse_expression_block(SourceRange *range)
+{
+    push_lexer(range);
+    Expr *expr = parse_expression();
+    if (!expr)
+	{
+    	pop_lexer();
+		return NULL;
+	}
+    if (!expect_eof(pop_lexer(), "Invalid expession")) return NULL;
+    return expr;
+}
+
+
+/**
+ * enum_type ::= ENUM type '{' '+'[opt] enum_block '}' attributes?
+ *
+ * enum_block ::= enum_member
+ *                enum_block ','
+ *                enum_block ',' enum_member
+ *
+ * enum_member ::= IDENTIFIER
+ *               | IDENTIFIER '=' expression
+ *
+ * @param public if the enum is public
+ * @param span the initial range of the parse
+ * @return the created Ast* or NULL in case of error
+ */
+static Decl *parse_enum_type(bool public, SourceRange initial_span)
+{
+	CONSUME_START_BRACE_OR_EXIT;
+
+
+
+}
+
+/**
+ * enum_body   ::= '{' '+'[opt] enum_block '}'
+ *
+ * enum_block  ::= enum_member
+ *               | enum_block ','
+ *               | enum_block ',' enum_member
+ *
+ * enum_member ::= IDENTIFIER
+ *               | IDENTIFIER '=' expression
+ *
+ * @param decl the parent decl
+ * @return the created Ast* or NULL in case of error
+ */
+bool parse_enum_body(Decl *decl)
+{
+	advance_and_verify(TOKEN_LBRACE);
+
+	// TODO
+	bool incremental = try_consume(TOKEN_PLUS);
+
+	Vector *entries = new_vector(8);
+	decl->enum_decl.constants = entries;
+
+	assert(type_is_int(decl->enum_decl.type.type));
+	Value value = value_new_int_with_int(0);
+	value.int_bits = (uint16_t)type_bits(decl->enum_decl.type.type);
+
+	while (tok.type != TOKEN_RBRACE)
+	{
+		if (!consume(TOKEN_IDENTIFIER, "Expected enum name")) return false;
+		Decl *enum_constant = decl_new2(DECL_ENUM_CONSTANT, prev_tok.span.loc, &prev_tok, decl->is_public);
+		vector_add(entries, enum_constant);
+		enum_constant->type = decl->type;
+		if (try_consume(TOKEN_EQ))
+		{
+			Expr *expr = parse_expression();
+			if (!expr) return false;
+			// Check const
+			enum_constant->enum_constant.value = expr->const_expr.value;
+		}
+		else
+		{
+			// TODO prevent overflow?
+			enum_constant->enum_constant.value = value;
+		}
+		value = value_add(value, value_new_int_with_int(1));
+		if (!try_consume(TOKEN_COMMA))
+		{
+			if (!consume(TOKEN_RBRACE, "Expected '}'")) return false;
+			break;
+		}
+	}
+	return true;
+}
+
+QualifiedType parse_type_in_range(SourceRange *range, bool public)
+{
+	push_lexer(range);
+	QualifiedType type = parse_type(public);
+    if (IS_INVALID(type))
+	{
+		pop_lexer();
+		return InvalidType;
+	}
+	if (!expect_eof(pop_lexer(), "Illegal type")) return InvalidType;
+    return type;
+}
+
+Token parse_possible_struct_prefix(void)
+{
+	if (!try_consume(TOKEN_IDENTIFIER)) return (Token){ .type = TOKEN_VOID };
+	if (tok.type != TOKEN_DOT)
+	{
+		sema_error_at(prev_tok.span, "Expected <identifier>.<name>");
+		return (Token) { .type = TOKEN_ERROR };
+	}
+	Token identifier = prev_tok;
+	advance_and_verify(TOKEN_DOT);
+	return identifier;
+}
+
+QualifiedType type_for_token(Token *token)
+{
+    switch (tok.type)
+    {
+        case TOKEN_BOOL:
+            return type_builtin_bool();
+        case TOKEN_U8:
+            return type_builtin_u8();
+        case TOKEN_I8:
+            return type_builtin_i8();
+        case TOKEN_U16:
+            return type_builtin_u16();
+        case TOKEN_I16:
+            return type_builtin_i16();
+        case TOKEN_F32:
+            return type_builtin_f32();
+        case TOKEN_U32:
+            return type_builtin_u32();
+        case TOKEN_I32:
+            return type_builtin_i32();
+        case TOKEN_F64:
+            return type_builtin_f64();
+        case TOKEN_U64:
+            return type_builtin_u64();
+        case TOKEN_I64:
+            return type_builtin_i64();
+        case TOKEN_F16:
+        case TOKEN_F128:
+        case TOKEN_U128:
+        case TOKEN_I128:
+        case TOKEN_F256:
+        case TOKEN_U256:
+        case TOKEN_I256:
+            sema_error_at(tok.span, "Unsupported type");
+            return InvalidType;
+        default:
+            sema_error_at(tok.span, "Expected type name");
+            return InvalidType;
+    }
+}
+
+
+QualifiedType parse_type(bool public)
+{
+	QualifiedType base = InvalidType;
+	TypeQualifier qualifier = read_optional_type_qualifiers();
+	if (try_consume(TOKEN_VOID))
+	{
+		qualifier |= read_optional_type_qualifiers();
+		if (qualifier != TYPE_QUALIFIER_NONE)
+		{
+			error_at(prev_tok.span, "Can't add type specifiers to void");
+			return InvalidType;
+		}
+		base = void_type();
+	}
+	else
+	{
+		// If it's not an identifier it must be a built in type.
+		if (!try_consume(TOKEN_IDENTIFIER))
+		{
+			base = type_for_token(&tok);
+			advance();
+		}
+		else
+		{
+			if (tok.type == TOKEN_DOT)
+			{
+				// Lookup import
+				Token module = prev_tok;
+				advance();
+				if (!consume(TOKEN_IDENTIFIER, "Expected type name")) return InvalidType;
+				base = sema_resolve_prefixed_type(module, prev_tok);
+			}
+			else
+			{
+				base = sema_resolve_type(prev_tok, public);
+			}
+		}
+		if (IS_INVALID(base)) return base;
+
+		qualifier |= read_optional_type_qualifiers();
+		if (qualifier)
+		{
+			base.qualifier = qualifier;
+		}
+	}
+	while (true)
+	{
+		switch (tok.type)
+		{
+			case TOKEN_LBRACKET:
+				base = (QualifiedType) { .type = parse_array_type(base) };
+				break;
+			case TOKEN_STAR:
+				advance();
+				base = type_new_pointer(base);
+				break;
+			default:
+				qualifier = read_optional_type_qualifiers();
+				if (qualifier)
+				{
+					base.qualifier = qualifier;
+				}
+				return base;
+		}
+		if (IS_INVALID(base)) return base;
+	}
+}
+
 
 static Expr *parse_precedence(Precedence precedence)
 {
@@ -586,9 +804,9 @@ static inline Decl *parse_param_decl(bool public, bool has_default_args)
 {
 	Token start = tok;
 
-	Type *type = parse_type(true, public);
+	TypeOld *type = NULL;// TODO parse_type2(true, public);
 	if (!type) return NULL;
-
+#if 0
     Decl *param_decl = new_var_decl(start.span, start.string, VARDECL_PARAM, type, public, type->qualifier);
 	if (!try_consume(TOKEN_IDENTIFIER))
 	{
@@ -615,6 +833,7 @@ static inline Decl *parse_param_decl(bool public, bool has_default_args)
 		error_at(param_decl->span, "Parameters without default value must preceed the ones with default");
 	}
 	UPDATE_AND_RETURN(param_decl);
+#endif
 }
 
 /**
@@ -624,30 +843,29 @@ static inline Decl *parse_param_decl(bool public, bool has_default_args)
  *                ;
  * @return ast or NULL
  */
-static inline bool parse_argument_list(FuncDecl *func_decl, bool public, bool type_only)
+bool parse_argument_list(Decl *decl, bool public, bool type_only)
 {
-	if (!consume(TOKEN_LPAREN, "Expected '('")) return NULL;
-
+	if (!consume(TOKEN_LPAREN, "Expected '('")) return false;
 	if (try_consume(TOKEN_RPAREN))
 	{
-	    func_decl->args = new_vector(0);
-	    func_decl->variadic = false;
-	    return true;
+		decl->func_decl.args = new_vector(0);
+	    decl->func_decl.variadic = false;
+		return true;
 	}
 	Vector *args = new_vector(6);
-	func_decl->variadic = false;
+	decl->func_decl.variadic = false;
 	bool had_defaults = false;
 	while (true)
 	{
 		if (try_consume(TOKEN_ELIPSIS))
 		{
-            func_decl->variadic = true;
+            decl->func_decl.variadic = true;
 		}
 		else
 		{
-			Decl *decl = parse_param_decl(public, had_defaults);
-			if (!decl) return NULL;
-			if (decl->var.init_expr)
+			Decl *param_decl = parse_param_decl(public, had_defaults);
+			if (!param_decl) return false;
+			if (param_decl->var.init_expr)
 			{
 				had_defaults = true;
 				if (type_only)
@@ -659,52 +877,17 @@ static inline bool parse_argument_list(FuncDecl *func_decl, bool public, bool ty
 			vector_add(args, decl);
 		}
 		if (!try_consume(TOKEN_COMMA)) break;
-		if (func_decl->variadic)
+		if (decl->func_decl.variadic)
 		{
 			error_at_current("Variadic parameter followed by arguments");
-			return NULL;
+			return false;
 		}
 	}
-	func_decl->args = args;
-	if (!consume(TOKEN_RPAREN, "Expected ')'")) return NULL;
+	decl->func_decl.args = args;
+
+	if (!consume(TOKEN_RPAREN, "Expected ')'")) return true;
+
 	return true;
-}
-
-static inline Decl *parse_func_decl(bool public, bool type_only)
-{
-	Token start = tok;
-	advance_and_verify(TOKEN_FUNC);
-
-    Type *return_type = parse_type(true, public);
-	if (!return_type) return NULL;
-
-	if (!consume(TOKEN_IDENTIFIER, "Expected function name but got '%s'", tok.string)) return NULL;
-
-    Decl *decl = decl_new(DECL_FUNC, start.span, prev_tok.string, public);
-    decl->type = new_type(TYPE_FUNC, public);
-    decl->type->decl = decl;
-	decl->func_decl.rtype = return_type;
-
-	if (try_consume(TOKEN_DOT))
-	{
-		if (consume(TOKEN_IDENTIFIER, "Expected struct function name but got '%s'", tok.string)) return NULL;
-
-		size_t len = prev_tok.span.length + strlen(decl->name) + 1;
-		assert(len < 127);
-		char buffer[128];
-		// Improve
-		snprintf(buffer, len, "%s.%s", decl->name, prev_tok.string);
-		decl->func_decl.full_name = symtab_add(buffer, (uint16_t)len);
-		decl->name = prev_tok.string;
-		decl->func_decl.is_struct_func = true;
-	}
-
-    if (!parse_argument_list(&decl->func_decl, public, type_only)) return NULL;
-
-	if (!optional_add_attributes(&decl->attributes)) return NULL;
-
-
-	UPDATE_AND_RETURN(decl);
 }
 
 /**
@@ -1215,9 +1398,10 @@ static Decl *parse_declaration()
 
 	TypeQualifier type_qualifiers = read_optional_type_qualifiers();
 
-	Type *type_expr = parse_type(false, false);
+	TypeOld *type_expr = NULL; // TODO parse_type2(false, false);
 	if (!type_expr) return NULL;
 
+#if 0
     Decl *declaration = new_var_decl(start.span, tok.string, VARDECL_LOCAL, type_expr, false, type_qualifiers);
 
 	if (!consume(TOKEN_IDENTIFIER, "Expected variable name")) return NULL;
@@ -1229,6 +1413,7 @@ static Decl *parse_declaration()
 	declaration->var.init_expr = init_expr;
 
 	UPDATE_AND_RETURN(declaration);
+#endif
 }
 
 /**
@@ -1481,13 +1666,13 @@ void parse_imports()
  * struct_member ::= type_qualifier type_specifier
  *                 | STRUCT IDENTIFIER[opt] struct_block
  *                 | UNION IDENTIFIER[opt] struct_block
- * @param struct_members the vector to add the struct members to.
+ * @param parent
  */
-bool parse_struct_block(Decl *struct_members)
+bool parse_struct_block(Decl *parent)
 {
 	if (!consume(TOKEN_LBRACE, "Expected '{' to begin definition")) return false;
 
-	struct_members->struct_decl.members = new_vector(4);
+	parent->struct_decl.members = new_vector(4);
 
 	while (true)
 	{
@@ -1496,10 +1681,8 @@ bool parse_struct_block(Decl *struct_members)
 
 		if (tok.type == TOKEN_STRUCT || tok.type == TOKEN_UNION)
 		{
-			Decl *member = decl_new(DECL_STRUCT_TYPE, tok.span, tok.string, struct_members->is_public);
-			member->struct_decl.struct_type = tok.type == TOKEN_STRUCT ? ST_STRUCT : ST_UNION;
-			member->type = new_type(tok.type == TOKEN_STRUCT ? TYPE_STRUCT : TYPE_UNION, struct_members->is_public);
-			member->type->decl = member;
+			Decl *member = decl_new2(tok.type == TOKEN_STRUCT ? DECL_STRUCT_TYPE : DECL_UNION_TYPE, tok.span.loc, &tok, parent->is_public);
+			decl_add_own_type(member, tok.type == TOKEN_STRUCT ? TYPE_STRUCT : TYPE_UNION);
 			advance();
 			if (try_consume(TOKEN_IDENTIFIER))
 			{
@@ -1511,49 +1694,31 @@ bool parse_struct_block(Decl *struct_members)
 			}
 			if (!parse_struct_block(member)) return false;
 			range_expand(&member->span, &prev_tok);
-			vector_add(struct_members->struct_decl.members, member);
+			vector_add(parent->struct_decl.members, member);
 			continue;
 		}
-		Type *type = parse_type(true, struct_members->is_public);
-		if (!type) return false;
-		Decl *member = new_var_decl(tok.span, tok.string, VARDECL_MEMBER, type, struct_members->is_public, TYPE_QUALIFIER_NONE);
-
+		TypeQualifier qualifiers = read_optional_type_qualifiers();
+		QualifiedType type = parse_type(parent->is_public);
+		if (IS_INVALID(type)) return false;
+		Decl *member = new_var_decl(tok.span, tok.string, VARDECL_MEMBER, type, parent->is_public, qualifiers);
 		if (!consume(TOKEN_IDENTIFIER, "Expected identifier")) return false;
 		member->name = prev_tok.string;
 		range_expand(&member->span, &prev_tok);
 		if (!consume(TOKEN_EOS, "Expected ';'")) return false;
 	}
 	if (!consume(TOKEN_RBRACE, "Expected '}'")) return false;
-    return true;
+	return true;
 
 }
 
-/**
- * struct_or_union_type ::= UNION struct_block attributes?
- *                        | STRUCT struct_block attributes?
- * @param public if the function is public
- * @param span the first token belonging to the parse.
- * @return the created Decl* or NULL in case of error
- */
-static Decl *parse_struct_or_union_type(bool public, SourceRange span)
+bool parse_struct_body(Decl *struct_decl, SourceRange body)
 {
-
-	bool is_struct = tok.type == TOKEN_STRUCT;
-	Decl *struct_decl = decl_new(DECL_STRUCT_TYPE, span, prev_tok.string, public);
-	struct_decl->type = new_type(is_struct ? TYPE_STRUCT : TYPE_UNION, public);
-	struct_decl->type->decl = struct_decl;
-
-	struct_decl->struct_decl.struct_type = is_struct ? ST_STRUCT : ST_UNION;
-	struct_decl->struct_decl.is_global = true;
-
-    advance();
-
-    struct_decl->struct_decl.members = new_vector(8);
-	if (!parse_struct_block(struct_decl)) return NULL;
-	if (!optional_add_attributes(&struct_decl->attributes)) return NULL;
-
-	UPDATE_AND_RETURN(struct_decl);
+	LEXER_BEGIN(&body)
+	LEXER_EVAL = parse_struct_block(struct_decl)
+	LEXER_END
+	return true;
 }
+
 
 
 /**
@@ -1566,129 +1731,16 @@ static Decl *parse_struct_or_union_type(bool public, SourceRange span)
 static Decl *parse_alias_type(bool public, SourceRange span)
 {
 	Decl *alias = decl_new(DECL_ALIAS_TYPE, span, prev_tok.string, public);
-	Type *type = parse_type(true, public);
-	if (!type) return NULL;
-	alias->type = type;
+	// TODO TypeOld *type = parse_type2(true, public);
+	// TODOif (!type) return NULL;
+	// TODO alias->type = type;
 
     // TODO parse attributes?
 	CONSUME_REQ_EOS_AND_RETURN(alias);
 }
 
-/**
- * func_type ::= FUNC type_qualifier single_type_qualifier '(' full_param_list ')' attributes?
- * @param public if the function is public
- * @param span the initial span of the parse.
- * @return the created Decl* or NULL in case of error
- */
-static Decl *parse_function_type(bool public, SourceRange span)
-{
-	Decl *func_decl = parse_func_decl(public, true);
-	if (!func_decl) return NULL;
 
-	Decl *type = decl_new(DECL_FUNC_TYPE, span, prev_tok.string, public);
-	type->type = new_type(TYPE_FUNC_TYPE, public);
-	type->type->decl = type;
-	type->func_type.func_decl = func_decl;
 
-	CONSUME_REQ_EOS_AND_RETURN(type);
-}
-
-/**
- * enum_type ::= ENUM type '{' '+'[opt] enum_block '}' attributes?
- *
- * enum_block ::= enum_member
- *                enum_block ','
- *                enum_block ',' enum_member
- *
- * enum_member ::= IDENTIFIER
- *               | IDENTIFIER '=' expression
- *
- * @param public if the enum is public
- * @param span the initial range of the parse
- * @return the created Ast* or NULL in case of error
- */
-static Decl *parse_enum_type(bool public, SourceRange initial_span)
-{
-	Decl *enum_decl = decl_new(DECL_ENUM_TYPE, initial_span, prev_tok.string, public);
-
-	Type *enum_type = new_type(TYPE_ENUM, public);
-	enum_decl->type = enum_type;
-	enum_decl->type->decl = enum_decl;
-
-	advance_and_verify(TOKEN_ENUM);
-
-	Expr *type = parse_full_identifier();
-
-	if (!type) return NULL;
-
-	enum_decl->enum_decl.type = new_unresolved_type(type, public);
-
-    CONSUME_START_BRACE_OR_EXIT;
-
-    enum_decl->enum_decl.incremental = try_consume(TOKEN_PLUS);
-
-    Vector *entries = new_vector(8);
-    enum_decl->enum_decl.constants = entries;
-
-	while (1)
-    {
-	    if (!consume(TOKEN_IDENTIFIER, "Expected enum name")) return NULL;
-	    Decl *enum_constant = decl_new(DECL_ENUM_CONSTANT, prev_tok.span, prev_tok.string, public);
-	    enum_constant->type = enum_decl->type;
-	    vector_add(entries, enum_constant);
-        vector_add(current_parser->enum_values, enum_constant);
-        if (try_consume(TOKEN_EQ))
-        {
-            Expr *value = parse_expression();
-            if (!value) return NULL;
-            enum_constant->enum_constant.init_value = value;
-        }
-        // IMPROVE add values to enum
-        if (!try_consume(TOKEN_COMMA))
-		{
-			CONSUME_END_BRACE_OR_EXIT;
-            break;
-		}
-        if (try_consume(TOKEN_RBRACE)) break;
-    }
-
-	if (has_attributes())
-    {
-        if (!(enum_decl->attributes = parse_attributes())) return NULL;
-    }
-
-    UPDATE_AND_RETURN(enum_decl);
-}
-
-/**
- * type_definition ::= TYPE IDENTIFIER type_qualifier type_specifier
- *                   | TYPE IDENTIFIER func_type
- *                   | TYPE IDENTIFIER struct_or_union_type
- *                   | TYPE IDENTIFIER ENUM '{' enum_block '}'
- * @param public if the type is public or not.
- * @return Ast * or NULL if parsing fails.
- */
-static Decl *parse_type_definition(bool public)
-{
-    SourceRange initial_span = public ? prev_tok.span : tok.span;
-
-	advance_and_verify(TOKEN_TYPE);
-
-	if (!consume(TOKEN_IDENTIFIER, "Expected identifier after 'type'")) return NULL;
-
-	switch (tok.type)
-	{
-		case TOKEN_FUNC:
-			return parse_function_type(public, initial_span);
-		case TOKEN_STRUCT:
-		case TOKEN_UNION:
-            return parse_struct_or_union_type(public, initial_span);
-		case TOKEN_ENUM:
-			return parse_enum_type(public, initial_span);
-	    default:
-	        return parse_alias_type(public, initial_span);
-	}
-}
 
 /**
  * macro_definition ::= macro_type compund_statement
@@ -1707,28 +1759,7 @@ static Decl *parse_macro_definition(bool public)
 
 	UPDATE_AND_RETURN(decl);
 }
-/**
- * func_definition ::= function_type compund_statement
- *
- * @param public is the function is public
- * @return Decl *with the function defintion or NULL if parsing fails.
- */
-static Decl *parse_func_definition(bool public)
-{
-    Decl *decl = parse_func_decl(public, false);
-    if (!decl) return NULL;
 
-    if (current_parser->is_interface)
-	{
-    	CONSUME_EOS_OR_EXIT;
-		UPDATE_AND_RETURN(decl);
-	}
-    Ast *body = parse_compound_stmt();
-    if (!body) return NULL;
-    decl->func_decl.body = body;
-
-    UPDATE_AND_RETURN(decl);
-}
 
 /**
  * variable_definition ::= public[opt] type_specifier IDENTIFIER attributes[opt] variable_initialization
@@ -1745,9 +1776,10 @@ static Decl *parse_var_definition(bool public)
 
 	TypeQualifier qualifier = read_optional_type_qualifiers();
 
-    Type *type = parse_type(false, public);
+    TypeOld *type = NULL; // TODO parse_type2(false, public);
     if (!type) return NULL;
 
+#if  0
     if (!consume(TOKEN_IDENTIFIER, "Expected variable name")) return NULL;
 
 	Decl *decl = new_var_decl(start.span, prev_tok.string, VARDECL_GLOBAL, type, public, qualifier);
@@ -1766,7 +1798,7 @@ static Decl *parse_var_definition(bool public)
     }
 
     UPDATE_AND_RETURN(decl);
-
+#endif
 }
 
 
@@ -1798,7 +1830,7 @@ Decl *parse_array_entry()
 
     UPDATE_AND_RETURN(array);
 }
-
+#ifdef OLD
 /**
  * top_level ::= top_level
  *             | top_level top_level_item
@@ -1852,6 +1884,8 @@ static void parse_top_level()
 		}
 	}
 }
+
+#endif
 /**
  * source ::= module import top_level
  * @return false if error occurs;
@@ -1860,7 +1894,6 @@ bool parse_source()
 {
 	parse_module();
 	parse_imports();
-	parse_top_level();
 	if (!error_found())
 	{
 		consume(TOKEN_EOF, "Expected end of file.");
@@ -1900,7 +1933,7 @@ static Expr *parse_binary(Expr *left_side)
 	// There is a possibility that we actually have a type here.
 	if (operator_type == TOKEN_STAR && is_type_expr_after_star(left_side))
 	{
-		Type *type = new_type(TYPE_POINTER, false);
+		TypeOld *type = new_type(XTYPE_POINTER, false);
 		type->pointer.base = new_unresolved_type(left_side, false);
 		Expr *expr = expr_new_type_expr(type, left_side->span);
 		UPDATE_AND_RETURN(expr);
@@ -1908,13 +1941,9 @@ static Expr *parse_binary(Expr *left_side)
 	ParseRule *rule = get_rule(operator_type);
 	Expr *right_side = parse_precedence(rule->precedence + 1);
 
-	Expr *binary = expr_new(EXPR_BINARY, left_side->span);
+	Expr *expr = sema_expr_binary(operator_type, left_side, right_side);
 
-	binary->binary_expr.left = left_side;
-	binary->binary_expr.right = right_side;
-	binary->binary_expr.operator = binop_from_token(operator_type);
-
-	UPDATE_AND_RETURN(binary);
+	UPDATE_AND_RETURN(expr);
 
 }
 
@@ -2054,9 +2083,8 @@ static Expr *parse_cast(Expr *left)
 
 	if (!consume(TOKEN_COMMA, "Expected ','")) return NULL;
 
-	expr->cast_expr.type = parse_type(true, false);
-
-	if (!expr->cast_expr.type) return NULL;
+	expr->type = parse_type(false);
+	if (IS_INVALID(expr->type)) return NULL;
 
 	if (!consume(TOKEN_RPAREN, "Expected ')'")) return NULL;
 
@@ -2072,7 +2100,7 @@ static Expr *parse_subscript(Expr *left)
 	// Check for possible array type, if so then this is a type expression.
 	if (try_consume(TOKEN_RBRACKET))
 	{
-		Type *type = new_type(TYPE_ARRAY, false);
+		TypeOld *type = new_type(XTYPE_ARRAY, false);
 		type->array.base = new_unresolved_type(left, false);
 		type->array.is_empty = true;
 		type->array.is_len_resolved = true;
@@ -2189,14 +2217,17 @@ void setup_parse_rules(void)
 }
 
 
-Parser *parse(const char *filename, bool is_interface)
+Parser *parse(Component *component, Module *module, const char *filename, bool is_interface)
 {
     size_t size;
     char *file = read_file(filename, &size);
+	init_semantic_analyser(component, module, filename, is_interface);
+	init_lexer(filename, file, size);
+	parse_header();
+	sema_analyse();
 	Parser *parser = malloc_arena(sizeof(Parser));
 	init_parser(parser, filename, is_interface);
-	init_lexer(filename, file, size);
-    current_parser = parser;
+	current_parser = parser;
 	advance();
 	parse_source();
 	current_parser = NULL;

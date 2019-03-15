@@ -282,7 +282,7 @@ bool value_is_number(const Value *value)
     return value->type == VALUE_TYPE_INT || value->type == VALUE_TYPE_FLOAT;
 }
 
-Type *value_find_type(const Value *value)
+QualifiedType value_find_type(const Value *value)
 {
     switch (value->type)
     {
@@ -290,10 +290,10 @@ Type *value_find_type(const Value *value)
             switch (value->float_bits)
             {
                 case 0: return type_compfloat();
-                case 16: return type_builtin_f16();
+//                case 16: return type_builtin_f16();
                 case 32: return type_builtin_f32();
                 case 64: return type_builtin_f64();
-                case 128: return type_builtin_f128();
+//                case 128: return type_builtin_f128();
                 default: break;
             }
             UNREACHABLE
@@ -315,7 +315,7 @@ Type *value_find_type(const Value *value)
         case VALUE_TYPE_STRING:
             return type_string();
         case VALUE_TYPE_ERROR:
-            return type_invalid();
+            return InvalidType;
     }
 }
 
@@ -497,6 +497,7 @@ bool value_convert_to_type(Value *value1, Value *value2)
     }
     return reverse_order ? value_convert_to_type_ordered(value2, value1) : value_convert_to_type_ordered(value1, value2);
 }
+
 
 static inline bool set_bits_and_truncate_int_value_if_needed(Value *value, uint16_t bits, bool allow_trunc)
 {

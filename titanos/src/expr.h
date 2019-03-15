@@ -11,7 +11,7 @@
 #include "types/type.h"
 
 typedef struct _Ast Ast;
-typedef struct _Type Type;
+typedef struct _TypeOld TypeOld;
 typedef struct _Expr Expr;
 typedef struct _Decl Decl;
 
@@ -90,9 +90,8 @@ typedef struct _ExprSizeof
 typedef struct _ExprCast
 {
     Expr *expr;
-    Type *type;
     bool implicit;
-    CastResult cast_result;
+    CastType cast_result;
 } ExprCast;
 
 
@@ -184,7 +183,7 @@ typedef struct _TypeExprFlags
 typedef struct _ExprType
 {
     TypeExprFlags flags;
-    Type *type;
+    TypeOld *type;
 } ExprType;
 
 
@@ -202,7 +201,8 @@ typedef struct _Expr
     bool is_evaluating : 1;
     bool is_lvalue : 1;
     SourceRange span;
-    Type *type;
+    QualifiedType type;
+
     union {
         ExprType type_expr;
         ExprConst const_expr;
@@ -225,7 +225,7 @@ void expr_print(Expr *expr, unsigned current_indent);
 void expr_print_sub(const char *header, unsigned current_indent, Expr *expr);
 Expr *expr_new(ExprTypeId type, SourceRange span);
 Expr *expr_copy(Expr *expr);
-Expr *expr_new_type_expr(Type *type, SourceRange span);
+Expr *expr_new_type_expr(TypeOld *type, SourceRange span);
 void expr_replace(Expr *target, Expr *source);
 bool expr_is_const_false(Expr *cond);
 BinOp binop_from_token(TokenType type);

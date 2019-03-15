@@ -50,12 +50,27 @@ void diagnostics_use_color(bool use_color);
 void error_at(SourceRange span, const char *message, ...);
 void verror_at(SourceRange span, const char *message, va_list args);
 void sema_error_at(SourceRange span, const char *message, ...);
+void sema_error_at2(SourceLoc loc, const char *message, ...);
 void prev_at(SourceRange span, const char *message, ...);
+void prev_at2(SourceLoc loc, const char *message, ...);
 void sema_warn_at(DiagnosticsType type, SourceRange span, const char *message, ...);
 bool in_panic_mode(void);
 unsigned errors();
 void reset_panic_mode(void);
 bool error_found(void);
 
+static inline bool expect_eof(Token token, char *message)
+{
+    if (token.type == TOKEN_EOF) return true;
+    sema_error_at(token.span, message);
+    return false;
+}
+
+
+#define LEXER_BEGIN(__range) { push_lexer(__range);
+#define LEXER_EVAL bool _lsuccess
+#define LEXER_END ; if (!_lsuccess) { pop_lexer(); return false; } \
+  if (!expect_eof(pop_lexer(), "Unexpected end")) return false; \
+  } while(0);
 
 

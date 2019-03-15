@@ -13,6 +13,7 @@
 #define TABLE_MAX_LOAD 0.75
 #define MAX_HASH_SIZE (1024 * 1024)
 
+
 typedef struct _SymEntry
 {
     const char *value;

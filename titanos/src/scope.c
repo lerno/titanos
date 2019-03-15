@@ -13,9 +13,21 @@ void scope_init(Scope *scope, const char *name, STable *modules)
     scope->cur_scope = NULL;
     scope->all_modules = modules;
     scope->module = stable_get(scope->all_modules, name);
-    scope->locals = new_vector(8);
+    STATIC_ARRAY_CLEAR(scope->locals);
     stable_init(&scope->imported_modules, 32);
     stable_init(&scope->symbol_cache, 16 * 1024);
+    assert(scope->module);
+}
+
+void scope_reset(Scope *scope, const char *name, STable *modules)
+{
+    scope->scope_index = 0;
+    scope->cur_scope = NULL;
+    scope->all_modules = modules;
+    scope->module = stable_get(scope->all_modules, name);
+    STATIC_ARRAY_CLEAR(scope->locals);
+    stable_clear(&scope->imported_modules);
+    stable_clear(&scope->symbol_cache);
     assert(scope->module);
 }
 
@@ -34,7 +46,7 @@ void scope_add_import_declaration(Decl *import)
     switch (import->import.type)
     {
         case IMPORT_TYPE_LOCAL:
-            vector_add(active_scope->locals, import->module);
+            STATIC_ARRAY_ADD(active_scope->locals, import->module);
             break;
         case IMPORT_TYPE_ALIAS:
             name = import->import.alias;
@@ -104,9 +116,9 @@ Decl *scope_find_symbol(const char *symbol, bool is_type, bool used_public, Sour
     }
     bool ambiguous = false;
     bool visible_match = false;
-    for (unsigned i = 0; i < active_scope->locals->size; i++)
+    for (unsigned i = 0; i < active_scope->locals.size; i++)
     {
-        Module *module = active_scope->locals->entries[i];
+        Module *module = active_scope->locals.entry[i];
         Decl *decl = module_find_symbol(module, symbol);
         if (!decl) continue;
         bool visible = !module->is_external || decl->is_public;
@@ -218,9 +230,9 @@ Decl *scope_check_scoped_symbol(const char *symbol)
     if (old) return old;
 
     // Check in local modules
-    for (unsigned i = 0; i < active_scope->locals->size; i++)
+    for (unsigned i = 0; i < active_scope->locals.size; i++)
     {
-        Module *module = active_scope->locals->entries[i];
+        Module *module = active_scope->locals.entry[i];
         old = module_find_symbol(module, symbol);
         if (old) return old;
     }

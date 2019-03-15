@@ -525,7 +525,7 @@ static LibInfo *find_module_lib(const char *module_name)
 
 static bool parse_file(Component *component, Module *module, const char *filename, bool show_ast, bool is_interface)
 {
-    Parser *parser = parse(filename, is_interface);
+    Parser *parser = parse(component, module, filename, is_interface);
     if (!parser) return false;
     if (show_ast)
     {
@@ -550,48 +550,31 @@ static bool parse_file(Component *component, Module *module, const char *filenam
             decl_print(parser->variables->entries[i], 1);
         }
     }
-    if (module)
-    {
-        // for external modules, filename should match module name
-        if (module->name != parser->current_module)
-        {
-            error_at(((Decl *)(parser->imports->entries[0]))->span, "Module '%s' does not match filename '%s'",
-                     parser->current_module, module->name);
-            return false;
-        }
-    }
-    else
-    {
-        module = component_get_module(component, parser->current_module);
-    }
-    vector_add(module->files, parser);
     return true;
 }
 
 static Module *c2_module;
 
 
-static void register_c2_constant(const char *name, const char *type, Value value)
+static void register_c2_constant(const char *name, QualifiedType type, Value value)
 {
     Token token = token_wrap(name);
-    Token type_token = token_wrap(type);
     Expr *expr_value = expr_new(EXPR_CONST, token.span);
     expr_value->const_expr.value = value;
-    Expr *type_expr = expr_new(EXPR_IDENTIFIER, type_token.span);
-    type_expr->identifier_expr.identifier = type_token.string;
     Decl *decl = decl_new(DECL_VAR, token.span, token.string, true);
-    decl->type = new_unresolved_type(type_expr, true);
+    type.qualifier = TYPE_QUALIFIER_CONST;
+    decl->type = type;
     decl->var.init_expr = expr_value;
     decl->var.kind = VARDECL_GLOBAL;
     decl->is_exported = true;
     Parser *parser = c2_module->files->entries[0];
     vector_add(parser->variables, decl);
 }
-static void register_c2_unsigned_constant(const char *type, const char *name, uint64_t size)
+static void register_c2_unsigned_constant(QualifiedType type, const char *name, uint64_t size)
 {
     register_c2_constant(name, type, value_new_int_with_int(size));
 }
-static void register_c2_signed_constant(const char *type, const char *name, int64_t size)
+static void register_c2_signed_constant(QualifiedType type, const char *name, int64_t size)
 {
     register_c2_constant(name, type, value_new_int_with_int(size));
 }
@@ -611,23 +594,23 @@ static void create_c2_module()
 
         init_parser(parser, c2_name, true);
         parser->current_module = c2_name;
-        register_c2_signed_constant("i64", "buildtime", time(0));
-        register_c2_signed_constant("i8", "min_i8", -0x80);
-        register_c2_signed_constant("i8", "max_i8", 0x7F);
-        register_c2_unsigned_constant("u8", "min_u8", 0);
-        register_c2_unsigned_constant("u8", "max_u8", 0xFF);
-        register_c2_signed_constant("i16", "min_i16", -0x8000);
-        register_c2_signed_constant("i16", "max_i16", 0x7FFF);
-        register_c2_unsigned_constant("u16", "min_u16", 0);
-        register_c2_unsigned_constant("u16", "max_u16", 0xFFFF);
-        register_c2_signed_constant("i32", "min_i32", -0x80000000);
-        register_c2_signed_constant("i32", "max_i32", 0x7FFFFFFF);
-        register_c2_unsigned_constant("u32", "min_u32", 0);
-        register_c2_unsigned_constant("u32", "max_u32", 0xFFFFFFFFFFFFFFFFllu);
-        register_c2_signed_constant("i64", "min_i64", -0x800000000000000ll);
-        register_c2_signed_constant("i64", "max_i64", 0x7FFFFFFFFFFFFFFFll);
-        register_c2_unsigned_constant("u64", "min_u64", 0);
-        register_c2_unsigned_constant("u64", "max_u64", 0xFFFFFFFFFFFFFFFFllu);
+        register_c2_signed_constant(type_builtin_i64(), "buildtime", time(0));
+        register_c2_signed_constant(type_builtin_i8(), "min_i8", -0x80);
+        register_c2_signed_constant(type_builtin_i8(), "max_i8", 0x7F);
+        register_c2_unsigned_constant(type_builtin_u8(), "min_u8", 0);
+        register_c2_unsigned_constant(type_builtin_u8(), "max_u8", 0xFF);
+        register_c2_signed_constant(type_builtin_i16(), "min_i16", -0x8000);
+        register_c2_signed_constant(type_builtin_i16(), "max_i16", 0x7FFF);
+        register_c2_unsigned_constant(type_builtin_u16(), "min_u16", 0);
+        register_c2_unsigned_constant(type_builtin_u16(), "max_u16", 0xFFFF);
+        register_c2_signed_constant(type_builtin_i32(), "min_i32", -0x80000000);
+        register_c2_signed_constant(type_builtin_i32(), "max_i32", 0x7FFFFFFF);
+        register_c2_unsigned_constant(type_builtin_u32(), "min_u32", 0);
+        register_c2_unsigned_constant(type_builtin_u32(), "max_u32", 0xFFFFFFFFFFFFFFFFllu);
+        register_c2_signed_constant(type_builtin_i64(), "min_i64", -0x800000000000000ll);
+        register_c2_signed_constant(type_builtin_i64(), "max_i64", 0x7FFFFFFFFFFFFFFFll);
+        register_c2_unsigned_constant(type_builtin_u64(), "min_u64", 0);
+        register_c2_unsigned_constant(type_builtin_u64(), "max_u64", 0xFFFFFFFFFFFFFFFFllu);
         register_builtins(c2_module);
     }
 };

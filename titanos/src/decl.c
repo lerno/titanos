@@ -17,7 +17,16 @@ void decl_init(Decl *decl, DeclType decl_type, SourceRange span, const char *nam
     decl->name = name;
     decl->span = span;
     decl->is_public = public;
-    decl->type = NULL;
+}
+
+void decl_init2(Decl *decl, DeclType decl_type, SourceLoc loc, Token *name, bool public)
+{
+    memset(decl, 0, sizeof(Decl));
+    decl->type_id = decl_type;
+    decl->name = name->string;
+    decl->name_span = name->span;
+    decl->is_public = public;
+    decl->loc = loc;
 }
 
 Decl *decl_new(DeclType decl_type, SourceRange span, const char *name, bool public)
@@ -25,6 +34,21 @@ Decl *decl_new(DeclType decl_type, SourceRange span, const char *name, bool publ
     Decl *decl = malloc_arena(sizeof(Decl));
     decl_init(decl, decl_type, span, name, public);
     return decl;
+}
+
+Decl *decl_new2(DeclType decl_type, SourceLoc start, Token *name, bool public)
+{
+    Decl *decl = malloc_arena(sizeof(Decl));
+    decl_init2(decl, decl_type, start, name, public);
+    return decl;
+}
+
+void decl_add_own_type(Decl *decl, TypeId type_id)
+{
+    Type *type = type_new(type_id);
+    type->canonical_type = (QualifiedType) { .type = type };
+    type->decl = decl;
+    decl->self_type = type->canonical_type;
 }
 
 void decl_print_name_visibility(Decl *decl)
@@ -95,9 +119,9 @@ void decl_print(Decl *decl, unsigned current_indent)
             return;
         case DECL_VAR:
             printf("VAR ");
-            if (type_is_const(decl->type)) printf("const ");
-            if (decl->type->qualifier & TYPE_QUALIFIER_VOLATILE) printf("volatile ");
-            if (decl->type->qualifier & TYPE_QUALIFIER_ALIAS) printf("alias ");
+            if (IS_CONST(decl->type)) printf("const ");
+            if (IS_VOLATILE(decl->type)) printf("volatile ");
+            if (IS_ALIAS(decl->type)) printf("alias ");
             decl_print_name_visibility(decl);
             printf("\n");
 
@@ -114,7 +138,7 @@ void decl_print(Decl *decl, unsigned current_indent)
             printf("ALIAS_TYPE ");
             decl_print_name_visibility(decl);
             printf("\n");
-            type_print_sub("Alias", current_indent, decl->type);
+            type_print_sub("Alias", current_indent, decl->type.type);
             return;
         case DECL_STRUCT_TYPE:
             printf("STRUCT_TYPE ");
@@ -162,23 +186,23 @@ uint64_t decl_size(Decl *decl)
     switch (decl->type_id)
     {
         case DECL_BUILTIN:
-            return type_size(decl->type);
+            return type_size(decl->type.type);
         case DECL_FUNC:
         case DECL_FUNC_TYPE:
             // TODO pointer size
             return 8;
         case DECL_VAR:
-            return type_size(decl->type);
+            return type_size(decl->type.type);
         case DECL_ENUM_CONSTANT:
             // Go to parent
-            return type_size(decl->type);
+            return type_size(decl->type.type);
         case DECL_ALIAS_TYPE:
-            return type_size(decl->type);
+            return type_size(decl->type.type);
         case DECL_STRUCT_TYPE:
             // TODO
             return 16;
         case DECL_ENUM_TYPE:
-            return type_size(decl->enum_decl.type);
+            return type_size(decl->enum_decl.type.type);
         case DECL_ARRAY_VALUE:
         case DECL_IMPORT:
         case DECL_LABEL:

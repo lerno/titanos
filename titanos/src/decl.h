@@ -19,6 +19,7 @@ typedef enum _DeclType
     DECL_ENUM_CONSTANT,
     DECL_ALIAS_TYPE,
     DECL_STRUCT_TYPE,
+    DECL_UNION_TYPE,
     DECL_ENUM_TYPE,
     DECL_FUNC_TYPE,
     DECL_ARRAY_VALUE,
@@ -41,10 +42,22 @@ typedef struct _VarDecl
 {
     VarDeclKind kind : 2;
     bool local : 1;
-    bool in_init : 1;
-    Type *original_type;
-    Expr *init_expr;
-    LLVMValueRef llvm_ref;
+    union
+    {
+        struct
+        {
+            QualifiedType original_type;
+            Expr *init_expr;
+            LLVMValueRef llvm_ref;
+        };
+        struct
+        {
+            SourceRange type_range;
+            SourceRange init_range;
+        } unparsed;
+
+    };
+
 } VarDecl;
 
 typedef struct _MacroParamDecl
@@ -55,22 +68,35 @@ typedef struct _MacroParamDecl
 
 typedef struct _ArrayValueDecl
 {
-    Type *value;
+    TypeOld *value;
     LLVMValueRef ir_value;
 } ArrayValueDecl;
 
 typedef struct _EnumConstantDecl
 {
     Expr *init_value;
+    Value value;
     LLVMValueRef llvm_value;
 } EnumConstantDecl;
 
 typedef struct _EnumDecl
 {
     bool incremental : 1;
-    struct _Vector *constants;
-    LLVMValueRef llvm_value;
-    Type *type;
+    union
+    {
+        struct
+        {
+            struct _Vector *constants;
+            QualifiedType type;
+            LLVMValueRef llvm_value;
+        };
+        struct
+        {
+            SourceRange body;
+            SourceRange type;
+        } unparsed;
+
+    };
 } EnumDecl;
 
 typedef enum _StructType
@@ -81,10 +107,19 @@ typedef enum _StructType
 
 typedef struct _StructDecl
 {
-    StructType struct_type : 1;
     bool is_global : 1;
     bool no_typedef : 1;
-    Vector *members;;
+    union
+    {
+        struct
+        {
+            Vector *members;;
+        };
+        struct
+        {
+            SourceRange body;
+        } unparsed;
+    };
     Vector *struct_functions;
 } StructDecl;
 
@@ -94,11 +129,24 @@ typedef struct _FuncDecl
     bool variadic : 1;
     bool is_struct_func : 1;
     bool is_static_struct_func : 1;
-    Type *rtype;
     const char *full_name;
-    Vector* args; // VarDecl[]
-    Ast *body;
-    LLVMValueRef llvm_function_proto;
+    union
+    {
+        struct
+        {
+            QualifiedType rtype;
+            Vector* args; // VarDecl[]
+            Ast *body;
+            LLVMValueRef llvm_function_proto;
+        };
+        struct
+        {
+            SourceRange rtype;
+            SourceRange params;
+            SourceRange body;
+        } unparsed;
+    };
+
 } FuncDecl;
 
 typedef struct _MacroDecl
@@ -112,6 +160,7 @@ typedef struct _MacroDecl
 typedef struct _FunTypeDecl
 {
     struct _Decl *func_decl;
+
 } FuncTypeDecl;
 
 typedef enum
@@ -139,6 +188,7 @@ typedef struct _ArrayDecl
     Expr *value;
 } ArrayDecl;
 
+
 typedef struct _Decl
 {
     DeclType type_id : 6;
@@ -147,13 +197,23 @@ typedef struct _Decl
     bool is_used : 1;
     bool is_used_public : 1;
     bool has_cname : 1;
+    bool is_unparsed : 1;
+    bool is_being_parsed : 1;
     SourceRange span;
     const char *name;
+    SourceRange name_span;
+    SourceLoc loc;
     struct _Module *module;
     struct _Vector *attributes;
-    Type *type;
     union
     {
+        QualifiedType self_type;
+        QualifiedType type;
+    };
+    union
+    {
+        QualifiedType alias;
+        SourceRange  unparsed_alias;
         StructDecl struct_decl;
         VarDecl var;
         EnumDecl enum_decl;
@@ -169,6 +229,9 @@ typedef struct _Decl
 
 void decl_init(Decl *decl, DeclType decl_type, SourceRange span, const char *name, bool public);
 Decl *decl_new(DeclType decl_type, SourceRange span, const char *name, bool public);
+Decl *decl_new2(DeclType decl_type, SourceLoc start, Token *name, bool public);
+void decl_add_own_type(Decl *decl, TypeId type_id);
+
 void decl_print(Decl *decl, unsigned indent);
 void decl_print_sub(const char *header, unsigned current_indent, Decl *decl);
 void decl_print_attributes(Decl *decl, unsigned indent);

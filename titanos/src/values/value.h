@@ -2,6 +2,7 @@
 //
 // Created by Christoffer Lernö on 2019-01-25.
 //
+#include <types/type.h>
 #include "common.h"
 #include "bigint.h"
 
@@ -62,8 +63,7 @@ Value value_not(Value value);
 Value value_nil();
 void value_update_to_float(Value *value, long double f, uint16_t bits);
 const char *value_type_name(const Value *value);
-typedef struct _Type Type;
-Type *value_find_type(const Value *value);
+QualifiedType value_find_type(const Value *value);
 void value_print(Value value);
 bool value_as_bool(Value *value);
 

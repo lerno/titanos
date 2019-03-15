@@ -104,7 +104,7 @@ add_executable(titanos
         titanos/src/vector.h
         titanos/src/values/value.c
         titanos/src/values/value.h
-        titanos/main.c titanos/src/values/bigint.c titanos/src/values/bigint.h titanos/src/analyser.c titanos/src/analyser.h titanos/src/statement_analysis.c titanos/src/statement_analysis.h titanos/src/types/type.c titanos/src/types/type.h titanos/src/decl.c titanos/src/decl.h titanos/src/type_analysis.c titanos/src/type_analysis.h titanos/src/expr.c titanos/src/expr.h titanos/src/building/builtins.c titanos/src/building/builtins.h titanos/src/expression_analysis.c titanos/src/expression_analysis.h titanos/src/symtab.h titanos/src/symtab.c)
+        titanos/main.c titanos/src/values/bigint.c titanos/src/values/bigint.h titanos/src/analyser.c titanos/src/analyser.h titanos/src/statement_analysis.c titanos/src/statement_analysis.h titanos/src/types/type.c titanos/src/types/type.h titanos/src/decl.c titanos/src/decl.h titanos/src/type_analysis.c titanos/src/type_analysis.h titanos/src/expr.c titanos/src/expr.h titanos/src/building/builtins.c titanos/src/building/builtins.h titanos/src/expression_analysis.c titanos/src/expression_analysis.h titanos/src/symtab.h titanos/src/symtab.c titanos/src/header_parsing.c titanos/src/header_parsing.h titanos/src/semantic_analyser.c titanos/src/semantic_analyser.h titanos/src/static_array.c titanos/src/static_array.h)
 
 
 target_link_libraries(titanos ${llvm_libs})

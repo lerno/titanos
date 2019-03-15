@@ -3,6 +3,7 @@
 #include "module.h"
 #include "lexer.h"
 #include "table.h"
+#include "static_array.h"
 
 #define MAX_SCOPE_DEPTH 15
 
@@ -42,6 +43,7 @@ typedef struct _Import Import;
 typedef struct _Ast Ast;
 typedef struct _Vector Vector;
 
+#define MAX_LOCALS 0xFFFF
 typedef struct _Scope
 {
     Module *module;
@@ -51,11 +53,12 @@ typedef struct _Scope
     STable *all_modules;
     STable imported_modules;
     STable symbol_cache;
-    Vector *locals; // Module list
+    STATIC_ARRAY(Module *, MAX_LOCALS) locals; // Module list
 } Scope;
 
 extern __thread Scope *active_scope;
 void scope_init(Scope *scope, const char *name, STable *modules);
+void scope_reset(Scope *scope, const char *name, STable *modules);
 
 
 void scope_add_import_declaration(Decl *import);

@@ -52,20 +52,20 @@ static void codegen_decl_alloca(Decl *decl)
     {
         LLVMPositionBuilderAtEnd(active_builder, active_entry);
     }
-    decl->var.llvm_ref = LLVMBuildAlloca(active_builder, llvm_type(decl->type), decl->name);
+    decl->var.llvm_ref = LLVMBuildAlloca(active_builder, llvm_type(decl->type.type), decl->name);
     LLVMPositionBuilderAtEnd(active_builder, insert_block);
 }
 static LLVMTypeRef codegen_convert_func_decl(Decl *decl)
 {
     FuncDecl *func_decl = &decl->func_decl;
-    LLVMTypeRef return_type = llvm_type(func_decl->rtype);
+    LLVMTypeRef return_type = llvm_type(func_decl->rtype.type);
     LLVMTypeRef* params = (LLVMTypeRef *)malloc_arena(sizeof(LLVMTypeRef) * func_decl->args->size);
     for (unsigned i = 0; i < func_decl->args->size; i++)
     {
         Decl *param_decl = func_decl->args->entries[i];
-        params[i] = llvm_type(param_decl->type);
+        params[i] = llvm_type(param_decl->type.type);
     }
-    return decl->type->llvm_type = LLVMFunctionType(return_type, params, func_decl->args->size, func_decl->variadic);
+    return decl->type.type->llvm_type = LLVMFunctionType(return_type, params, func_decl->args->size, func_decl->variadic);
 }
 
 static LLVMTypeRef codegen_convert_struct_decl(Decl *decl)
@@ -78,7 +78,7 @@ static LLVMTypeRef codegen_convert_struct_decl(Decl *decl)
         members[i] = codegen_convert_decl(param_decl);
     }
     // TODO handle align
-    return decl->type->llvm_type = LLVMStructType(members, struct_decl->members->size, false);
+    return decl->type.type->llvm_type = LLVMStructType(members, struct_decl->members->size, false);
 }
 
 LLVMBasicBlockRef codegen_insert_block(char *name)
@@ -97,7 +97,7 @@ LLVMBasicBlockRef codegen_insert_block(char *name)
 
 static LLVMTypeRef codegen_convert_decl(Decl *decl)
 {
-    assert(!decl->type->llvm_type);
+    assert(!decl->type.type->llvm_type);
     switch (decl->type_id)
     {
         case DECL_BUILTIN:
@@ -106,13 +106,13 @@ static LLVMTypeRef codegen_convert_decl(Decl *decl)
         case DECL_FUNC:
             return codegen_convert_func_decl(decl);
         case DECL_VAR:
-            return llvm_type(decl->type);
+            return llvm_type(decl->type.type);
         case DECL_ALIAS_TYPE:
-            return codegen_convert_type(decl->type);
+            return codegen_convert_type(decl->type.type);
         case DECL_STRUCT_TYPE:
             return codegen_convert_struct_decl(decl);
         case DECL_ENUM_TYPE:
-            return codegen_convert_type(decl->enum_decl.type);
+            return codegen_convert_type(decl->enum_decl.type.type);
         case DECL_FUNC_TYPE:
             return codegen_convert_decl(decl->func_type.func_decl);
         case DECL_ARRAY_VALUE:
@@ -127,36 +127,36 @@ static LLVMTypeRef codegen_convert_type(Type *type)
 {
     assert(!type->llvm_type && "Called even though the type is already set.");
 
-    Type *resolved = type_unfold_redirects(type);
+    TypeOld *resolved = type_unfold_redirects(type);
     if (resolved->llvm_type)
     {
         return type->llvm_type = resolved->llvm_type;
     }
     switch (resolved->type_id)
     {
-        case TYPE_ALIAS:
-        case TYPE_OPAQUE:
-        case TYPE_RESOLVED:
+        case XTYPE_ALIAS:
+        case XTYPE_OPAQUE:
+        case XTYPE_RESOLVED:
             UNREACHABLE
-        case TYPE_VOID:
+        case XTYPE_VOID:
             return type->llvm_type = LLVMVoidType();
-        case TYPE_POINTER:
+        case XTYPE_POINTER:
             return type->llvm_type = LLVMPointerType(llvm_type(resolved->pointer.base), 0);
-        case TYPE_ENUM:
-            return type->llvm_type = codegen_convert_type(resolved->decl->enum_decl.type);
-        case TYPE_FUNC:
-        case TYPE_FUNC_TYPE:
-        case TYPE_STRUCT:
-        case TYPE_UNION:
+        case XTYPE_ENUM:
+            return type->llvm_type = codegen_convert_type(resolved->decl->enum_decl.type.type);
+        case XTYPE_FUNC:
+        case XTYPE_FUNC_TYPE:
+        case XTYPE_STRUCT:
+        case XTYPE_UNION:
             return type->llvm_type = codegen_convert_decl(resolved->decl);
-        case TYPE_ARRAY:
+        case XTYPE_ARRAY:
             return type->llvm_type = LLVMArrayType(llvm_type(resolved->array.base), resolved->array.len);
-        case TYPE_NIL:
+        case XTYPE_NIL:
             return type->llvm_type = LLVMPointerType(LLVMVoidType(), 0);
-        case TYPE_INVALID:
+        case XTYPE_INVALID:
             FATAL_ERROR("Invalid type reached");
-        case TYPE_CONST_FLOAT:
-        case TYPE_CONST_INT:
+        case XTYPE_CONST_FLOAT:
+        case XTYPE_CONST_INT:
             FATAL_ERROR("Should never happen");
         default:
             FATAL_ERROR("Unknown type %d", resolved->type_id);
@@ -173,7 +173,7 @@ static LLVMTypeRef llvm_type(Type *type)
 
 void codegen_function_proto(LLVMModuleRef llvm_module, Parser *parser, Decl *function)
 {
-    LLVMValueRef fun = LLVMAddFunction(llvm_module, function->name, llvm_type(function->type));
+    LLVMValueRef fun = LLVMAddFunction(llvm_module, function->name, llvm_type(function->type.type));
     bool single_module = false;
     bool external = (function->is_public && !single_module) || function->name == symtab_add("main", 4);
     LLVMSetLinkage(fun, external ? LLVMExternalLinkage : LLVMLinkerPrivateLinkage);
@@ -183,7 +183,7 @@ void codegen_function_proto(LLVMModuleRef llvm_module, Parser *parser, Decl *fun
 LLVMValueRef codegen_const_expr(Expr *expr)
 {
     assert(expr->expr_id == EXPR_CONST);
-    LLVMTypeRef type = llvm_type(expr->type);
+    LLVMTypeRef type = llvm_type(expr->type.type);
     Value *value = &expr->const_expr.value;
     switch (value->type)
     {
@@ -375,10 +375,10 @@ LLVMValueRef perform_binop_expr(LLVMValueRef left, LLVMValueRef right, BinOp op,
 
 static inline bool is_float(Expr *expr)
 {
-    switch (type_unfold_redirects(expr->type)->type_id)
+    switch (type_unfold_redirects(expr->type.type)->type_id)
     {
-        case TYPE_FLOAT:
-        case TYPE_CONST_FLOAT:
+        case XTYPE_FLOAT:
+        case XTYPE_CONST_FLOAT:
             return true;
         default:
             return false;
@@ -387,12 +387,12 @@ static inline bool is_float(Expr *expr)
 
 static inline bool is_signed(Expr *expr)
 {
-    Type *type = type_unfold_redirects(expr->type);
+    TypeOld *type = type_unfold_redirects(expr->type.type);
     switch (type->type_id)
     {
-        case TYPE_INT:
+        case XTYPE_INT:
             return type->integer.is_signed;
-        case TYPE_CONST_INT:
+        case XTYPE_CONST_INT:
             return true;
         default:
             return false;
@@ -428,11 +428,13 @@ LLVMValueRef codegen_post_expr(Expr *expr)
 LLVMValueRef codegen_cast(Expr *expr)
 {
     assert(expr->expr_id == EXPR_CAST);
-    LLVMTypeRef type = llvm_type(expr->cast_expr.type);
+    LLVMTypeRef type = llvm_type(expr->type.type);
     LLVMValueRef value = codegen_expr(expr->cast_expr.expr);
 
-    Type *target_type = type_unfold_redirects(expr->cast_expr.type);
-    Type *source_type = type_unfold_redirects(expr->cast_expr.expr->type);
+
+    QualifiedType target_type = type_canonical(expr->type);
+    QualifiedType source_type = type_canonical(expr->cast_expr.expr->type);
+
     switch (expr->cast_expr.cast_result)
     {
         case CAST_INLINE:
@@ -445,11 +447,11 @@ LLVMValueRef codegen_cast(Expr *expr)
         case CAST_PTRINT:
             return LLVMBuildPtrToInt(active_builder, value, type, "");
         case CAST_FPFP:
-            if (target_type->float_bits > source_type->float_bits)
+            if (type_bits(target_type.type) > type_bits(source_type.type))
             {
                 return LLVMBuildFPExt(active_builder, value, type, "");
             }
-            if (target_type->float_bits < source_type->float_bits)
+            if (type_bits(target_type.type) < type_bits(source_type.type))
             {
                 return LLVMBuildFPTrunc(active_builder, value, type, "");
             }
@@ -462,22 +464,22 @@ LLVMValueRef codegen_cast(Expr *expr)
         case CAST_UIFP:
             return LLVMBuildUIToFP(active_builder, value, type, "");
         case CAST_UIUI:
-            if (target_type->integer.bits > source_type->integer.bits)
+            if (type_bits(target_type.type) > type_bits(source_type.type))
             {
                 return LLVMBuildZExt(active_builder, value, type, "");
             }
-            if (target_type->integer.bits < source_type->integer.bits)
+            if (type_bits(target_type.type) < type_bits(source_type.type))
             {
                 return LLVMBuildTrunc(active_builder, value, type, "");
             }
             assert(false && "UI cast to same type");
             return value;
         case CAST_UISI:
-            if (target_type->integer.bits > source_type->integer.bits)
+            if (type_bits(target_type.type) > type_bits(source_type.type))
             {
                 return LLVMBuildZExt(active_builder, value, type, "");
             }
-            if (target_type->integer.bits < source_type->integer.bits)
+            if (type_bits(target_type.type) < type_bits(source_type.type))
             {
                 return LLVMBuildTrunc(active_builder, value, type, "");
             }
@@ -486,22 +488,22 @@ LLVMValueRef codegen_cast(Expr *expr)
         case CAST_SIFP:
             return LLVMBuildSIToFP(active_builder, value, type, "");
         case CAST_SISI:
-            if (target_type->integer.bits > source_type->integer.bits)
+            if (type_bits(target_type.type) > type_bits(source_type.type))
             {
                 return LLVMBuildSExt(active_builder, value, type, "");
             }
-            if (target_type->integer.bits < source_type->integer.bits)
+            if (type_bits(target_type.type) < type_bits(source_type.type))
             {
                 return LLVMBuildTrunc(active_builder, value, type, "");
             }
             assert(false && "SI cast to same type");
             return value;
         case CAST_SIUI:
-            if (target_type->integer.bits > source_type->integer.bits)
+            if (type_bits(target_type.type) > type_bits(source_type.type))
             {
                 return LLVMBuildSExt(active_builder, value, type, "");
             }
-            if (target_type->integer.bits > source_type->integer.bits)
+            if (type_bits(target_type.type) < type_bits(source_type.type))
             {
                 return LLVMBuildTrunc(active_builder, value, type, "");
             }

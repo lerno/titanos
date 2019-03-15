@@ -7,6 +7,9 @@
 #include "common.h"
 #include "vector.h"
 #include "lexer.h"
+#include "static_array.h"
+
+typedef struct _Decl Decl;
 
 typedef struct _Parser
 {
@@ -14,6 +17,7 @@ typedef struct _Parser
 	unsigned remainder : 31;
     const char *current_module;
     SourceRange module_def;
+    Decl *module;
     Vector *imports; // Decl *
 	Vector *types; // Decl *
 	Vector *variables;

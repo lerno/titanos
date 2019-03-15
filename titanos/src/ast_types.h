@@ -11,7 +11,7 @@
 #include "value.h"
 
 typedef struct _Ast Ast;
-typedef struct _Type Type;
+typedef struct _TypeOld TypeOld;
 typedef struct _Decl Decl;
 
 typedef struct _Label
@@ -132,13 +132,13 @@ typedef struct _AstSwitchStmt
 } AstSwitchStmt;
 
 
-typedef struct _Type Type;
+typedef struct _TypeOld TypeOld;
 
 typedef struct _AstFuncDefinition
 {
     bool is_public : 1;
     bool is_exported : 1;
-    Type *func_decl;
+    TypeOld *func_decl;
     Ast *body; // AstCompoundStmt will be NULL in interfaces.
     Vector *defers; // NULL unless defers
 } AstFuncDefinition;

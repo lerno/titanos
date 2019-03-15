@@ -1,9 +1,7 @@
 module test;
-import c2 local;
+//import c2 local;
 
 type foo2 foo;
-
-type fekeo i32;
 
 type gog enum i32 {
    Brog,
@@ -13,13 +11,16 @@ type gog enum i32 {
 
 }
 
+type fekeo i32;
+
+
 const i32 FAZ = 1;
-const i32 BAR = 2 + FAZ;
-const i32 FOO = BAR + 3;
+const i32 BAR = FAZ + FAZ;
+const i32 FOO = BAR * 3;
 
 type foo struct
 {
-  i32[FOO] a;
+  i32[2] a;
   union {
     i32 b;
   }
@@ -37,16 +38,6 @@ type kex struct
         i32 x;
         kex rec;
     }
-}
-
-public macro mtest(a, b)
-{
-    return a + b;
-}
-
-macro mtest2(&a, b)
-{
-    return a + b;
 }
 
 

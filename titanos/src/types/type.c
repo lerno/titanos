@@ -13,20 +13,19 @@
 #include "diagnostics.h"
 
 
-
-Type *type_unfold_redirects(Type *type)
+TypeOld *type_unfold_redirects(TypeOld *type)
 {
     while (1)
     {
         switch (type->type_id)
         {
-            case TYPE_RESOLVED:
+            case XTYPE_RESOLVED:
                 type = type->resolved;
                 continue;
-            case TYPE_ALIAS:
+            case XTYPE_ALIAS:
                 type = type->alias;
                 continue;
-            case TYPE_OPAQUE:
+            case XTYPE_OPAQUE:
                 type = type->opaque;
                 continue;
             default:
@@ -36,23 +35,68 @@ Type *type_unfold_redirects(Type *type)
     }
 }
 
-Type *type_remove_qualifier(Type *type)
+QualifiedType type_canonical(QualifiedType type)
 {
-    // TODO
-    if (!type->qualifier) return type;
-    return type;
+    QualifiedType canonical_type = type.type->canonical_type;
+    if (canonical_type.type == NULL)
+    {
+        switch (type.type->type_id)
+        {
+            case TYPE_OPAQUE:
+                canonical_type = type_canonical(type.type->base);
+                break;
+            case TYPE_ALIAS:
+                canonical_type = type_canonical(type.type->decl->alias);
+                break;
+            case TYPE_POINTER:
+                canonical_type = type_new_pointer(type_canonical(type.type->base));
+                break;
+            case TYPE_ARRAY:
+                canonical_type = type_new_pointer(type_canonical(type.type->base));
+                break;
+            default:
+                UNREACHABLE
+        }
+        type.type->canonical_type = canonical_type;
+    }
+    canonical_type.qualifier |= type.qualifier;
+    return canonical_type;
 }
 
-Type *type_unfold_non_opaque(Type *type)
+QualifiedType type_remove_qualifier(QualifiedType qt)
+{
+    Type *type = qt.type;
+    qt.qualifier = 0;
+    switch (type->type_id)
+    {
+        case TYPE_OPAQUE:
+            if (type->base.qualifier)
+            {
+                return type_remove_qualifier(type->base);
+            }
+            break;
+        case TYPE_ALIAS:
+            if (type->decl->alias.qualifier)
+            {
+                return type_remove_qualifier(type->decl->alias);
+            }
+            break;
+        default:
+            break;
+    }
+    return qt;
+}
+
+TypeOld *type_unfold_non_opaque(TypeOld *type)
 {
     while (1)
     {
         switch (type->type_id)
         {
-            case TYPE_RESOLVED:
+            case XTYPE_RESOLVED:
                 type = type->resolved;
                 continue;
-            case TYPE_ALIAS:
+            case XTYPE_ALIAS:
                 type = type->alias;
                 continue;
             default:
@@ -62,19 +106,27 @@ Type *type_unfold_non_opaque(Type *type)
     }
 }
 
-Type *new_unresolved_type(Expr *expr, bool public)
+Type *type_new(TypeId type_id)
+{
+    Type *type = malloc_arena(sizeof(Type));
+    memset(type, 0, sizeof(TypeArray));
+    type->type_id = type_id;
+    return type;
+}
+
+TypeOld *new_unresolved_type(Expr *expr, bool public)
 {
     assert(expr->expr_id == EXPR_TYPE || expr->expr_id == EXPR_IDENTIFIER || expr->expr_id == EXPR_ACCESS);
-    Type *type = new_type(TYPE_UNRESOLVED, public);
+    TypeOld *type = new_type(XTYPE_UNRESOLVED, public);
     type->unresolved.type_expr = expr;
     return type;
 }
 
 
-Type *new_type(TypeId type_id, bool public)
+TypeOld *new_type(TypeIdOld type_id, bool public)
 {
-    Type *type = malloc_arena(sizeof(Type));
-    memset(type, 0, sizeof(Type));
+    TypeOld *type = malloc_arena(sizeof(TypeOld));
+    memset(type, 0, sizeof(TypeOld));
 
     type->type_id = type_id;
     type->is_public = public;
@@ -82,130 +134,162 @@ Type *new_type(TypeId type_id, bool public)
     return type;
 }
 
-Type *type_new_pointer(Type *base)
+QualifiedType type_new_pointer(QualifiedType base)
 {
-    Type *pointer = new_type(TYPE_POINTER, base->is_public);
-    pointer->pointer.base = base;
-    return pointer;
-}
-
-Type *type_new_array(Type *base)
-{
-    Type *array = new_type(TYPE_ARRAY, base->is_public);
-    array->array.base = base;
-    return array;
+    Type *pointer = type_new(TYPE_POINTER);
+    pointer->base = base;
+    return (QualifiedType) { .type = pointer };
 }
 
 
-Type *type_to_type(Type *type)
+QualifiedType void_type()
 {
-    Type *result = new_type(TYPE_TYPEVAL, type->is_public);
-    result->type_of_type = type;
-    return result;
+    static Type type = { .type_id = TYPE_VOID, .canonical_type = { .type = &type }};
+    return (QualifiedType) { .type = &type };
 }
 
-Type *void_type()
+QualifiedType type_nil()
 {
-    static Type type = { .type_id = TYPE_VOID, .is_public = true };
-    return &type;
+    static Type type = { .type_id = TYPE_NIL, .canonical_type = { .type = &type }};
+    return (QualifiedType) { .type = &type };
 }
 
-Type *type_nil()
+QualifiedType type_string()
 {
-    static Type type = { .type_id = TYPE_NIL, .is_public = true };
-    return &type;
+    static Type type = { .type_id = TYPE_STRING };
+    return (QualifiedType) { .type = &type };
 }
 
-Type *type_string()
+QualifiedType type_compint()
 {
-    static Type type = { .type_id = TYPE_STRING, .is_public = true };
-    return &type;
+    static Type type = { .type_id = TYPE_CONST_INT, .canonical_type.type = &type };
+    return (QualifiedType) { .type = &type };
 }
 
-Type *type_invalid()
+QualifiedType type_compfloat()
 {
-    static Type type = { .type_id = TYPE_INVALID, .is_public = true };
-    return &type;
+    static Type type = { .type_id = TYPE_CONST_FLOAT, .canonical_type.type = &type };
+    return (QualifiedType) { .type = &type };
 }
 
-Type *type_compint()
-{
-    static Type type = { .type_id = TYPE_CONST_INT, .is_public = true };
-    return &type;
-}
-
-Type *type_compfloat()
-{
-    static Type type = { .type_id = TYPE_CONST_FLOAT, .is_public = true };
-    return &type;
-}
-
-bool type_is_int(Type *type)
+bool type_is_signed2(TypeOld *type)
 {
     type = type_unfold_redirects(type);
-    return type->type_id == TYPE_CONST_INT || type->type_id == TYPE_INT;
+    if (type->type_id == XTYPE_CONST_INT) return true;
+    return type->type_id == XTYPE_INT && type->integer.is_signed;
 }
 
-bool type_is_signed(Type *type)
+bool type_is_float(Type *type)
 {
-    type = type_unfold_redirects(type);
-    if (type->type_id == TYPE_CONST_INT) return true;
-    return type->type_id == TYPE_INT && type->integer.is_signed;
+    if (type->type_id == TYPE_CONST_FLOAT) return true;
+    return type->type_id >= MAX_FLOAT_TYPE && type->type_id <= MIN_FLOAT_TYPE;
 }
 
-uint64_t type_size(Type *type)
+
+
+uint64_t type_size(TypeOld *type)
 {
     type = type_unfold_redirects(type);
     switch (type->type_id)
     {
-        case TYPE_INVALID:
+        case XTYPE_INVALID:
             return 0;
-        case TYPE_VOID:
+        case XTYPE_VOID:
             return 1;
             return decl_size(type->decl);
-        case TYPE_ENUM:
-            return type_size(type->decl->enum_decl.type);
-        case TYPE_FUNC:
-        case TYPE_FUNC_TYPE:
+        case XTYPE_ENUM:
+            return type_size(type->decl->enum_decl.type.type);
+        case XTYPE_FUNC:
+        case XTYPE_FUNC_TYPE:
             // TODO pointer size
             return sizeof(void *);
-        case TYPE_STRUCT:
-        case TYPE_UNION:
+        case XTYPE_STRUCT:
+        case XTYPE_UNION:
             return decl_size(type->decl);
-        case TYPE_NIL:
-        case TYPE_STRING:
-        case TYPE_POINTER:
+        case XTYPE_NIL:
+        case XTYPE_STRING:
+        case XTYPE_POINTER:
             // TODO pointer size
             return sizeof(void *);
-        case TYPE_ARRAY:
+        case XTYPE_ARRAY:
             // TODO check
             return type_size(type->array.base) * (type->array.is_empty ? 1 : type->array.len);
-        case TYPE_UNRESOLVED:
+        case XTYPE_UNRESOLVED:
             FATAL_ERROR("Should never happen");
-        case TYPE_TYPEVAL:
+        case XTYPE_TYPEVAL:
             return type_size(type->type_of_type);
-        case TYPE_FLOAT:
+        case XTYPE_FLOAT:
             return (uint64_t) ((type->float_bits + 7) / 8);
-        case TYPE_BOOL:
+        case XTYPE_BOOL:
             return 1;
-        case TYPE_INT:
+        case XTYPE_INT:
             return (uint64_t) ((type->integer.bits + 7) / 8);
-        case TYPE_CONST_FLOAT:
+        case XTYPE_CONST_FLOAT:
             return 16; // TODO
-        case TYPE_CONST_INT:
+        case XTYPE_CONST_INT:
             return 8; // TODO
-        case TYPE_RESOLVED:
-        case TYPE_OPAQUE:
-        case TYPE_ALIAS:
+        case XTYPE_RESOLVED:
+        case XTYPE_OPAQUE:
+        case XTYPE_ALIAS:
             UNREACHABLE
     }
     UNREACHABLE
 }
-void type_print_sub(const char *header, unsigned int current_indent, Type *type)
+
+void type_print_sub(const char *header, unsigned int current_indent, TypeOld *type)
 {
     if (!type) return;
     indent(current_indent);
-    printf("%s %s\n", header, type_to_string(type));
+    printf("%s %s\n", header, type_to_string2(type));
+}
+
+void type_print(QualifiedType type)
+{
+    if (IS_INVALID(type))
+    {
+        printf("<invalid>");
+        return;;
+    }
+    if (IS_CONST(type)) printf("const ");
+    if (IS_VOLATILE(type)) printf("volatile ");
+    if (IS_ALIAS(type)) printf("alias ");
+    switch (type.type->type_id)
+    {
+        case TYPE_VOID:
+            printf("void");
+            break;
+        case TYPE_OPAQUE:
+            printf("opaque(");
+            type_print(type.type->base);
+            printf(")");
+            break;
+        case TYPE_ALIAS:
+            printf("%s->", type.type->decl->name);
+            type_print(type.type->decl->alias);
+            break;
+        case TYPE_POINTER:
+            type_print(type.type->base);
+            printf("*");
+            break;
+        case TYPE_CONST_FLOAT:
+            printf("const_float");
+            break;
+        case TYPE_CONST_INT:
+            printf("const_int");
+            break;
+        case TYPE_NIL:
+            printf("nil");
+            break;
+        case TYPE_STRING:
+            printf("string");
+            break;
+        case TYPE_ARRAY:
+            type_print(type.type->base);
+            printf("[%d]", type.type->len);
+        default:
+            printf("%s", type.type->decl->name);
+            break;
+    }
 }
 
 
@@ -248,7 +332,12 @@ static bool value_convert_to_type_ordered(Value *value1, Value *value2)
                     if (value2->int_bits == 0)
                     {
                         if (value1->int_bits == 0) return true;
-                        if (!bigint_fits_in_bits(&value2->big_int, value1->int_bits, !value1->is_unsigned)) return false;
+                        if (!bigint_fits_in_bits(&value2->big_int,
+                                                 value1->int_bits,
+                                                 !value1->is_unsigned))
+                        {
+                            return false;
+                        }
                         BigInt res;
                         bigint_truncate(&res, &value2->big_int, value1->int_bits, !value1->is_unsigned);
                         value2->big_int = res;
@@ -330,29 +419,31 @@ bool decl_type_is_same(Decl *decl1, Decl *decl2)
     return false;
 }
 
-void type_copy(Type **dst, Type *source)
+void type_copy(TypeOld **dst, TypeOld *source)
 {
     TypeQualifier qualifier = (*dst)->qualifier;
     *dst = source;
     (*dst)->qualifier = qualifier;
 }
 
-bool type_may_convert_to_bool(Type *type)
+bool type_may_convert_to_bool(TypeOld *type)
 {
     switch (type->type_id)
     {
-        case TYPE_INVALID:
-        case TYPE_UNRESOLVED:
-        case TYPE_VOID:
-        case TYPE_STRING:
-        case TYPE_OPAQUE:
-        case TYPE_TYPEVAL:
+        case XTYPE_INVALID:
+        case XTYPE_UNRESOLVED:
+        case XTYPE_VOID:
+        case XTYPE_STRING:
+        case XTYPE_OPAQUE:
+        case XTYPE_TYPEVAL:
             return false;
-        case TYPE_POINTER:
-        case TYPE_ARRAY:
-        case TYPE_CONST_FLOAT:break;
-        case TYPE_CONST_INT:break;
-        case TYPE_NIL:
+        case XTYPE_POINTER:
+        case XTYPE_ARRAY:
+        case XTYPE_CONST_FLOAT:
+            break;
+        case XTYPE_CONST_INT:
+            break;
+        case XTYPE_NIL:
             return true;
         default:
             TODO;
@@ -360,49 +451,106 @@ bool type_may_convert_to_bool(Type *type)
     UNREACHABLE
 }
 
+
+bool type_is_aritmetic(Type *canonical_type)
+{
+    switch (canonical_type->type_id)
+    {
+        case TYPE_OPAQUE:
+        case TYPE_ALIAS:
+            UNREACHABLE
+        case TYPE_POINTER:
+        case TYPE_STRING:
+        case TYPE_ARRAY:
+        case TYPE_FUNC_TYPE:
+        case TYPE_FUNC:
+        case TYPE_STRUCT:
+        case TYPE_UNION:
+        case TYPE_VOID:
+            return false;
+        case TYPE_F64:
+        case TYPE_F32:
+        case TYPE_U64:
+        case TYPE_I64:
+        case TYPE_U32:
+        case TYPE_I32:
+        case TYPE_U16:
+        case TYPE_I16:
+        case TYPE_U8:
+        case TYPE_I8:
+        case TYPE_ENUM:
+        case TYPE_BOOL:
+        case TYPE_NIL:
+        case TYPE_CONST_FLOAT:
+        case TYPE_CONST_INT:
+            return true;
+    }
+    UNREACHABLE
+}
+
 bool type_is_same(Type *type1, Type *type2)
 {
-    type1 = type_unfold_redirects(type1);
-    type2 = type_unfold_redirects(type2);
+    QualifiedType c_type1 = type_canonical(type1->canonical_type);
+    QualifiedType c_type2 = type_canonical(type2->canonical_type);
+    if (c_type1.qualifier != c_type2.qualifier) return false;
+    if (c_type1.type->type_id < c_type2.type->type_id)
+    {
+        type1 = c_type1.type;
+        type2 = c_type2.type;
+    }
+    else
+    {
+        type1 = c_type2.type;
+        type2 = c_type1.type;
+    }
+
     if (type1 == type2) return true;
     if (type1->type_id != type2->type_id) return false;
     switch (type1->type_id)
     {
-        case TYPE_INVALID:
-        case TYPE_STRING:
+        case TYPE_POINTER:
+            c_type1 = type1->base;
+            c_type2 = type2->base;
+            if (c_type1.qualifier != c_type2.qualifier) return false;
+            return type_is_same(c_type1.type, c_type2.type);
+        case TYPE_ARRAY:
+            c_type1 = type1->base;
+            c_type2 = type2->base;
+            if (c_type1.qualifier != c_type2.qualifier) return false;
+            if (!type_is_same(c_type1.type, c_type2.type)) return false;
+            return c_type1.type->len == c_type2.type->len;
+        case TYPE_FUNC_TYPE:
+            TODO
+        case TYPE_ENUM:
+        case TYPE_FUNC:
+        case TYPE_STRUCT:
+        case TYPE_UNION:
+            // Should always be based on the decl, so types should be identical
+            UNREACHABLE
         case TYPE_VOID:
+        case TYPE_F64:
+        case TYPE_F32:
+        case TYPE_U64:
+        case TYPE_I64:
+        case TYPE_U32:
+        case TYPE_I32:
+        case TYPE_U16:
+        case TYPE_I16:
+        case TYPE_U8:
+        case TYPE_I8:
+        case TYPE_BOOL:
         case TYPE_CONST_FLOAT:
         case TYPE_CONST_INT:
+        case TYPE_STRING:
         case TYPE_NIL:
-        case TYPE_BOOL:
-            return true;
-        case TYPE_TYPEVAL:
-            return type_is_same(type1->type_of_type, type2->type_of_type);
-        case TYPE_INT:
-            return type1->integer.is_signed == type2->integer.is_signed && type1->integer.bits == type2->integer.bits;
-        case TYPE_FLOAT:
-            return type1->float_bits == type2->float_bits;
-        case TYPE_POINTER:
-            return type_is_same(type1->pointer.base, type2->pointer.base);
-        case TYPE_ARRAY:
-            assert(type1->array.is_len_resolved && type2->array.is_len_resolved);
-            return type_is_same(type1->array.base, type2->array.base) && type1->array.len == type2->array.len;
-        case TYPE_UNION:
-        case TYPE_ENUM:
-        case TYPE_STRUCT:
-        case TYPE_FUNC_TYPE:
-        case TYPE_FUNC:
-            return decl_type_is_same(type1->decl, type2->decl);
+            // Should be singleton
+            UNREACHABLE
         case TYPE_OPAQUE:
         case TYPE_ALIAS:
-        case TYPE_RESOLVED:
+            // Not canonical
             UNREACHABLE
-        case TYPE_UNRESOLVED:
-            FATAL_ERROR("Should be resolved at this point in time");
     }
 }
-
-
 
 static inline char *copy_constant_string(const char *string)
 {
@@ -411,7 +559,7 @@ static inline char *copy_constant_string(const char *string)
     return res;
 }
 
-static inline char *get_embedded_type_name(const char *parent_name, Type *type)
+static inline char *get_embedded_type_name(const char *parent_name, QualifiedType type)
 {
     char *result = NULL;
     const char *sub_type = type_to_string(type);
@@ -431,48 +579,20 @@ static inline char *copy_token(Token *token)
 
 static inline const char *char_for_type(Type *type)
 {
-    char *result;
     switch (type->type_id)
     {
-        case TYPE_INVALID:
-            return "INVALID";
-        case TYPE_UNRESOLVED:
-            return "UNRESOLVED";
         case TYPE_VOID:
             return "void";
         case TYPE_STRING:
             return "string";
         case TYPE_OPAQUE:
-            return get_embedded_type_name("opaque", type->opaque);
+            return get_embedded_type_name("opaque", type->base);
         case TYPE_POINTER:
             // const, restrict
-            return get_embedded_type_name("ptr", type->pointer.base);
+            return get_embedded_type_name("ptr", type->base);
         case TYPE_ARRAY:
             // len
-            return get_embedded_type_name("array", type->array.base);
-        case TYPE_STRUCT:
-        case TYPE_FUNC:
-        case TYPE_FUNC_TYPE:
-        case TYPE_UNION:
-        case TYPE_ENUM:
-            return type->decl->name;
-        case TYPE_TYPEVAL:
-            return get_embedded_type_name("type", type->type_of_type);
-        case TYPE_INT:
-            if (type->integer.is_signed)
-            {
-                asprintf(&result, "u%d", type->integer.bits);
-            }
-            else
-            {
-                asprintf(&result, "i%d", type->integer.bits);
-            }
-            return result;
-        case TYPE_BOOL:
-            return "bool";
-        case TYPE_FLOAT:
-            asprintf(&result, "f%d", type->float_bits);
-            return result;
+            return get_embedded_type_name("array", type->base);
         case TYPE_NIL:
             return "nil";
         case TYPE_CONST_FLOAT:
@@ -480,29 +600,94 @@ static inline const char *char_for_type(Type *type)
         case TYPE_CONST_INT:
             return "const_int";
         case TYPE_ALIAS:
-            return get_embedded_type_name("alias", type->alias);
-        case TYPE_RESOLVED:
-            return type_to_string(type->resolved);
+            return get_embedded_type_name("alias", type->decl->alias);
+        case TYPE_F64:
+            return "f64";
+        case TYPE_F32:
+            return "f32";
+        case TYPE_U64:
+            return "u64";
+        case TYPE_U32:
+            return "u32";
+        case TYPE_U16:
+            return "u16";
+        case TYPE_U8:
+            return "i8";
+        case TYPE_I64:
+            return "i64";
+        case TYPE_I32:
+            return "i32";
+        case TYPE_I16:
+            return "i16";
+        case TYPE_I8:
+            return "i8";
+        case TYPE_BOOL:
+            return "bool";
+        case TYPE_FUNC_TYPE:
+        case TYPE_ENUM:
+        case TYPE_FUNC:
+        case TYPE_STRUCT:
+        case TYPE_UNION:
+            return type->decl->name;
     }
     UNREACHABLE
 }
 
-const char *type_to_string(Type *type)
+const char *type_to_string2(TypeOld *type)
 {
-    if (!type) return "NULL";
-    if (type->lazy_name) return type->lazy_name;
-    return type->lazy_name = char_for_type(type);
+    TODO;
 }
 
-bool type_order(Type *first, Type *second)
+const char *type_to_string(QualifiedType type)
+{
+    if (IS_INVALID(type)) return "<invalid>";
+    const char *templ;
+    switch (type.qualifier)
+    {
+        case TYPE_QUALIFIER_NONE:
+            templ = NULL;
+            break;
+        case TYPE_QUALIFIER_CONST:
+            templ = "const %s";
+            break;
+        case TYPE_QUALIFIER_ALIAS:
+            templ = "alias %s";
+            break;
+        case TYPE_QUALIFIER_VOLATILE:
+            templ = "volatile %s";
+            break;
+        case TYPE_QUALIFIER_ALIAS | TYPE_QUALIFIER_CONST:
+            templ = "const alias %s";
+            break;
+        case TYPE_QUALIFIER_VOLATILE | TYPE_QUALIFIER_CONST:
+            templ = "const volatile %s";
+            break;
+        case TYPE_QUALIFIER_VOLATILE | TYPE_QUALIFIER_ALIAS:
+            templ = "volatile alias %s";
+            break;
+        case TYPE_QUALIFIER_VOLATILE | TYPE_QUALIFIER_CONST | TYPE_QUALIFIER_ALIAS:
+            templ = "const volatile alias %s";
+            break;
+        default:
+            templ = "? %s";
+            break;
+    }
+    const char *name = char_for_type(type.type);
+    if (!templ) return name;
+    char *name_with_q;
+    asprintf(&name_with_q, templ, name);
+    return name_with_q;
+}
+
+bool type_order(TypeOld *first, TypeOld *second)
 {
     if (first->type_id < second->type_id) return true;
     if (first->type_id > second->type_id) return false;
     switch (first->type_id)
     {
-        case TYPE_FLOAT:
+        case XTYPE_FLOAT:
             return first->float_bits >= second->float_bits;
-        case TYPE_INT:
+        case XTYPE_INT:
             if (first->integer.bits > second->integer.bits) return true;
             if (first->integer.bits < second->integer.bits) return false;
             return !second->integer.is_signed && first->integer.is_signed;
@@ -510,3 +695,5 @@ bool type_order(Type *first, Type *second)
             return true;
     }
 }
+
+QualifiedType InvalidType = { .type = NULL };

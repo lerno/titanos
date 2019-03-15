@@ -109,12 +109,9 @@ static bool component_is_exported(Component *component, const char *module_name)
 
 Module *component_get_module(Component *component, const char *name)
 {
-    for (unsigned i = 0; i < component->modules.size; i++)
-    {
-        Module *module = component->modules.entries[i];
-        if (name == module->name) return module;
-    }
-    Module *module = malloc_arena(sizeof(Module));
+    Module *module = component_find_module(component, name);
+    if (module) return module;
+    module = malloc_arena(sizeof(Module));
     module_init(module, name, component->is_external, component->is_c_library);
     module->is_exported = component_is_exported(component, name);
     vector_add(&component->modules, module);

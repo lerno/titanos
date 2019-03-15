@@ -38,7 +38,7 @@ bool analyse_decl(Decl *decl)
     assert(decl->var.kind == VARDECL_LOCAL);
 
     // Resolve the type as local (non public)
-    bool success = resolve_type(decl->type, false);
+    bool success = resolve_type(decl->type.type, false);
 
     if (success && !active_analyser->parser->is_interface)
     {
@@ -48,8 +48,8 @@ bool analyse_decl(Decl *decl)
             success = false;
         }
     }
-
-    if (decl->type->type_id == TYPE_ARRAY)
+#ifdef OLD
+    if (decl->type->type_id == XTYPE_ARRAY)
     {
         if (!decl->type->array.is_len_resolved)
         {
@@ -62,7 +62,7 @@ bool analyse_decl(Decl *decl)
             success = false;
         }
     }
-    if (decl->type->type_id == TYPE_OPAQUE)
+    if (decl->type->type_id == XTYPE_OPAQUE)
     {
         if (scope_is_external_module(decl->type->module))
         {
@@ -70,6 +70,7 @@ bool analyse_decl(Decl *decl)
             success = false;
         }
     }
+#endif
 
     // check name
     Decl *shadowed = scope_check_scoped_symbol(decl->name);
@@ -82,12 +83,12 @@ bool analyse_decl(Decl *decl)
 
     if (decl->var.init_expr)
     {
-        decl->var.in_init = true;
+//        decl->var.in_init = true;
         success = analyse_init_expr(decl) & success;
-        decl->var.in_init = false;
+  //      decl->var.in_init = false;
     }
 
-    if (type_is_const(decl->type) && !decl->var.init_expr)
+    if (type_is_const2(decl->type.type) && !decl->var.init_expr)
     {
         sema_error_at(decl->span, "Declaration of constant '%s' is missing initial value", decl->name);
         success = false;
@@ -166,7 +167,7 @@ bool analyse_return(Ast *stmt)
     Expr *r_value = stmt->return_stmt.expr;
     if (r_value)
     {
-        if (active_analyser->current_func->func_decl.rtype->type_id == TYPE_VOID)
+        if (active_analyser->current_func->func_decl.rtype.type->type_id == XTYPE_VOID)
         {
             sema_error_at(r_value->span, "Return value is invalid for void function");
             return false;
@@ -175,7 +176,7 @@ bool analyse_return(Ast *stmt)
         {
             return false;
         }
-        if (!insert_implicit_cast_if_needed(r_value, active_analyser->current_func->func_decl.rtype))
+        if (!insert_implicit_cast_if_needed(r_value, active_analyser->current_func->func_decl.rtype.type))
         {
             // IMPROVE type
             sema_error_at(r_value->span, "Return value does not match function return type");
@@ -184,7 +185,7 @@ bool analyse_return(Ast *stmt)
     }
     else
     {
-        if (active_analyser->current_func->func_decl.rtype->type_id != TYPE_VOID)
+        if (active_analyser->current_func->func_decl.rtype.type->type_id != XTYPE_VOID)
         {
             sema_error_at(stmt->span, "Expected return value");
             return false;
